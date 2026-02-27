@@ -4,7 +4,6 @@ import Link from "next/link";
 import Image from "next/image";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Book } from "@/types";
-import { Badge } from "@/components/ui/Badge";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { api } from "@/lib/api";
 
@@ -43,15 +42,9 @@ export function BookCard({ book }: { book: Book }) {
                 <span className="text-xs font-medium text-indigo-400 dark:text-indigo-600 text-center line-clamp-2">{book.title}</span>
               </div>
             )}
-            {/* Only show badge for non-ready states */}
-            {book.status !== "ready" && book.status !== "parsed" && (
-              <div className="absolute top-2 right-2">
-                <Badge status={book.status} />
-              </div>
-            )}
           </div>
-          <div className="p-3 h-[88px] flex flex-col">
-            <h3 className="font-semibold text-gray-900 dark:text-gray-100 text-sm line-clamp-2 mb-1 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+          <div className="p-3 h-[100px] flex flex-col">
+            <h3 className="font-semibold text-gray-900 dark:text-gray-100 text-sm line-clamp-3 mb-1 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
               {book.title}
             </h3>
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-1.5 truncate">
