@@ -22,7 +22,7 @@ const READER_THEMES: ReaderTheme[] = [
   { name: "light", bg: "#ffffff", text: "#1f2937", label: "Sáng" },
   { name: "sepia", bg: "#f5f0e8", text: "#5c4b37", label: "Sepia" },
   { name: "dark", bg: "#1a1a2e", text: "#e0e0e0", label: "Tối" },
-  { name: "neon", bg: "#0a0e2a", text: "#39ff14", label: "Neon" },
+  { name: "neon", bg: "#040714", text: "#22b80a", label: "Neon" },
   { name: "warm", bg: "#2d1b00", text: "#f5c882", label: "Ấm" },
   { name: "gray", bg: "#2a2a2a", text: "#cccccc", label: "Xám" },
 ];
