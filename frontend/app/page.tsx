@@ -59,7 +59,7 @@ export default function HomePage() {
       {isLoading && (
         <div className="flex flex-col items-center gap-3 py-24">
           <Spinner className="w-8 h-8 text-indigo-600" />
-          <p className="text-sm text-gray-400">\u0110ang t\u1EA3i th\u01B0 vi\u1EC7n...</p>
+          <p className="text-sm text-gray-400">Đang tải thư viện...</p>
         </div>
       )}
 
