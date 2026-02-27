@@ -1,0 +1,29 @@
+import type { MetadataRoute } from "next";
+
+export default function manifest(): MetadataRoute.Manifest {
+  return {
+    name: "Truyện Audio Việt Nam",
+    short_name: "TruyệnAudio",
+    description: "Nghe truyện EPUB tiếng Việt",
+    start_url: "/",
+    display: "standalone",
+    background_color: "#f9fafb",
+    theme_color: "#6366f1",
+    orientation: "portrait-primary",
+    categories: ["entertainment", "books"],
+    lang: "vi",
+    icons: [
+      {
+        src: "/icons/icon-192.png",
+        sizes: "192x192",
+        type: "image/png",
+      },
+      {
+        src: "/icons/icon-512.png",
+        sizes: "512x512",
+        type: "image/png",
+        purpose: "maskable",
+      },
+    ],
+  };
+}
