@@ -1,4 +1,21 @@
-<svg xmlns='http://www.w3.org/2000/svg' width='512' height='512'>
-    <rect width='512' height='512' fill='%236366f1' rx='102.4'/>
-    <text x='50%' y='55%' font-size='179.2' text-anchor='middle' dominant-baseline='middle' fill='white' font-family='Arial'>TA</text>
-  </svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 192 192">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#818cf8"/>
+      <stop offset="100%" stop-color="#4f46e5"/>
+    </linearGradient>
+  </defs>
+  <rect width="192" height="192" fill="url(#g)" rx="42"/>
+  <g transform="translate(96,90)" fill="none" stroke="white" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Headphone band -->
+    <path d="M-32 -4a44 44 0 0 1 64 0" stroke-width="7" fill="none"/>
+    <!-- Left ear -->
+    <rect x="-38" y="-8" width="14" height="24" rx="5" fill="white"/>
+    <!-- Right ear -->
+    <rect x="24" y="-8" width="14" height="24" rx="5" fill="white"/>
+    <!-- Sound waves -->
+    <path d="M-5-14v36" stroke="white" stroke-width="4.5"/>
+    <path d="M0-22v52" stroke="white" stroke-width="4.5"/>
+    <path d="M5-14v36" stroke="white" stroke-width="4.5"/>
+  </g>
+</svg>

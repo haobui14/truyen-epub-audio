@@ -1,4 +1,17 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="7" fill="#6366f1"/>
-  <text x="50%" y="54%" font-size="14" font-weight="bold" text-anchor="middle" dominant-baseline="middle" fill="white" font-family="system-ui, -apple-system, sans-serif">TA</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 192 192">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#818cf8"/>
+      <stop offset="100%" stop-color="#4f46e5"/>
+    </linearGradient>
+  </defs>
+  <rect width="192" height="192" fill="url(#g)" rx="42"/>
+  <g transform="translate(96,90)" fill="none" stroke="white" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M-32 -4a44 44 0 0 1 64 0" stroke-width="7" fill="none"/>
+    <rect x="-38" y="-8" width="14" height="24" rx="5" fill="white"/>
+    <rect x="24" y="-8" width="14" height="24" rx="5" fill="white"/>
+    <path d="M-5-14v36" stroke="white" stroke-width="4.5"/>
+    <path d="M0-22v52" stroke="white" stroke-width="4.5"/>
+    <path d="M5-14v36" stroke="white" stroke-width="4.5"/>
+  </g>
 </svg>
