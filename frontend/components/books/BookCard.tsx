@@ -44,7 +44,7 @@ export function BookCard({ book }: { book: Book }) {
             )}
           </div>
           <div className="p-3 h-[100px] flex flex-col">
-            <h3 className="font-semibold text-gray-900 dark:text-gray-100 text-sm line-clamp-3 mb-1 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+            <h3 className="font-semibold text-gray-900 dark:text-gray-100 text-sm line-clamp-3 mb-1 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors" title={book.title}>
               {book.title}
             </h3>
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-1.5 truncate">
