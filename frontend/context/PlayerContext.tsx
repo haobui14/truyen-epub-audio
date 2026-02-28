@@ -73,9 +73,7 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
 
   const [voice, setVoiceState] = useState<string>(() => {
     if (typeof window === "undefined") return "vi-VN-HoaiMyNeural";
-    return (
-      localStorage.getItem(VOICE_STORAGE_KEY) ?? "vi-VN-HoaiMyNeural"
-    );
+    return localStorage.getItem(VOICE_STORAGE_KEY) ?? "vi-VN-HoaiMyNeural";
   });
 
   const setTrack = useCallback((newTrack: PlayerTrack) => {
@@ -98,12 +96,12 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
     voice,
     track?.onEnded,
     track?.autoPlay,
-    track?.initialChunkIndex
+    track?.initialChunkIndex,
   );
 
   const { cacheStatuses } = useChapterAudioPreload(
     track?.neighborChapters ?? [],
-    voice
+    voice,
   );
 
   // Sleep timer — pause playback when it fires
@@ -113,8 +111,11 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
   const handleSleepExpire = useCallback(() => {
     if (playerStateRef.current.isPlaying) playerStateRef.current.toggle();
   }, []);
-  const { remaining: sleepRemaining, setTimer: setSleepTimer, cancelTimer: cancelSleepTimer } =
-    useSleepTimer(handleSleepExpire);
+  const {
+    remaining: sleepRemaining,
+    setTimer: setSleepTimer,
+    cancelTimer: cancelSleepTimer,
+  } = useSleepTimer(handleSleepExpire);
 
   const value: PlayerContextValue = {
     track,

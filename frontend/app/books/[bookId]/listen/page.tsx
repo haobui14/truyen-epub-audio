@@ -48,12 +48,16 @@ export default function ListenPage({
   const currentChapter = allChapters.find((c) => c.id === chapterId) ?? null;
   const currentIndex = currentChapter?.chapter_index ?? -1;
 
-  const prevChapter = allChapters.find((c) => c.chapter_index === currentIndex - 1) ?? null;
-  const nextChapter = allChapters.find((c) => c.chapter_index === currentIndex + 1) ?? null;
+  const prevChapter =
+    allChapters.find((c) => c.chapter_index === currentIndex - 1) ?? null;
+  const nextChapter =
+    allChapters.find((c) => c.chapter_index === currentIndex + 1) ?? null;
 
   // Chapters to pre-download for offline: current ±2
   const neighborChapters = [-2, -1, 0, 1, 2]
-    .map((offset) => allChapters.find((c) => c.chapter_index === currentIndex + offset))
+    .map((offset) =>
+      allChapters.find((c) => c.chapter_index === currentIndex + offset),
+    )
     .filter((c): c is NonNullable<typeof c> => !!c && c.id !== chapterId)
     .concat(currentChapter ? [currentChapter] : []) // current gets highest priority (added last = iterated first in hook)
     .map((c) => ({ id: c.id }));
@@ -65,7 +69,7 @@ export default function ListenPage({
         router.push(url);
       }
     },
-    [bookId, router]
+    [bookId, router],
   );
 
   const { setTrack } = usePlayerContext();
@@ -136,7 +140,7 @@ export default function ListenPage({
           : undefined,
       autoPlay,
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookId, chapterId, setTrack, bookDataId, chapterDataId, isLoadingText]);
 
   if (!chapterId) {
@@ -166,8 +170,18 @@ export default function ListenPage({
           href={`/books/${bookId}`}
           className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          <svg
+            className="w-4 h-4"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M15 19l-7-7 7-7"
+            />
           </svg>
           <span className="hidden sm:inline">{book.title}</span>
           <span className="sm:hidden">Quay lại</span>
@@ -176,9 +190,18 @@ export default function ListenPage({
           href={`/books/${bookId}/read?chapter=${chapterId}`}
           className="flex items-center gap-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 px-3 py-1.5 rounded-lg hover:bg-indigo-100 dark:hover:bg-indigo-950 transition-colors"
         >
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-              d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+          <svg
+            className="w-3.5 h-3.5"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
+            />
           </svg>
           Đọc
         </Link>
@@ -204,7 +227,9 @@ export default function ListenPage({
                     : "text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
                 }`}
               >
-                <span className="text-xs font-mono text-gray-400 dark:text-gray-500 mr-2">{ch.chapter_index + 1}.</span>
+                <span className="text-xs font-mono text-gray-400 dark:text-gray-500 mr-2">
+                  {ch.chapter_index + 1}.
+                </span>
                 {ch.title}
               </button>
             ))}

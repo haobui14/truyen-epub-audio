@@ -44,8 +44,12 @@ export function SpeechPlayer() {
 
   const { chapter, book, text, isLoadingText, onPrev, onNext } = track;
 
-  const offlineReadyCount = Object.values(cacheStatuses).filter((s) => s === "cached").length;
-  const downloadingCount = Object.values(cacheStatuses).filter((s) => s === "downloading").length;
+  const offlineReadyCount = Object.values(cacheStatuses).filter(
+    (s) => s === "cached",
+  ).length;
+  const downloadingCount = Object.values(cacheStatuses).filter(
+    (s) => s === "downloading",
+  ).length;
 
   function handleVoiceChange(newVoice: string) {
     setVoice(newVoice);
@@ -76,7 +80,6 @@ export function SpeechPlayer() {
 
   return (
     <div className="w-full rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-sm overflow-hidden">
-
       {/* Cover + chapter info header */}
       <div className="flex items-center gap-4 px-5 py-4 border-b border-gray-100 dark:border-gray-800">
         <div className="w-14 h-14 rounded-xl overflow-hidden bg-indigo-100 dark:bg-indigo-950 shrink-0 shadow">
@@ -132,7 +135,12 @@ export function SpeechPlayer() {
               : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
           }`}
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg
+            className="w-4 h-4"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -147,7 +155,6 @@ export function SpeechPlayer() {
       {/* ── LISTEN TAB ── */}
       {activeTab === "listen" && (
         <div className="px-5 py-5 flex flex-col gap-5">
-
           {/* Progress */}
           <div>
             <div className="h-1 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
@@ -161,14 +168,19 @@ export function SpeechPlayer() {
                 mode === "full" ? (
                   <>
                     <span className="flex items-center gap-1">
-                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400" title="Đang phát từ bộ nhớ" />
+                      <span
+                        className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400"
+                        title="Đang phát từ bộ nhớ"
+                      />
                       {fmtTime(chunkIndex)}
                     </span>
                     <span>{fmtTime(totalChunks)}</span>
                   </>
                 ) : (
                   <>
-                    <span>Đoạn {chunkIndex + 1} / {totalChunks}</span>
+                    <span>
+                      Đoạn {chunkIndex + 1} / {totalChunks}
+                    </span>
                     <span>{progressPct}%</span>
                   </>
                 )
@@ -202,11 +214,19 @@ export function SpeechPlayer() {
               {showSpinner ? (
                 <Spinner className="w-5 h-5" />
               ) : isPlaying ? (
-                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                <svg
+                  className="w-6 h-6"
+                  fill="currentColor"
+                  viewBox="0 0 24 24"
+                >
                   <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
                 </svg>
               ) : (
-                <svg className="w-6 h-6 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                <svg
+                  className="w-6 h-6 ml-0.5"
+                  fill="currentColor"
+                  viewBox="0 0 24 24"
+                >
                   <path d="M8 5v14l11-7z" />
                 </svg>
               )}
@@ -230,10 +250,14 @@ export function SpeechPlayer() {
               {isOffline ? (
                 <>
                   <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                  <span className="text-amber-500 dark:text-amber-400">Mất kết nối, đang chờ...</span>
+                  <span className="text-amber-500 dark:text-amber-400">
+                    Mất kết nối, đang chờ...
+                  </span>
                 </>
               ) : (
-                <span className="text-indigo-400 dark:text-indigo-500">Đang tải âm thanh...</span>
+                <span className="text-indigo-400 dark:text-indigo-500">
+                  Đang tải âm thanh...
+                </span>
               )}
             </p>
           )}
@@ -258,11 +282,15 @@ export function SpeechPlayer() {
           {/* Speed + Voice + Sleep Timer */}
           <div className="flex flex-col gap-3 pt-1 border-t border-gray-100 dark:border-gray-800">
             <div className="flex items-center justify-between">
-              <span className="text-xs text-gray-400 dark:text-gray-500 font-medium">Tốc độ</span>
+              <span className="text-xs text-gray-400 dark:text-gray-500 font-medium">
+                Tốc độ
+              </span>
               <SpeedControl value={rate} onChange={changeRate} />
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-xs text-gray-400 dark:text-gray-500 font-medium">Giọng đọc</span>
+              <span className="text-xs text-gray-400 dark:text-gray-500 font-medium">
+                Giọng đọc
+              </span>
               <div className="flex gap-1.5">
                 {VOICE_OPTIONS.map((opt) => (
                   <button
@@ -276,7 +304,9 @@ export function SpeechPlayer() {
                     }`}
                   >
                     <span>{opt.label}</span>
-                    <span className={`text-[10px] font-normal ${voice === opt.value ? "text-indigo-200" : "text-gray-400"}`}>
+                    <span
+                      className={`text-[10px] font-normal ${voice === opt.value ? "text-indigo-200" : "text-gray-400"}`}
+                    >
                       {opt.sub}
                     </span>
                   </button>
@@ -286,20 +316,31 @@ export function SpeechPlayer() {
 
             {/* Sleep timer row */}
             <div className="flex items-center justify-between">
-              <span className="text-xs text-gray-400 dark:text-gray-500 font-medium">Hẹn giờ tắt</span>
+              <span className="text-xs text-gray-400 dark:text-gray-500 font-medium">
+                Hẹn giờ tắt
+              </span>
               <button
                 onClick={() => setShowTimerPanel((v) => !v)}
                 className={`flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border transition-colors ${
                   sleepRemaining !== null
                     ? "bg-amber-500 border-amber-500 text-white"
                     : showTimerPanel
-                    ? "bg-indigo-50 dark:bg-indigo-950 border-indigo-300 dark:border-indigo-700 text-indigo-600 dark:text-indigo-400"
-                    : "border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-400"
+                      ? "bg-indigo-50 dark:bg-indigo-950 border-indigo-300 dark:border-indigo-700 text-indigo-600 dark:text-indigo-400"
+                      : "border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-400"
                 }`}
               >
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                <svg
+                  className="w-3.5 h-3.5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"
+                  />
                 </svg>
                 {sleepRemaining !== null ? fmtTime(sleepRemaining) : "Hẹn giờ"}
               </button>
@@ -315,7 +356,10 @@ export function SpeechPlayer() {
                       Tắt sau {fmtTime(sleepRemaining)}
                     </span>
                     <button
-                      onClick={() => { cancelSleepTimer(); setShowTimerPanel(false); }}
+                      onClick={() => {
+                        cancelSleepTimer();
+                        setShowTimerPanel(false);
+                      }}
                       className="text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors text-xs font-medium"
                     >
                       Hủy
@@ -350,7 +394,11 @@ export function SpeechPlayer() {
                   />
                   <button
                     onClick={handleCustomTimer}
-                    disabled={!customMinutes || isNaN(parseFloat(customMinutes)) || parseFloat(customMinutes) <= 0}
+                    disabled={
+                      !customMinutes ||
+                      isNaN(parseFloat(customMinutes)) ||
+                      parseFloat(customMinutes) <= 0
+                    }
                     className="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 transition-colors"
                   >
                     Đặt
@@ -381,15 +429,24 @@ export function SpeechPlayer() {
                     >
                       {para.trim()}
                     </p>
-                  ) : null
+                  ) : null,
                 )}
               </div>
             </div>
           ) : (
             <div className="flex flex-col items-center gap-2 py-12 text-gray-400">
-              <svg className="w-10 h-10 text-gray-200 dark:text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              <svg
+                className="w-10 h-10 text-gray-200 dark:text-gray-700"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.5}
+                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                />
               </svg>
               <p className="text-sm">Không có nội dung cho chương này.</p>
             </div>

@@ -21,7 +21,7 @@ export function useSleepTimer(onExpire: () => void) {
     }
     const id = setTimeout(
       () => setRemaining((r) => (r !== null ? r - 1 : null)),
-      1000
+      1000,
     );
     return () => clearTimeout(id);
   }, [remaining]);
