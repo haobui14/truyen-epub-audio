@@ -5,6 +5,8 @@ import { usePlayerContext } from "@/context/PlayerContext";
 import { SpeedControl } from "./SpeedControl";
 import { Spinner } from "@/components/ui/Spinner";
 
+const SLEEP_PRESETS = [15, 30, 45, 60] as const;
+
 const VOICE_OPTIONS = [
   { value: "vi-VN-HoaiMyNeural", label: "HoaiMy", sub: "Nữ" },
   { value: "vi-VN-NamMinhNeural", label: "NamMinh", sub: "Nam" },
@@ -28,9 +30,14 @@ export function SpeechPlayer() {
     changeRate,
     restartChunk,
     cacheStatuses,
+    sleepRemaining,
+    setSleepTimer,
+    cancelSleepTimer,
   } = usePlayerContext();
 
   const [activeTab, setActiveTab] = useState<"listen" | "read">("listen");
+  const [showTimerPanel, setShowTimerPanel] = useState(false);
+  const [customMinutes, setCustomMinutes] = useState("");
 
   // Null-guard: track should always be set before this component renders
   if (!track) return null;
@@ -54,6 +61,17 @@ export function SpeechPlayer() {
     const m = Math.floor(s / 60);
     const sec = Math.floor(s % 60);
     return `${m}:${sec.toString().padStart(2, "0")}`;
+  }
+
+  function handleSetTimer(mins: number) {
+    setSleepTimer(mins);
+    setShowTimerPanel(false);
+    setCustomMinutes("");
+  }
+
+  function handleCustomTimer() {
+    const mins = parseFloat(customMinutes);
+    if (!isNaN(mins) && mins > 0) handleSetTimer(mins);
   }
 
   return (
@@ -237,7 +255,7 @@ export function SpeechPlayer() {
             </p>
           )}
 
-          {/* Speed + Voice */}
+          {/* Speed + Voice + Sleep Timer */}
           <div className="flex flex-col gap-3 pt-1 border-t border-gray-100 dark:border-gray-800">
             <div className="flex items-center justify-between">
               <span className="text-xs text-gray-400 dark:text-gray-500 font-medium">Tốc độ</span>
@@ -265,6 +283,81 @@ export function SpeechPlayer() {
                 ))}
               </div>
             </div>
+
+            {/* Sleep timer row */}
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-gray-400 dark:text-gray-500 font-medium">Hẹn giờ tắt</span>
+              <button
+                onClick={() => setShowTimerPanel((v) => !v)}
+                className={`flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border transition-colors ${
+                  sleepRemaining !== null
+                    ? "bg-amber-500 border-amber-500 text-white"
+                    : showTimerPanel
+                    ? "bg-indigo-50 dark:bg-indigo-950 border-indigo-300 dark:border-indigo-700 text-indigo-600 dark:text-indigo-400"
+                    : "border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-400"
+                }`}
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                </svg>
+                {sleepRemaining !== null ? fmtTime(sleepRemaining) : "Hẹn giờ"}
+              </button>
+            </div>
+
+            {/* Timer panel */}
+            {showTimerPanel && (
+              <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3 flex flex-col gap-2.5">
+                {sleepRemaining !== null && (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-medium">
+                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                      Tắt sau {fmtTime(sleepRemaining)}
+                    </span>
+                    <button
+                      onClick={() => { cancelSleepTimer(); setShowTimerPanel(false); }}
+                      className="text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors text-xs font-medium"
+                    >
+                      Hủy
+                    </button>
+                  </div>
+                )}
+
+                {/* Preset buttons */}
+                <div className="grid grid-cols-4 gap-1.5">
+                  {SLEEP_PRESETS.map((mins) => (
+                    <button
+                      key={mins}
+                      onClick={() => handleSetTimer(mins)}
+                      className="py-1.5 rounded-lg text-xs font-medium border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-indigo-50 dark:hover:bg-indigo-950 hover:border-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+                    >
+                      {mins < 60 ? `${mins}p` : "1g"}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Custom input */}
+                <div className="flex gap-1.5">
+                  <input
+                    type="number"
+                    min="1"
+                    max="300"
+                    placeholder="Nhập số phút..."
+                    value={customMinutes}
+                    onChange={(e) => setCustomMinutes(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleCustomTimer()}
+                    className="flex-1 px-2.5 py-1.5 rounded-lg text-xs border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 placeholder-gray-400 focus:outline-none focus:border-indigo-400 dark:focus:border-indigo-500"
+                  />
+                  <button
+                    onClick={handleCustomTimer}
+                    disabled={!customMinutes || isNaN(parseFloat(customMinutes)) || parseFloat(customMinutes) <= 0}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 transition-colors"
+                  >
+                    Đặt
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

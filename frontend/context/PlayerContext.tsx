@@ -4,6 +4,7 @@ import {
   useContext,
   useState,
   useCallback,
+  useRef,
   type ReactNode,
 } from "react";
 import type { Chapter, Book } from "@/types";
@@ -12,6 +13,7 @@ import {
   useChapterAudioPreload,
   type CacheStatus,
 } from "@/hooks/useChapterAudioPreload";
+import { useSleepTimer } from "@/hooks/useSleepTimer";
 
 const VOICE_STORAGE_KEY = "tts-voice";
 
@@ -56,6 +58,11 @@ interface PlayerContextValue {
 
   // Cache statuses (from useChapterAudioPreload)
   cacheStatuses: Record<string, CacheStatus>;
+
+  // Sleep timer
+  sleepRemaining: number | null; // seconds remaining, null = inactive
+  setSleepTimer: (minutes: number) => void;
+  cancelSleepTimer: () => void;
 }
 
 const PlayerContext = createContext<PlayerContextValue | null>(null);
@@ -99,6 +106,16 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
     voice
   );
 
+  // Sleep timer — pause playback when it fires
+  // Use a ref so the stable callback can always see the latest playerState
+  const playerStateRef = useRef(playerState);
+  playerStateRef.current = playerState;
+  const handleSleepExpire = useCallback(() => {
+    if (playerStateRef.current.isPlaying) playerStateRef.current.toggle();
+  }, []);
+  const { remaining: sleepRemaining, setTimer: setSleepTimer, cancelTimer: cancelSleepTimer } =
+    useSleepTimer(handleSleepExpire);
+
   const value: PlayerContextValue = {
     track,
     setTrack,
@@ -107,6 +124,9 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
     setVoice,
     ...playerState,
     cacheStatuses,
+    sleepRemaining,
+    setSleepTimer,
+    cancelSleepTimer,
   };
 
   return (

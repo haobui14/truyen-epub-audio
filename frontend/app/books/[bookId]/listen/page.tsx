@@ -97,6 +97,11 @@ export default function ListenPage({
     navigateTo,
   };
 
+  // Stable primitive IDs — change from null→string when React Query data
+  // arrives, which re-fires the effect after a hard page reload.
+  const bookDataId = book?.id ?? null;
+  const chapterDataId = currentChapter?.id ?? null;
+
   // Sync current track into the global PlayerContext so the MiniPlayer
   // keeps playing even when the user navigates to a different route.
   // Deps are stable primitives only — volatile values are read from the ref.
@@ -131,10 +136,8 @@ export default function ListenPage({
           : undefined,
       autoPlay,
     });
-  // Only re-run when the actual chapter/book identity changes, not when
-  // object references from React Query are refreshed.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookId, chapterId, setTrack]);
+  }, [bookId, chapterId, setTrack, bookDataId, chapterDataId, isLoadingText]);
 
   if (!chapterId) {
     return (
