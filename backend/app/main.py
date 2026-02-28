@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.services import task_queue
-from app.routers import books, chapters, upload, tts
+from app.routers import auth, books, chapters, progress, upload, tts
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -31,16 +31,18 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.allowed_origins,
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "DELETE"],
-    allow_headers=["Content-Type"],
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
+app.include_router(auth.router)
 app.include_router(books.router)
 app.include_router(chapters.router)
 app.include_router(upload.router)
 app.include_router(tts.router)
+app.include_router(progress.router)
 
 
 @app.get("/api/health")

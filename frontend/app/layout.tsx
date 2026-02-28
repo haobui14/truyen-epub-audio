@@ -4,6 +4,9 @@ import "./globals.css";
 import { Providers } from "./providers";
 import Link from "next/link";
 import { DarkModeToggle } from "@/components/ui/DarkModeToggle";
+import { HeaderAuth } from "@/components/ui/HeaderAuth";
+import { MiniPlayer } from "@/components/player/MiniPlayer";
+import { PlayerPadding } from "@/components/player/PlayerPadding";
 
 const geist = Geist({ subsets: ["latin"], variable: "--font-geist-sans" });
 
@@ -52,6 +55,7 @@ export default function RootLayout({
                 </span>
               </Link>
               <div className="flex items-center gap-1.5 sm:gap-2">
+                <HeaderAuth />
                 <DarkModeToggle />
                 <Link
                   href="/upload"
@@ -65,7 +69,10 @@ export default function RootLayout({
               </div>
             </div>
           </header>
-          <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6">{children}</main>
+          <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6">
+            {children}
+            <PlayerPadding />
+          </main>
           <footer className="border-t border-gray-200/60 dark:border-gray-800/60 bg-white/50 dark:bg-gray-900/50 mt-auto">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-400 dark:text-gray-500">
               <p>&copy; {new Date().getFullYear()} TruyệnAudio. Nghe và đọc truyện EPUB tiếng Việt.</p>
@@ -85,6 +92,7 @@ export default function RootLayout({
               </div>
             </div>
           </footer>
+          <MiniPlayer />
         </Providers>
       </body>
     </html>

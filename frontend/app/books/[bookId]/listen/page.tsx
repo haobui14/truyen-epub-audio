@@ -1,11 +1,13 @@
 "use client";
-import { use, useCallback } from "react";
+import { use, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { isLoggedIn } from "@/lib/auth";
 import { SpeechPlayer } from "@/components/player/SpeechPlayer";
 import { Spinner } from "@/components/ui/Spinner";
+import { usePlayerContext } from "@/context/PlayerContext";
 
 export default function ListenPage({
   params,
@@ -15,6 +17,7 @@ export default function ListenPage({
   const { bookId } = use(params);
   const searchParams = useSearchParams();
   const chapterId = searchParams.get("chapter");
+  const autoPlay = searchParams.get("autoplay") === "1";
   const router = useRouter();
 
   const { data: book } = useQuery({
@@ -34,20 +37,104 @@ export default function ListenPage({
     enabled: !!chapterId,
   });
 
+  // Fetch saved listening progress
+  const { data: listenProgress } = useQuery({
+    queryKey: ["progress", chapterId, "listen"],
+    queryFn: () => api.getChapterProgress(chapterId!, "listen"),
+    enabled: !!chapterId && isLoggedIn(),
+  });
+
   const allChapters = chaptersData?.items ?? [];
   const currentChapter = allChapters.find((c) => c.id === chapterId) ?? null;
   const currentIndex = currentChapter?.chapter_index ?? -1;
 
-  // All chapters are navigable — speech reads any chapter instantly
   const prevChapter = allChapters.find((c) => c.chapter_index === currentIndex - 1) ?? null;
   const nextChapter = allChapters.find((c) => c.chapter_index === currentIndex + 1) ?? null;
 
+  // Chapters to pre-download for offline: current ±2
+  const neighborChapters = [-2, -1, 0, 1, 2]
+    .map((offset) => allChapters.find((c) => c.chapter_index === currentIndex + offset))
+    .filter((c): c is NonNullable<typeof c> => !!c && c.id !== chapterId)
+    .concat(currentChapter ? [currentChapter] : []) // current gets highest priority (added last = iterated first in hook)
+    .map((c) => ({ id: c.id }));
+
   const navigateTo = useCallback(
-    (chapter: typeof currentChapter) => {
-      if (chapter) router.push(`/books/${bookId}/listen?chapter=${chapter.id}`);
+    (chapter: typeof currentChapter, autoplay = false) => {
+      if (chapter) {
+        const url = `/books/${bookId}/listen?chapter=${chapter.id}${autoplay ? "&autoplay=1" : ""}`;
+        router.push(url);
+      }
     },
     [bookId, router]
   );
+
+  const { setTrack } = usePlayerContext();
+
+  // Keep a ref of all volatile values so the useEffect below never has
+  // object/array identity in its dependency list (prevents infinite loops).
+  const latestRef = useRef({
+    currentChapter,
+    book,
+    chapterText,
+    isLoadingText,
+    prevChapter,
+    nextChapter,
+    neighborChapters,
+    listenProgress,
+    autoPlay,
+    navigateTo,
+  });
+  latestRef.current = {
+    currentChapter,
+    book,
+    chapterText,
+    isLoadingText,
+    prevChapter,
+    nextChapter,
+    neighborChapters,
+    listenProgress,
+    autoPlay,
+    navigateTo,
+  };
+
+  // Sync current track into the global PlayerContext so the MiniPlayer
+  // keeps playing even when the user navigates to a different route.
+  // Deps are stable primitives only — volatile values are read from the ref.
+  useEffect(() => {
+    const {
+      currentChapter,
+      book,
+      chapterText,
+      isLoadingText,
+      prevChapter,
+      nextChapter,
+      neighborChapters,
+      listenProgress,
+      autoPlay,
+      navigateTo,
+    } = latestRef.current;
+    if (!currentChapter || !book) return;
+    setTrack({
+      bookId,
+      chapterId: chapterId!,
+      chapter: currentChapter,
+      book,
+      text: chapterText?.text_content,
+      isLoadingText,
+      onPrev: prevChapter ? () => navigateTo(prevChapter) : null,
+      onNext: nextChapter ? () => navigateTo(nextChapter) : null,
+      onEnded: nextChapter ? () => navigateTo(nextChapter, true) : undefined,
+      neighborChapters,
+      initialChunkIndex:
+        listenProgress?.progress_value != null
+          ? Math.floor(listenProgress.progress_value)
+          : undefined,
+      autoPlay,
+    });
+  // Only re-run when the actual chapter/book identity changes, not when
+  // object references from React Query are refreshed.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bookId, chapterId, setTrack]);
 
   if (!chapterId) {
     return (
@@ -95,14 +182,7 @@ export default function ListenPage({
       </div>
 
       {/* Player */}
-      <SpeechPlayer
-        chapter={currentChapter}
-        book={book}
-        text={chapterText?.text_content}
-        isLoadingText={isLoadingText}
-        onPrev={prevChapter ? () => navigateTo(prevChapter) : null}
-        onNext={nextChapter ? () => navigateTo(nextChapter) : null}
-      />
+      <SpeechPlayer />
 
       {/* Chapter list */}
       {allChapters.length > 1 && (

@@ -1,8 +1,7 @@
 "use client";
 import { useState } from "react";
 import Image from "next/image";
-import type { Chapter, Book } from "@/types";
-import { useSpeechPlayer } from "@/hooks/useSpeechPlayer";
+import { usePlayerContext } from "@/context/PlayerContext";
 import { SpeedControl } from "./SpeedControl";
 import { Spinner } from "@/components/ui/Spinner";
 
@@ -12,34 +11,15 @@ const VOICE_OPTIONS = [
   { value: "gtts", label: "Mặc định", sub: "gTTS" },
 ] as const;
 
-const VOICE_STORAGE_KEY = "tts-voice";
-
-interface SpeechPlayerProps {
-  chapter: Chapter;
-  book: Book;
-  text: string | null | undefined;
-  isLoadingText: boolean;
-  onPrev: (() => void) | null;
-  onNext: (() => void) | null;
-}
-
-export function SpeechPlayer({
-  chapter,
-  book,
-  text,
-  isLoadingText,
-  onPrev,
-  onNext,
-}: SpeechPlayerProps) {
-  const [voice, setVoice] = useState<string>(() => {
-    if (typeof window === "undefined") return "vi-VN-HoaiMyNeural";
-    return localStorage.getItem(VOICE_STORAGE_KEY) ?? "vi-VN-HoaiMyNeural";
-  });
-  const [activeTab, setActiveTab] = useState<"listen" | "read">("listen");
-
+export function SpeechPlayer() {
   const {
+    track,
+    voice,
+    setVoice,
     isPlaying,
     isBuffering,
+    isOffline,
+    mode,
     progress,
     chunkIndex,
     totalChunks,
@@ -47,17 +27,34 @@ export function SpeechPlayer({
     toggle,
     changeRate,
     restartChunk,
-  } = useSpeechPlayer(chapter.id, text, voice, onNext ?? undefined);
+    cacheStatuses,
+  } = usePlayerContext();
+
+  const [activeTab, setActiveTab] = useState<"listen" | "read">("listen");
+
+  // Null-guard: track should always be set before this component renders
+  if (!track) return null;
+
+  const { chapter, book, text, isLoadingText, onPrev, onNext } = track;
+
+  const offlineReadyCount = Object.values(cacheStatuses).filter((s) => s === "cached").length;
+  const downloadingCount = Object.values(cacheStatuses).filter((s) => s === "downloading").length;
 
   function handleVoiceChange(newVoice: string) {
     setVoice(newVoice);
-    localStorage.setItem(VOICE_STORAGE_KEY, newVoice);
     restartChunk();
   }
 
-  const ready = !isLoadingText && !!text;
+  const ready = !isLoadingText && (mode === "full" || !!text);
   const showSpinner = isLoadingText || isBuffering;
   const progressPct = Math.round(progress * 100);
+
+  /** Format seconds to M:SS */
+  function fmtTime(s: number) {
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, "0")}`;
+  }
 
   return (
     <div className="w-full rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-sm overflow-hidden">
@@ -143,13 +140,23 @@ export function SpeechPlayer({
             </div>
             <div className="flex justify-between text-xs text-gray-400 dark:text-gray-500 mt-1.5">
               {totalChunks > 0 ? (
-                <>
-                  <span>Đoạn {chunkIndex + 1} / {totalChunks}</span>
-                  <span>{progressPct}%</span>
-                </>
+                mode === "full" ? (
+                  <>
+                    <span className="flex items-center gap-1">
+                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400" title="Đang phát từ bộ nhớ" />
+                      {fmtTime(chunkIndex)}
+                    </span>
+                    <span>{fmtTime(totalChunks)}</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Đoạn {chunkIndex + 1} / {totalChunks}</span>
+                    <span>{progressPct}%</span>
+                  </>
+                )
               ) : (
                 <span className="text-gray-300 dark:text-gray-600 italic">
-                  {isLoadingText ? "Đang tải nội dung..." : "Chưa có nội dung"}
+                  {isLoadingText ? "Đang tải nội dung..." : "Đang chuẩn bị..."}
                 </span>
               )}
             </div>
@@ -199,10 +206,34 @@ export function SpeechPlayer({
             </button>
           </div>
 
-          {/* Buffering status */}
+          {/* Buffering / offline status */}
           {isBuffering && (
-            <p className="text-center text-xs text-indigo-400 dark:text-indigo-500 -mt-2">
-              Đang tải đoạn tiếp theo...
+            <p className="text-center text-xs -mt-2 flex items-center justify-center gap-1.5">
+              {isOffline ? (
+                <>
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                  <span className="text-amber-500 dark:text-amber-400">Mất kết nối, đang chờ...</span>
+                </>
+              ) : (
+                <span className="text-indigo-400 dark:text-indigo-500">Đang tải âm thanh...</span>
+              )}
+            </p>
+          )}
+
+          {/* Offline-ready indicator */}
+          {(offlineReadyCount > 0 || downloadingCount > 0) && !isBuffering && (
+            <p className="text-center text-xs -mt-2 flex items-center justify-center gap-1.5 text-gray-400 dark:text-gray-500">
+              {downloadingCount > 0 ? (
+                <>
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
+                  Đang tải sẵn {downloadingCount} chương lân cận...
+                </>
+              ) : (
+                <>
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  {offlineReadyCount} chương lân cận sẵn sàng offline
+                </>
+              )}
             </p>
           )}
 

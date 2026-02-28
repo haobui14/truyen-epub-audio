@@ -120,6 +120,62 @@ async def speak_text(
     return StreamingResponse(io.BytesIO(data), media_type="audio/mpeg")
 
 
+@router.get("/chapter-audio/{chapter_id}")
+async def chapter_full_audio(chapter_id: str, voice: str = "vi-VN-HoaiMyNeural"):
+    """
+    Generate and return the full chapter as a single MP3.
+    The client caches this for offline playback.
+    """
+    import tempfile, os
+    from app.services.tts_service import generate_audio
+
+    db = get_client()
+    chapter = (
+        db.table("chapters")
+        .select("id,text_content")
+        .eq("id", chapter_id)
+        .single()
+        .execute()
+    )
+    if not chapter.data:
+        raise HTTPException(status_code=404, detail="Chapter not found")
+
+    text = (chapter.data.get("text_content") or "").strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="Chapter has no text content")
+
+    # For edge-tts voices try edge-tts first, fall back to gTTS
+    if voice in EDGE_TTS_VOICES:
+        try:
+            data = await _speak_edge(text, voice)
+            return StreamingResponse(
+                io.BytesIO(data),
+                media_type="audio/mpeg",
+                headers={"Cache-Control": "public, max-age=86400"},
+            )
+        except Exception:
+            pass  # fall through to gTTS
+
+    # gTTS path — uses generate_audio which handles chunking + concat
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+        tmp_path = f.name
+    try:
+        await generate_audio(text, "gtts", tmp_path)
+        with open(tmp_path, "rb") as f:
+            data = f.read()
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="audio/mpeg",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
 @router.get("/status/{book_id}")
 async def get_tts_status(book_id: str):
     db = get_client()

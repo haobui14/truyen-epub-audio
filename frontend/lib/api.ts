@@ -1,8 +1,14 @@
 import { API_URL } from "./constants";
-import type { Book, Chapter, TtsStatus, AudioSummary, PaginatedChapters } from "@/types";
+import { getToken } from "./auth";
+import type { Book, Chapter, TtsStatus, AudioSummary, PaginatedChapters, UserProgress } from "@/types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, init);
+  const token = getToken();
+  const headers = new Headers(init?.headers);
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  const res = await fetch(`${API_URL}${path}`, { ...init, headers });
   if (!res.ok) {
     const err = await res.text();
     throw new Error(err || `HTTP ${res.status}`);
@@ -63,4 +69,47 @@ export const api = {
       body: form,
     });
   },
+
+  // Auth
+  login: (email: string, password: string) =>
+    request<{ access_token: string; user_id: string; email: string }>(
+      "/api/auth/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      }
+    ),
+  signup: (email: string, password: string) =>
+    request<{ access_token: string; user_id: string; email: string }>(
+      "/api/auth/signup",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      }
+    ),
+  getMe: () => request<{ id: string; email: string }>("/api/auth/me"),
+
+  // Progress
+  saveProgress: (data: {
+    book_id: string;
+    chapter_id: string;
+    progress_type: "read" | "listen";
+    progress_value: number;
+    total_value?: number;
+  }) =>
+    request<UserProgress>("/api/progress", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }),
+  getChapterProgress: (chapterId: string, type: "read" | "listen") =>
+    request<UserProgress | null>(
+      `/api/progress/chapter/${chapterId}?progress_type=${type}`
+    ),
+  getBookProgress: (bookId: string, type?: string) =>
+    request<UserProgress[]>(
+      `/api/progress/book/${bookId}${type ? `?progress_type=${type}` : ""}`
+    ),
 };

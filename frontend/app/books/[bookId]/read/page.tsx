@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { isLoggedIn } from "@/lib/auth";
+import { useProgressSync } from "@/hooks/useProgressSync";
 import { Spinner } from "@/components/ui/Spinner";
 
 const FONT_SIZES = [14, 16, 18, 20, 22, 24] as const;
@@ -84,11 +86,24 @@ export default function ReadPage({
     enabled: !!chapterId,
   });
 
+  // Fetch saved reading progress
+  const { data: savedProgress } = useQuery({
+    queryKey: ["progress", chapterId, "read"],
+    queryFn: () => api.getChapterProgress(chapterId!, "read"),
+    enabled: !!chapterId && isLoggedIn(),
+  });
+
   const allChapters = chaptersData?.items ?? [];
   const currentChapter = allChapters.find((c) => c.id === chapterId) ?? null;
   const currentIndex = currentChapter?.chapter_index ?? -1;
   const prevChapter = allChapters.find((c) => c.chapter_index === currentIndex - 1) ?? null;
   const nextChapter = allChapters.find((c) => c.chapter_index === currentIndex + 1) ?? null;
+
+  const { reportProgress } = useProgressSync({
+    bookId,
+    chapterId: chapterId ?? "",
+    progressType: "read",
+  });
 
   const navigateTo = useCallback(
     (chapter: typeof currentChapter) => {
@@ -99,10 +114,37 @@ export default function ReadPage({
     [bookId, router]
   );
 
-  // Scroll to top on chapter change
+  // Scroll to top on chapter change (or restore saved position)
+  const restoredRef = useRef(false);
   useEffect(() => {
-    contentRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    restoredRef.current = false;
+    window.scrollTo({ top: 0 });
   }, [chapterId]);
+
+  // Restore saved scroll position after text loads
+  useEffect(() => {
+    if (restoredRef.current || !savedProgress?.progress_value || !chapterText) return;
+    restoredRef.current = true;
+    // Wait for content to render
+    requestAnimationFrame(() => {
+      const scrollMax = document.documentElement.scrollHeight - window.innerHeight;
+      const target = (savedProgress.progress_value / 100) * scrollMax;
+      window.scrollTo({ top: target, behavior: "smooth" });
+    });
+  }, [savedProgress, chapterText]);
+
+  // Track scroll progress
+  useEffect(() => {
+    if (!chapterId || !chapterText) return;
+    const handleScroll = () => {
+      const scrollMax = document.documentElement.scrollHeight - window.innerHeight;
+      if (scrollMax <= 0) return;
+      const pct = Math.round((window.scrollY / scrollMax) * 100);
+      reportProgress(Math.min(pct, 100));
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, [chapterId, chapterText, reportProgress]);
 
   function handleFontSize(size: number) {
     setFontSize(size);

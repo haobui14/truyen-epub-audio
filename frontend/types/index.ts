@@ -51,6 +51,17 @@ export interface TtsStatus {
   }>;
 }
 
+export interface UserProgress {
+  id: string;
+  user_id: string;
+  book_id: string;
+  chapter_id: string;
+  progress_type: "read" | "listen";
+  progress_value: number;
+  total_value?: number;
+  updated_at: string;
+}
+
 export const VOICES = [
   { value: "vi-VN-HoaiMyNeural", label: "HoaiMy (Nữ)" },
   { value: "vi-VN-NamMinhNeural", label: "NamMinh (Nam)" },
