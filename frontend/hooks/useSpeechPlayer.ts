@@ -172,7 +172,10 @@ export function useSpeechPlayer(
       audio.onloadedmetadata = () => {
         // Seek to saved position on manual navigation (not autoplay)
         if (!startPlay && initialChunkRef.current > 0 && audio.duration > 0) {
-          audio.currentTime = Math.min(initialChunkRef.current, audio.duration - 1);
+          audio.currentTime = Math.min(
+            initialChunkRef.current,
+            audio.duration - 1,
+          );
         }
         updateProgress();
       };
@@ -396,7 +399,10 @@ export function useSpeechPlayer(
       // Streaming mode
       const maxIdx = chunksRef.current.length - 1;
       if (maxIdx < 0) return;
-      const idx = Math.max(0, Math.min(Math.round(chunkRef.current + delta), maxIdx));
+      const idx = Math.max(
+        0,
+        Math.min(Math.round(chunkRef.current + delta), maxIdx),
+      );
       if (idx === chunkRef.current && Math.round(delta) === 0) return;
 
       const wasPlaying = !stoppedRef.current;
@@ -425,7 +431,12 @@ export function useSpeechPlayer(
   // When initialChunkIndex arrives late (async progress load), apply it if player hasn't started.
   // This handles the case where listenProgress loads after the chapter-change effect has run.
   useEffect(() => {
-    if (!stoppedRef.current || initialChunkIndex == null || initialChunkIndex <= 0) return;
+    if (
+      !stoppedRef.current ||
+      initialChunkIndex == null ||
+      initialChunkIndex <= 0
+    )
+      return;
     if (modeRef.current === "streaming") {
       const maxIdx = chunksRef.current.length - 1;
       if (maxIdx >= 0) {

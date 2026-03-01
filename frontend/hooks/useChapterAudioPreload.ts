@@ -26,7 +26,7 @@ function dlKey(chapterId: string, voice: string) {
  */
 export function useChapterAudioPreload(
   chapters: { id: string }[],
-  voice: string
+  voice: string,
 ) {
   const [statuses, setStatuses] = useState<Record<string, CacheStatus>>({});
   const mountedRef = useRef(true);
@@ -62,12 +62,14 @@ export function useChapterAudioPreload(
         try {
           if (typeof navigator !== "undefined" && !navigator.onLine) {
             await new Promise<void>((resolve) =>
-              window.addEventListener("online", () => resolve(), { once: true })
+              window.addEventListener("online", () => resolve(), {
+                once: true,
+              }),
             );
           }
 
           const res = await fetch(
-            `${API_URL}/api/tts/chapter-audio/${id}?voice=${encodeURIComponent(voice)}`
+            `${API_URL}/api/tts/chapter-audio/${id}?voice=${encodeURIComponent(voice)}`,
           );
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const blob = await res.blob();

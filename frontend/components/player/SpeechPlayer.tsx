@@ -80,7 +80,10 @@ export function SpeechPlayer() {
   function handleProgressClick(e: React.MouseEvent<HTMLDivElement>) {
     if (!ready || totalChunks === 0) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const fraction = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const fraction = Math.max(
+      0,
+      Math.min(1, (e.clientX - rect.left) / rect.width),
+    );
     if (mode === "full") {
       // Full mode: delta in "5% units" (20 = full span)
       seekChunk((fraction - progress) * 20);
@@ -91,7 +94,6 @@ export function SpeechPlayer() {
 
   return (
     <div className="w-full rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-sm overflow-hidden">
-
       {/* ── HEADER ── */}
       <div className="flex items-center gap-3 px-4 py-3.5 border-b border-gray-100 dark:border-gray-800">
         <div className="w-12 h-12 rounded-xl overflow-hidden bg-indigo-100 dark:bg-indigo-950 shrink-0 shadow-sm">
@@ -123,7 +125,6 @@ export function SpeechPlayer() {
 
       {/* ── PLAYER ── */}
       <div className="px-5 py-5 flex flex-col gap-4">
-
         {/* Progress bar */}
         <div>
           <div
@@ -141,17 +142,24 @@ export function SpeechPlayer() {
               mode === "full" ? (
                 <>
                   <span className="text-[11px] text-gray-400 dark:text-gray-500 flex items-center gap-1">
-                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400" title="Từ bộ nhớ" />
+                    <span
+                      className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400"
+                      title="Từ bộ nhớ"
+                    />
                     {fmtTime(chunkIndex)}
                   </span>
-                  <span className="text-[11px] text-gray-400 dark:text-gray-500">{fmtTime(totalChunks)}</span>
+                  <span className="text-[11px] text-gray-400 dark:text-gray-500">
+                    {fmtTime(totalChunks)}
+                  </span>
                 </>
               ) : (
                 <>
                   <span className="text-[11px] text-gray-400 dark:text-gray-500">
                     {chunkIndex + 1} / {totalChunks}
                   </span>
-                  <span className="text-[11px] text-gray-400 dark:text-gray-500">{progressPct}%</span>
+                  <span className="text-[11px] text-gray-400 dark:text-gray-500">
+                    {progressPct}%
+                  </span>
                 </>
               )
             ) : (
@@ -202,7 +210,11 @@ export function SpeechPlayer() {
                 <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
               </svg>
             ) : (
-              <svg className="w-6 h-6 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+              <svg
+                className="w-6 h-6 ml-0.5"
+                fill="currentColor"
+                viewBox="0 0 24 24"
+              >
                 <path d="M8 5v14l11-7z" />
               </svg>
             )}
@@ -240,12 +252,16 @@ export function SpeechPlayer() {
               {isOffline ? (
                 <>
                   <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                  <span className="text-amber-500 dark:text-amber-400">Mất kết nối, đang chờ...</span>
+                  <span className="text-amber-500 dark:text-amber-400">
+                    Mất kết nối, đang chờ...
+                  </span>
                 </>
               ) : (
                 <>
                   <span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
-                  <span className="text-indigo-400 dark:text-indigo-500">Đang tải âm thanh...</span>
+                  <span className="text-indigo-400 dark:text-indigo-500">
+                    Đang tải âm thanh...
+                  </span>
                 </>
               )}
             </span>
@@ -259,16 +275,19 @@ export function SpeechPlayer() {
 
         {/* ── CONTROLS STRIP ── */}
         <div className="flex flex-col gap-3 pt-2 border-t border-gray-100 dark:border-gray-800">
-
           {/* Speed */}
           <div className="flex items-center justify-between">
-            <span className="text-xs text-gray-400 dark:text-gray-500 font-medium w-16 shrink-0">Tốc độ</span>
+            <span className="text-xs text-gray-400 dark:text-gray-500 font-medium w-16 shrink-0">
+              Tốc độ
+            </span>
             <SpeedControl value={rate} onChange={changeRate} />
           </div>
 
           {/* Voices — all in one row, grouped */}
           <div className="flex items-start gap-2">
-            <span className="text-xs text-gray-400 dark:text-gray-500 font-medium w-16 shrink-0 pt-1">Giọng</span>
+            <span className="text-xs text-gray-400 dark:text-gray-500 font-medium w-16 shrink-0 pt-1">
+              Giọng
+            </span>
             <div className="flex gap-1.5 flex-wrap">
               {/* Backend voices (indigo) */}
               {BACKEND_VOICES.map((opt) => (
@@ -288,7 +307,9 @@ export function SpeechPlayer() {
 
               {/* Divider if native voices exist */}
               {isNative && (
-                <span className="self-center text-gray-200 dark:text-gray-700 text-xs select-none">|</span>
+                <span className="self-center text-gray-200 dark:text-gray-700 text-xs select-none">
+                  |
+                </span>
               )}
 
               {/* Native (Capacitor) voices — shown only in app */}
@@ -307,7 +328,9 @@ export function SpeechPlayer() {
                   </button>
                   {nativeVoices.map((nv) => {
                     const nvKey = `native:${nv.index}`;
-                    const label = nv.name.replace(/^(Google|Samsung)\s+/i, "").split(/\s+/)[0];
+                    const label = nv.name
+                      .replace(/^(Google|Samsung)\s+/i, "")
+                      .split(/\s+/)[0];
                     return (
                       <button
                         key={nvKey}
@@ -325,14 +348,14 @@ export function SpeechPlayer() {
                   })}
                 </>
               )}
-
-
             </div>
           </div>
 
           {/* Sleep timer */}
           <div className="flex items-center justify-between">
-            <span className="text-xs text-gray-400 dark:text-gray-500 font-medium w-16 shrink-0">Hẹn giờ</span>
+            <span className="text-xs text-gray-400 dark:text-gray-500 font-medium w-16 shrink-0">
+              Hẹn giờ
+            </span>
             <button
               onClick={() => setShowTimerPanel((v) => !v)}
               className={`flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border transition-colors ${
@@ -343,9 +366,18 @@ export function SpeechPlayer() {
                     : "border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-400"
               }`}
             >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+              <svg
+                className="w-3.5 h-3.5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"
+                />
               </svg>
               {sleepRemaining !== null ? fmtTime(sleepRemaining) : "Tắt"}
             </button>
@@ -361,7 +393,10 @@ export function SpeechPlayer() {
                     Tắt sau {fmtTime(sleepRemaining)}
                   </span>
                   <button
-                    onClick={() => { cancelSleepTimer(); setShowTimerPanel(false); }}
+                    onClick={() => {
+                      cancelSleepTimer();
+                      setShowTimerPanel(false);
+                    }}
                     className="text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors text-xs font-medium"
                   >
                     Hủy
@@ -392,7 +427,11 @@ export function SpeechPlayer() {
                 />
                 <button
                   onClick={handleCustomTimer}
-                  disabled={!customMinutes || isNaN(parseFloat(customMinutes)) || parseFloat(customMinutes) <= 0}
+                  disabled={
+                    !customMinutes ||
+                    isNaN(parseFloat(customMinutes)) ||
+                    parseFloat(customMinutes) <= 0
+                  }
                   className="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 transition-colors"
                 >
                   Đặt
@@ -400,7 +439,6 @@ export function SpeechPlayer() {
               </div>
             </div>
           )}
-
         </div>
       </div>
     </div>

@@ -80,7 +80,10 @@ export default function ListenPage({
     .map((offset) =>
       allChapters.find((c) => c.chapter_index === currentIndex + offset),
     )
-    .filter((c): c is NonNullable<typeof c> => !!c && c.id !== chapterId && c.status === "ready")
+    .filter(
+      (c): c is NonNullable<typeof c> =>
+        !!c && c.id !== chapterId && c.status === "ready",
+    )
     .concat(currentChapter?.status === "ready" ? [currentChapter] : [])
     .map((c) => ({ id: c.id }));
 
@@ -165,7 +168,15 @@ export default function ListenPage({
       autoPlay,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookId, chapterId, setTrack, bookDataId, chapterDataId, isLoadingText, listenProgressValue]);
+  }, [
+    bookId,
+    chapterId,
+    setTrack,
+    bookDataId,
+    chapterDataId,
+    isLoadingText,
+    listenProgressValue,
+  ]);
 
   if (!chapterId) {
     return (
@@ -194,19 +205,40 @@ export default function ListenPage({
           href={`/books/${bookId}`}
           className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          <svg
+            className="w-4 h-4"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M15 19l-7-7 7-7"
+            />
           </svg>
-          <span className="hidden sm:inline truncate max-w-48">{book.title}</span>
+          <span className="hidden sm:inline truncate max-w-48">
+            {book.title}
+          </span>
           <span className="sm:hidden">Quay lại</span>
         </Link>
         <Link
           href={`/books/${bookId}/read?chapter=${chapterId}`}
           className="text-xs text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors flex items-center gap-1"
         >
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-              d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+          <svg
+            className="w-3.5 h-3.5"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
+            />
           </svg>
           Đọc
         </Link>

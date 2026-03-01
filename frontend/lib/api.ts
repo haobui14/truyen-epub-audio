@@ -1,6 +1,13 @@
 import { API_URL } from "./constants";
 import { getToken, clearAuth } from "./auth";
-import type { Book, Chapter, TtsStatus, AudioSummary, PaginatedChapters, UserProgress } from "@/types";
+import type {
+  Book,
+  Chapter,
+  TtsStatus,
+  AudioSummary,
+  PaginatedChapters,
+  UserProgress,
+} from "@/types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken();
@@ -31,12 +38,14 @@ export const api = {
   // Chapters
   getBookChapters: (bookId: string, page = 1, pageSize = 100) =>
     request<PaginatedChapters>(
-      `/api/books/${bookId}/chapters?page=${page}&page_size=${pageSize}`
+      `/api/books/${bookId}/chapters?page=${page}&page_size=${pageSize}`,
     ),
   getChapter: (chapterId: string) =>
     request<Chapter>(`/api/chapters/${chapterId}`),
   getChapterText: (chapterId: string) =>
-    request<{ id: string; text_content: string }>(`/api/chapters/${chapterId}/text`),
+    request<{ id: string; text_content: string }>(
+      `/api/chapters/${chapterId}/text`,
+    ),
 
   // TTS
   getTtsStatus: (bookId: string) =>
@@ -52,7 +61,7 @@ export const api = {
   prefetchChapters: (bookId: string, fromIndex: number, count = 3) =>
     request<{ enqueued: number }>(
       `/api/tts/prefetch/${bookId}?from_index=${fromIndex}&count=${count}`,
-      { method: "POST" }
+      { method: "POST" },
     ),
 
   // Audio
@@ -83,7 +92,7 @@ export const api = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
-      }
+      },
     ),
   signup: (email: string, password: string) =>
     request<{ access_token: string; user_id: string; email: string }>(
@@ -92,7 +101,7 @@ export const api = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
-      }
+      },
     ),
   getMe: () => request<{ id: string; email: string }>("/api/auth/me"),
 
@@ -111,10 +120,10 @@ export const api = {
     }),
   getChapterProgress: (chapterId: string, type: "read" | "listen") =>
     request<UserProgress | null>(
-      `/api/progress/chapter/${chapterId}?progress_type=${type}`
+      `/api/progress/chapter/${chapterId}?progress_type=${type}`,
     ),
   getBookProgress: (bookId: string, type?: string) =>
     request<UserProgress[]>(
-      `/api/progress/book/${bookId}${type ? `?progress_type=${type}` : ""}`
+      `/api/progress/book/${bookId}${type ? `?progress_type=${type}` : ""}`,
     ),
 };
