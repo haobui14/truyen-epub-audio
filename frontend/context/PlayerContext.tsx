@@ -9,6 +9,8 @@ import {
 } from "react";
 import type { Chapter, Book } from "@/types";
 import { useSpeechPlayer } from "@/hooks/useSpeechPlayer";
+import { useNativeTTSPlayer } from "@/hooks/useNativeTTSPlayer";
+import { isNativePlatform } from "@/lib/capacitor";
 import {
   useChapterAudioPreload,
   type CacheStatus,
@@ -55,6 +57,7 @@ interface PlayerContextValue {
   toggle: () => void;
   changeRate: (r: number) => void;
   restartChunk: () => void;
+  seekChunk: (delta: number) => void;
 
   // Cache statuses (from useChapterAudioPreload)
   cacheStatuses: Record<string, CacheStatus>;
@@ -73,7 +76,11 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
 
   const [voice, setVoiceState] = useState<string>(() => {
     if (typeof window === "undefined") return "vi-VN-HoaiMyNeural";
-    return localStorage.getItem(VOICE_STORAGE_KEY) ?? "vi-VN-HoaiMyNeural";
+    const stored = localStorage.getItem(VOICE_STORAGE_KEY);
+    // Discard any leftover "browser:" value from the removed feature
+    if (stored && !stored.startsWith("browser:")) return stored;
+    if (isNativePlatform()) return "native:vi-VN-default";
+    return "vi-VN-HoaiMyNeural";
   });
 
   const setTrack = useCallback((newTrack: PlayerTrack) => {
@@ -87,17 +94,35 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
     localStorage.setItem(VOICE_STORAGE_KEY, v);
   }, []);
 
+  // Determine which TTS engine to use based on voice prefix.
+  // Both hooks are always called (React rules), but the inactive one
+  // receives null text so it stays completely idle.
+  const isNativeVoice = voice.startsWith("native:");
+
   // The single instance of the player — survives route changes because
   // PlayerProvider lives in the root layout, not inside any page.
-  const playerState = useSpeechPlayer(
+  const backendPlayer = useSpeechPlayer(
     track?.bookId ?? "",
     track?.chapterId ?? "",
-    track?.text,
-    voice,
+    isNativeVoice ? null : track?.text,
+    isNativeVoice ? null : voice,
     track?.onEnded,
     track?.autoPlay,
     track?.initialChunkIndex,
   );
+
+  // Native TTS (Capacitor — Android/iOS)
+  const nativePlayer = useNativeTTSPlayer(
+    track?.bookId ?? "",
+    track?.chapterId ?? "",
+    isNativeVoice ? track?.text : null,
+    isNativeVoice ? voice : null,
+    track?.onEnded,
+    track?.autoPlay,
+    track?.initialChunkIndex,
+  );
+
+  const playerState = isNativeVoice ? nativePlayer : backendPlayer;
 
   const { cacheStatuses } = useChapterAudioPreload(
     track?.neighborChapters ?? [],

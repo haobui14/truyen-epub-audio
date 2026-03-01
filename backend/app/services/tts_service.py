@@ -44,7 +44,7 @@ async def generate_audio(text: str, voice: str, output_path: str) -> float:
 
 async def _generate_chunk(text: str, output_path: str) -> None:
     """Run gTTS in a thread pool (it's synchronous) with retry logic."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     for attempt in range(3):
         try:
             await loop.run_in_executor(

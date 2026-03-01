@@ -1,14 +1,20 @@
 import type { NextConfig } from "next";
 import withSerwist from "@serwist/next";
 
-const withPWA = withSerwist({
-  swSrc: "app/sw.ts",
-  swDest: "public/sw.js",
-  disable: process.env.NODE_ENV === "development",
-});
+const isCapacitor = process.env.BUILD_TARGET === "capacitor";
+
+const withPWA = isCapacitor
+  ? (config: NextConfig) => config
+  : withSerwist({
+      swSrc: "app/sw.ts",
+      swDest: "public/sw.js",
+      disable: process.env.NODE_ENV === "development",
+    });
 
 const nextConfig: NextConfig = {
+  ...(isCapacitor ? { output: "export" } : {}),
   images: {
+    ...(isCapacitor ? { unoptimized: true } : {}),
     remotePatterns: [
       {
         protocol: "https",

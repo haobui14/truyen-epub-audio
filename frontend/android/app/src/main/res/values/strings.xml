@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">TruyệnAudio</string>
+    <string name="title_activity_main">TruyệnAudio</string>
+    <string name="package_name">com.truyenaudio.app</string>
+    <string name="custom_url_scheme">com.truyenaudio.app</string>
+</resources>

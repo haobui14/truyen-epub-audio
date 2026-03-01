@@ -6,9 +6,16 @@
     "dev": "next dev --webpack",
     "build": "next build --webpack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "build:cap": "BUILD_TARGET=capacitor next build --webpack",
+    "cap:sync": "npx cap sync",
+    "cap:android": "pnpm build:cap && npx cap sync && npx cap open android"
   },
   "dependencies": {
+    "@capacitor-community/text-to-speech": "^8.0.0",
+    "@capacitor/android": "^8.1.0",
+    "@capacitor/cli": "^8.1.0",
+    "@capacitor/core": "^8.1.0",
     "@serwist/next": "^9.5.6",
     "@tanstack/react-query": "^5.90.21",
     "next": "16.1.6",

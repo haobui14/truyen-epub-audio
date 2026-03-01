@@ -1,5 +1,5 @@
 import { API_URL } from "./constants";
-import { getToken } from "./auth";
+import { getToken, clearAuth } from "./auth";
 import type { Book, Chapter, TtsStatus, AudioSummary, PaginatedChapters, UserProgress } from "@/types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -10,6 +10,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   const res = await fetch(`${API_URL}${path}`, { ...init, headers });
   if (!res.ok) {
+    // Expired / invalid token — clear stored credentials so the app
+    // treats the user as logged out immediately and stops retrying.
+    if (res.status === 401) {
+      clearAuth();
+    }
     const err = await res.text();
     throw new Error(err || `HTTP ${res.status}`);
   }

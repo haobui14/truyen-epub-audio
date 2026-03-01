@@ -14,7 +14,7 @@ export function useProgressSync({
   bookId,
   chapterId,
   progressType,
-  debounceMs = 90000,
+  debounceMs = 5000,
 }: ProgressSyncOptions) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedRef = useRef<number>(-1);

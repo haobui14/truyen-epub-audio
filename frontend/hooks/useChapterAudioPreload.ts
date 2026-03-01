@@ -41,7 +41,8 @@ export function useChapterAudioPreload(
   const key = chapters.map((c) => c.id).join(",");
 
   useEffect(() => {
-    if (!chapters.length) return;
+    // Native/browser TTS voices don't use backend audio — skip preloading.
+    if (!chapters.length || voice.startsWith("native:")) return;
 
     for (const { id } of chapters) {
       const dk = dlKey(id, voice);

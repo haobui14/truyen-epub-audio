@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.database import get_client
 from app.dependencies import get_current_user
@@ -27,6 +27,8 @@ async def save_progress(body: ProgressUpsert, user: dict = Depends(get_current_u
         .upsert(data, on_conflict="user_id,book_id,chapter_id,progress_type")
         .execute()
     )
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Failed to save progress")
     return result.data[0]
 
 

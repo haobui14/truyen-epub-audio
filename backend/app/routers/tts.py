@@ -95,9 +95,12 @@ async def _speak_gtts(text: str) -> bytes:
     """Generate audio via gTTS, return MP3 bytes."""
     from gtts import gTTS
     buf = io.BytesIO()
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, lambda: gTTS(text=text, lang="vi").write_to_fp(buf))
     return buf.getvalue()
+
+
+MAX_SPEAK_TEXT_LEN = 2000  # chars — well above any single chunk (~600 chars typical)
 
 
 @router.post("/speak")
@@ -109,6 +112,13 @@ async def speak_text(
     Generate TTS for a short text chunk and stream back audio/mpeg bytes.
     Uses edge-tts (HoaiMy/NamMinh) with gTTS as fallback.
     """
+    if not text or not text.strip():
+        raise HTTPException(status_code=422, detail="text must not be empty")
+    if len(text) > MAX_SPEAK_TEXT_LEN:
+        raise HTTPException(
+            status_code=422,
+            detail=f"text too long ({len(text)} chars, max {MAX_SPEAK_TEXT_LEN})",
+        )
     data: bytes
     if voice in EDGE_TTS_VOICES:
         try:
@@ -123,13 +133,40 @@ async def speak_text(
 @router.get("/chapter-audio/{chapter_id}")
 async def chapter_full_audio(chapter_id: str, voice: str = "vi-VN-HoaiMyNeural"):
     """
-    Generate and return the full chapter as a single MP3.
-    The client caches this for offline playback.
+    Return the full chapter as a single MP3 for offline caching.
+
+    Priority:
+      1. Pre-generated file already in audio_files table → stream it directly
+         (avoids re-generating and is instant).
+      2. On-the-fly generation as fallback (edge-tts → gTTS).
     """
-    import tempfile, os
-    from app.services.tts_service import generate_audio
+    import tempfile, os, httpx
 
     db = get_client()
+
+    # ── 1. Check for a pre-stored audio file ─────────────────────────────────
+    audio_row = (
+        db.table("audio_files")
+        .select("public_url")
+        .eq("chapter_id", chapter_id)
+        .maybe_single()
+        .execute()
+    )
+    if audio_row.data and audio_row.data.get("public_url"):
+        public_url = audio_row.data["public_url"]
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                r = await client.get(public_url)
+                r.raise_for_status()
+                return StreamingResponse(
+                    io.BytesIO(r.content),
+                    media_type="audio/mpeg",
+                    headers={"Cache-Control": "public, max-age=86400"},
+                )
+        except Exception:
+            pass  # fall through to on-the-fly generation
+
+    # ── 2. Fetch chapter text ─────────────────────────────────────────────────
     chapter = (
         db.table("chapters")
         .select("id,text_content")
@@ -144,19 +181,29 @@ async def chapter_full_audio(chapter_id: str, voice: str = "vi-VN-HoaiMyNeural")
     if not text:
         raise HTTPException(status_code=422, detail="Chapter has no text content")
 
-    # For edge-tts voices try edge-tts first, fall back to gTTS
+    # ── 3. On-the-fly generation ──────────────────────────────────────────────
+    # For edge-tts: chunk the text (edge-tts can stall on very long inputs)
     if voice in EDGE_TTS_VOICES:
-        try:
-            data = await _speak_edge(text, voice)
+        from app.utils.text_cleaner import split_text_for_tts
+        chunks = split_text_for_tts(text, max_chars=3000)
+        chunk_bytes: list[bytes] = []
+        failed = False
+        for chunk in chunks:
+            try:
+                chunk_bytes.append(await _speak_edge(chunk, voice))
+            except Exception:
+                failed = True
+                break
+        if not failed and chunk_bytes:
             return StreamingResponse(
-                io.BytesIO(data),
+                io.BytesIO(b"".join(chunk_bytes)),
                 media_type="audio/mpeg",
                 headers={"Cache-Control": "public, max-age=86400"},
             )
-        except Exception:
-            pass  # fall through to gTTS
+        # fall through to gTTS on any edge-tts failure
 
-    # gTTS path — uses generate_audio which handles chunking + concat
+    # gTTS path — handles chunking + concat internally
+    from app.services.tts_service import generate_audio
     with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
         tmp_path = f.name
     try:
