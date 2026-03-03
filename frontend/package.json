@@ -7,7 +7,7 @@
     "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint",
-    "build:cap": "BUILD_TARGET=capacitor next build --webpack",
+    "build:cap": "cross-env BUILD_TARGET=capacitor next build --webpack",
     "cap:sync": "npx cap sync",
     "cap:android": "pnpm build:cap && npx cap sync && npx cap open android"
   },
@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "cross-env": "^7.0.3",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
