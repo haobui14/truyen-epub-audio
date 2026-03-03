@@ -56,7 +56,7 @@ export default function RootLayout({
               </Link>
               <div className="flex items-center gap-1.5 sm:gap-2">
                 <a
-                  href="https://drive.google.com/uc?export=download&id=1BPtA4ml-HEw4-bLUyT5p5CfsdaiBsYqJ"
+                  href="https://drive.google.com/uc?export=download&id=14S-9kGpPjfi22v4-VZ-Zkcg-dA4bgZri"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -98,7 +98,7 @@ export default function RootLayout({
                   PWA Ready
                 </span>
                 <a
-                  href="https://drive.google.com/uc?export=download&id=1BPtA4ml-HEw4-bLUyT5p5CfsdaiBsYqJ"
+                  href="https://drive.google.com/uc?export=download&id=14S-9kGpPjfi22v4-VZ-Zkcg-dA4bgZri"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-1 hover:text-indigo-500 transition-colors"
