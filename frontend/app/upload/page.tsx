@@ -3,14 +3,12 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { UploadZone } from "@/components/upload/UploadZone";
-import { VoiceSelector } from "@/components/upload/VoiceSelector";
 import { Spinner } from "@/components/ui/Spinner";
 import { api } from "@/lib/api";
 
 export default function UploadPage() {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
-  const [voice, setVoice] = useState("vi-VN-HoaiMyNeural");
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -21,7 +19,7 @@ export default function UploadPage() {
     setIsUploading(true);
     setError(null);
     try {
-      const result = await api.uploadEpub(file, voice);
+      const result = await api.uploadEpub(file, "vi-VN-HoaiMyNeural");
       router.push(`/books/${result.book_id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload thất bại");
@@ -51,7 +49,7 @@ export default function UploadPage() {
             </svg>
           </div>
           <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">Tải lên truyện EPUB</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Chọn file và giọng đọc để bắt đầu</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Chọn file EPUB để bắt đầu</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5">
@@ -83,8 +81,6 @@ export default function UploadPage() {
               )}
             </div>
           )}
-
-          <VoiceSelector value={voice} onChange={setVoice} />
 
         {error && (
           <div className="flex items-center gap-2 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/50 px-4 py-3 rounded-xl border border-red-100 dark:border-red-900">

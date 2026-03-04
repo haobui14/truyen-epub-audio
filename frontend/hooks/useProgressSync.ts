@@ -2,6 +2,7 @@
 import { useRef, useCallback, useEffect } from "react";
 import { isLoggedIn } from "@/lib/auth";
 import { api } from "@/lib/api";
+import { enqueueProgress } from "@/lib/progressQueue";
 
 interface ProgressSyncOptions {
   bookId: string;
@@ -37,8 +38,15 @@ export function useProgressSync({
         total_value: total,
       })
       .catch(() => {
-        // Silent fail — localStorage is still the fallback
+        // Offline — queue for later sync
         lastSavedRef.current = -1;
+        enqueueProgress({
+          book_id: bookId,
+          chapter_id: chapterId,
+          progress_type: progressType,
+          progress_value: value,
+          total_value: total,
+        });
       });
   }, [bookId, chapterId, progressType]);
 

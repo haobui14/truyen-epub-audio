@@ -61,6 +61,14 @@ CREATE TABLE IF NOT EXISTS user_progress (
 CREATE INDEX IF NOT EXISTS idx_user_progress_user_book ON user_progress(user_id, book_id);
 CREATE INDEX IF NOT EXISTS idx_user_progress_user_chapter ON user_progress(user_id, chapter_id, progress_type);
 
+-- User playback settings (speed, pitch — synced across devices)
+CREATE TABLE IF NOT EXISTS user_settings (
+    user_id         UUID PRIMARY KEY,
+    playback_rate   FLOAT NOT NULL DEFAULT 1,
+    playback_pitch  FLOAT NOT NULL DEFAULT 1,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Storage buckets (run in Supabase dashboard > Storage):
 -- 1. Create bucket "epub-uploads" (private)
 -- 2. Create bucket "audio" (public)

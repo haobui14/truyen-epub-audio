@@ -1,7 +1,7 @@
 "use client";
-import { use, useCallback, useEffect, useRef, useState, useMemo } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { isLoggedIn } from "@/lib/auth";
@@ -9,14 +9,11 @@ import { SpeechPlayer } from "@/components/player/SpeechPlayer";
 import { Spinner } from "@/components/ui/Spinner";
 import { usePlayerContext } from "@/context/PlayerContext";
 import { splitIntoChunks } from "@/lib/textChunks";
-import { cacheChapterText, isChapterTextCached } from "@/lib/chapterTextCache";
+import { cacheChapterText, isChapterTextCached, getCachedChapterText } from "@/lib/chapterTextCache";
+import { getQueuedProgress } from "@/lib/progressQueue";
 
-export default function ListenPage({
-  params,
-}: {
-  params: Promise<{ bookId: string }>;
-}) {
-  const { bookId } = use(params);
+export default function ListenPage() {
+  const bookId = usePathname().split("/")[2];
   const searchParams = useSearchParams();
   const chapterId = searchParams.get("chapter");
   const autoPlay = searchParams.get("autoplay") === "1";
@@ -32,18 +29,46 @@ export default function ListenPage({
     queryFn: () => api.getBookChapters(bookId, 1, 5000),
   });
 
-  // Fetch text for the current chapter only
+  // Fetch text for the current chapter — falls back to IndexedDB cache when offline
   const { data: chapterText, isLoading: isLoadingText } = useQuery({
     queryKey: ["chapterText", chapterId],
-    queryFn: () => api.getChapterText(chapterId!),
+    queryFn: async () => {
+      try {
+        return await api.getChapterText(chapterId!);
+      } catch {
+        // Offline or API error — try local cache
+        const cached = await getCachedChapterText(chapterId!);
+        if (cached) return { id: chapterId!, text_content: cached };
+        throw new Error("Không có kết nối và chưa lưu offline");
+      }
+    },
     enabled: !!chapterId,
     staleTime: Infinity,
   });
 
-  // Fetch saved listening progress
+  // Fetch saved listening progress — falls back to offline queue
   const { data: listenProgress } = useQuery({
     queryKey: ["progress", chapterId, "listen"],
-    queryFn: () => api.getChapterProgress(chapterId!, "listen"),
+    queryFn: async () => {
+      try {
+        return await api.getChapterProgress(chapterId!, "listen");
+      } catch {
+        const queued = await getQueuedProgress(chapterId!, "listen");
+        if (queued) {
+          return {
+            id: "",
+            user_id: "",
+            book_id: queued.book_id,
+            chapter_id: queued.chapter_id,
+            progress_type: queued.progress_type,
+            progress_value: queued.progress_value,
+            total_value: queued.total_value,
+            updated_at: new Date(queued.queued_at).toISOString(),
+          };
+        }
+        return null;
+      }
+    },
     enabled: !!chapterId && isLoggedIn(),
   });
 

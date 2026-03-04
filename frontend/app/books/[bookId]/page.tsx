@@ -4,6 +4,6 @@ export function generateStaticParams() {
   return [{ bookId: "placeholder" }];
 }
 
-export default function Page(props: { params: Promise<{ bookId: string }> }) {
-  return <BookDetailClient params={props.params} />;
+export default function Page() {
+  return <BookDetailClient />;
 }

@@ -126,4 +126,24 @@ export const api = {
     request<UserProgress[]>(
       `/api/progress/book/${bookId}${type ? `?progress_type=${type}` : ""}`,
     ),
+
+  // Settings
+  getSettings: () =>
+    request<{
+      user_id: string;
+      playback_rate: number;
+      playback_pitch: number;
+      updated_at: string;
+    }>("/api/settings"),
+  saveSettings: (data: { playback_rate: number; playback_pitch: number }) =>
+    request<{
+      user_id: string;
+      playback_rate: number;
+      playback_pitch: number;
+      updated_at: string;
+    }>("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }),
 };

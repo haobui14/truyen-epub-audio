@@ -1,12 +1,13 @@
 "use client";
-import { use, useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { isLoggedIn } from "@/lib/auth";
 import { useProgressSync } from "@/hooks/useProgressSync";
 import { Spinner } from "@/components/ui/Spinner";
+import { getQueuedProgress } from "@/lib/progressQueue";
 
 const FONT_SIZES = [14, 16, 18, 20, 22, 24] as const;
 const FONT_KEY = "reader-font-size";
@@ -38,12 +39,8 @@ const FONT_FAMILIES = [
   { value: "'Courier New', monospace", label: "Mono" },
 ];
 
-export default function ReadPage({
-  params,
-}: {
-  params: Promise<{ bookId: string }>;
-}) {
-  const { bookId } = use(params);
+export default function ReadPage() {
+  const bookId = usePathname().split("/")[2];
   const searchParams = useSearchParams();
   const chapterId = searchParams.get("chapter");
   const router = useRouter();
@@ -86,10 +83,29 @@ export default function ReadPage({
     enabled: !!chapterId,
   });
 
-  // Fetch saved reading progress
+  // Fetch saved reading progress — falls back to offline queue
   const { data: savedProgress } = useQuery({
     queryKey: ["progress", chapterId, "read"],
-    queryFn: () => api.getChapterProgress(chapterId!, "read"),
+    queryFn: async () => {
+      try {
+        return await api.getChapterProgress(chapterId!, "read");
+      } catch {
+        const queued = await getQueuedProgress(chapterId!, "read");
+        if (queued) {
+          return {
+            id: "",
+            user_id: "",
+            book_id: queued.book_id,
+            chapter_id: queued.chapter_id,
+            progress_type: queued.progress_type,
+            progress_value: queued.progress_value,
+            total_value: queued.total_value,
+            updated_at: new Date(queued.queued_at).toISOString(),
+          };
+        }
+        return null;
+      }
+    },
     enabled: !!chapterId && isLoggedIn(),
   });
 

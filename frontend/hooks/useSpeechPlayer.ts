@@ -324,7 +324,7 @@ export function useSpeechPlayer(
           stoppedRef.current = false;
           setIsPlaying(true);
           setTimeout(() => {
-            if (!stoppedRef.current) playChunkRef.current!(0);
+            if (!stoppedRef.current) playChunkRef.current!(startIdx);
           }, 100);
         }
       }

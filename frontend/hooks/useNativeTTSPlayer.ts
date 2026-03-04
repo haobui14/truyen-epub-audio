@@ -2,24 +2,12 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useProgressSync } from "@/hooks/useProgressSync";
 import { isNativePlatform } from "@/lib/capacitor";
+import { acquireBackgroundLock, releaseBackgroundLock, getTtsBridge } from "@/lib/backgroundLock";
 import { splitIntoChunks } from "@/lib/textChunks";
-
-// Lazy-import to avoid loading native code on web
-type TTSModule = typeof import("@capacitor-community/text-to-speech");
-let ttsModule: TTSModule | null = null;
-
-async function getTTS() {
-  if (!ttsModule) {
-    ttsModule = await import("@capacitor-community/text-to-speech");
-  }
-  return ttsModule.TextToSpeech;
-}
 
 /**
  * Returns available native TTS voices for the given language.
- * Each voice has an `index` field (its position in the full voices array)
- * which is needed by the Capacitor TTS plugin's `voice` option.
- * Only returns results when running inside a Capacitor native shell.
+ * On native platform we only expose a single "device default" voice.
  */
 export function useNativeTTSVoices(lang = "vi") {
   const [voices, setVoices] = useState<
@@ -28,28 +16,30 @@ export function useNativeTTSVoices(lang = "vi") {
 
   useEffect(() => {
     if (!isNativePlatform()) return;
-    (async () => {
-      try {
-        const tts = await getTTS();
-        const result = await tts.getSupportedVoices();
-        const filtered = result.voices
-          .map((v, i) => ({ index: i, name: v.name, lang: v.lang }))
-          .filter((v) => v.lang.startsWith(lang));
-        setVoices(filtered);
-      } catch {
-        setVoices([]);
-      }
-    })();
+    setVoices([{ index: 0, name: "Giọng thiết bị", lang: `${lang}-VN` }]);
   }, [lang]);
 
   return voices;
 }
 
 /**
- * Plays book chapter text using the device's native TTS engine via Capacitor.
- * Works completely offline — no backend calls required.
- * The `voiceName` parameter must start with "native:" when active;
- * pass null to put this hook in idle (no-op) mode.
+ * Whether native TTS is available on this device.
+ */
+export function useNativeTTSAvailable() {
+  const [available, setAvailable] = useState(false);
+  useEffect(() => {
+    if (!isNativePlatform()) return;
+    setAvailable(true);
+  }, []);
+  return available;
+}
+
+/**
+ * Plays book chapter text using the device's native TTS engine via the
+ * Android TtsPlaybackService. The entire chunk loop runs in native Java,
+ * so playback continues even when the WebView is suspended (screen off).
+ *
+ * JS only sends chunks to native and listens for progress events.
  */
 export function useNativeTTSPlayer(
   bookId: string,
@@ -67,13 +57,14 @@ export function useNativeTTSPlayer(
   const [chunkIndex, setChunkIndex] = useState(0);
   const [totalChunks, setTotalChunks] = useState(0);
   const [rate, setRateState] = useState(1);
+  const [pitch, setPitchState] = useState(1);
+  const [ttsError, setTtsError] = useState<string | null>(null);
 
   const chunksRef = useRef<string[]>([]);
   const chunkRef = useRef(0);
-  const stoppedRef = useRef(true);
+  const playingRef = useRef(false);
   const rateRef = useRef(1);
-  const voiceRef = useRef(voiceName);
-  voiceRef.current = voiceName;
+  const pitchRef = useRef(1);
   const onEndedRef = useRef(onEnded);
   onEndedRef.current = onEnded;
 
@@ -83,97 +74,121 @@ export function useNativeTTSPlayer(
     progressType: "listen",
   });
 
-  // Forward-declared so the completion callback can call it recursively
-  const playChunkRef = useRef<(index: number) => Promise<void>>(null!);
-  playChunkRef.current = async (index: number) => {
-    if (stoppedRef.current) return;
-    if (index >= chunksRef.current.length) {
-      stoppedRef.current = true;
+  // Send chunks to native and start playback
+  const startNativePlayback = useCallback((startIdx: number) => {
+    const bridge = getTtsBridge();
+    if (!bridge || chunksRef.current.length === 0) return;
+
+    const chunksJson = JSON.stringify(chunksRef.current);
+    bridge.playChunks(chunksJson, rateRef.current, pitchRef.current, startIdx, "Đang phát...");
+    playingRef.current = true;
+    setIsPlaying(true);
+    setIsBuffering(false);
+    setChunkIndex(startIdx);
+    chunkRef.current = startIdx;
+  }, []);
+
+  // Listen for native TTS events
+  useEffect(() => {
+    if (!isActive) return;
+
+    const onChunk = (e: Event) => {
+      const idx = (e as CustomEvent).detail?.index ?? 0;
+      setChunkIndex(idx);
+      chunkRef.current = idx;
+      setIsBuffering(false);
+      reportListenProgress(idx, chunksRef.current.length);
+    };
+
+    const onDone = () => {
+      playingRef.current = false;
       setIsPlaying(false);
       setIsBuffering(false);
       setChunkIndex(0);
       chunkRef.current = 0;
+      // Do NOT release the background lock here — the next chapter's autoPlay
+      // needs the service alive so sInstance is non-null and ttsReady is true.
+      // The lock is released on unmount or when isActive becomes false.
       onEndedRef.current?.();
-      return;
-    }
+    };
 
-    // Parse voice index from "native:<number>" format
-    const voiceStr = voiceRef.current?.startsWith("native:")
-      ? voiceRef.current.slice(7)
-      : undefined;
-    const voiceIndex =
-      voiceStr && voiceStr !== "vi-VN-default"
-        ? parseInt(voiceStr, 10)
-        : undefined;
-
-    try {
-      setChunkIndex(index);
-      chunkRef.current = index;
+    const onState = (e: Event) => {
+      const { playing, index } = (e as CustomEvent).detail ?? {};
+      playingRef.current = playing;
+      setIsPlaying(playing);
       setIsBuffering(false);
-      setIsPlaying(true);
-      reportListenProgress(index, chunksRef.current.length);
-
-      const tts = await getTTS();
-      // speak() returns a Promise that resolves when the utterance finishes
-      await tts.speak({
-        text: chunksRef.current[index],
-        lang: "vi-VN",
-        rate: rateRef.current,
-        ...(voiceIndex !== undefined && !isNaN(voiceIndex)
-          ? { voice: voiceIndex }
-          : {}),
-      });
-
-      if (!stoppedRef.current) {
-        await playChunkRef.current!(index + 1);
+      if (index !== undefined) {
+        setChunkIndex(index);
+        chunkRef.current = index;
       }
-    } catch {
-      if (!stoppedRef.current) {
-        stoppedRef.current = true;
-        setIsPlaying(false);
-        setIsBuffering(false);
-      }
-    }
-  };
+    };
+
+    window.addEventListener("native-tts-chunk", onChunk);
+    window.addEventListener("native-tts-done", onDone);
+    window.addEventListener("native-tts-state", onState);
+
+    return () => {
+      window.removeEventListener("native-tts-chunk", onChunk);
+      window.removeEventListener("native-tts-done", onDone);
+      window.removeEventListener("native-tts-state", onState);
+    };
+  }, [isActive, reportListenProgress]);
 
   // Reset when chapter / text / active state changes
   useEffect(() => {
-    stoppedRef.current = true;
-    setIsPlaying(false);
-    setIsBuffering(false);
+    setTtsError(null);
 
+    // Stop any in-flight native speech
     if (isActive) {
-      getTTS()
-        .then((tts) => tts.stop())
-        .catch(() => {});
+      getTtsBridge()?.stopPlayback();
     }
 
     if (!isActive || !text) {
+      playingRef.current = false;
+      setIsPlaying(false);
+      setIsBuffering(false);
+      // Only release the service when the engine is deactivated entirely.
+      // When text is just temporarily null during a chapter transition, keep
+      // the service alive so TTS engine stays initialized and ready.
+      if (!isActive) releaseBackgroundLock();
       chunksRef.current = [];
       setTotalChunks(0);
       return;
     }
 
     const startIdx = initialChunkIndex ?? 0;
+    // Reset chunkIndex to 0 FIRST so it can never be stale-high against
+    // the incoming totalChunks (avoids progressPct > 100 between renders)
+    setChunkIndex(0);
+    chunkRef.current = 0;
     chunksRef.current = splitIntoChunks(text);
     setTotalChunks(chunksRef.current.length);
-    setChunkIndex(startIdx);
-    chunkRef.current = startIdx;
+    if (startIdx > 0) {
+      setChunkIndex(startIdx);
+      chunkRef.current = startIdx;
+    }
 
     if (autoPlay && chunksRef.current.length > 0) {
-      stoppedRef.current = false;
-      setIsPlaying(true);
       setIsBuffering(true);
-      setTimeout(() => {
-        if (!stoppedRef.current) playChunkRef.current!(startIdx);
-      }, 100);
+      acquireBackgroundLock();
+      // Start native playback immediately
+      Promise.resolve().then(() => startNativePlayback(startIdx));
+    } else {
+      playingRef.current = false;
+      setIsPlaying(false);
+      setIsBuffering(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chapterId, text, isActive]);
 
-  // When initialChunkIndex arrives late (async progress load), apply it if player hasn't started.
+  // When initialChunkIndex arrives late (async progress load)
   useEffect(() => {
-    if (!stoppedRef.current || initialChunkIndex == null || initialChunkIndex <= 0) return;
+    if (
+      playingRef.current ||
+      initialChunkIndex == null ||
+      initialChunkIndex <= 0
+    )
+      return;
     const maxIdx = chunksRef.current.length - 1;
     if (maxIdx >= 0) {
       const idx = Math.min(initialChunkIndex, maxIdx);
@@ -186,99 +201,102 @@ export function useNativeTTSPlayer(
   useEffect(
     () => () => {
       if (isActive) {
-        getTTS()
-          .then((tts) => tts.stop())
-          .catch(() => {});
+        getTtsBridge()?.stopPlayback();
       }
+      releaseBackgroundLock();
     },
     [isActive],
   );
 
   const toggle = useCallback(async () => {
     if (!isActive) return;
-    if (isPlaying || isBuffering) {
-      const tts = await getTTS();
-      await tts.stop();
-      stoppedRef.current = true;
+    setTtsError(null);
+    const bridge = getTtsBridge();
+    if (!bridge) return;
+
+    if (playingRef.current) {
+      bridge.pausePlayback();
+      playingRef.current = false;
       setIsPlaying(false);
       setIsBuffering(false);
     } else {
       if (!chunksRef.current.length) return;
-      stoppedRef.current = false;
-      setIsPlaying(true);
-      setIsBuffering(true);
-      setTimeout(() => {
-        if (!stoppedRef.current) playChunkRef.current!(chunkRef.current);
-      }, 50);
+      // If native has chunks loaded, just resume; otherwise start fresh
+      if (bridge.getCurrentChunk() >= 0) {
+        bridge.resumePlayback();
+        playingRef.current = true;
+        setIsPlaying(true);
+      } else {
+        setIsBuffering(true);
+        acquireBackgroundLock();
+        startNativePlayback(chunkRef.current);
+      }
     }
-  }, [isActive, isPlaying, isBuffering]);
+  }, [isActive, startNativePlayback]);
 
   const changeRate = useCallback((newRate: number) => {
     rateRef.current = newRate;
     setRateState(newRate);
-  }, []);
-
-  const restartChunk = useCallback(async () => {
-    if (!isActive) return;
-    const wasPlaying = !stoppedRef.current;
-    const tts = await getTTS();
-    await tts.stop();
-    stoppedRef.current = true;
-    setIsPlaying(false);
-    setIsBuffering(false);
-    if (wasPlaying) {
-      stoppedRef.current = false;
-      setIsPlaying(true);
-      setIsBuffering(true);
-      setTimeout(() => {
-        if (!stoppedRef.current) playChunkRef.current!(chunkRef.current);
-      }, 50);
+    getTtsBridge()?.setRate(newRate);
+    // If currently playing, restart current chunk with new rate
+    if (playingRef.current && chunksRef.current.length > 0) {
+      startNativePlayback(chunkRef.current);
     }
-  }, [isActive]);
+  }, [startNativePlayback]);
+
+  const changePitch = useCallback((newPitch: number) => {
+    pitchRef.current = newPitch;
+    setPitchState(newPitch);
+    getTtsBridge()?.setPitch(newPitch);
+    if (playingRef.current && chunksRef.current.length > 0) {
+      startNativePlayback(chunkRef.current);
+    }
+  }, [startNativePlayback]);
+
+  const restartChunk = useCallback(() => {
+    if (!isActive) return;
+    if (playingRef.current) {
+      startNativePlayback(chunkRef.current);
+    }
+  }, [isActive, startNativePlayback]);
 
   const seekChunk = useCallback(
-    async (delta: number) => {
+    (delta: number) => {
       const maxIdx = chunksRef.current.length - 1;
       if (maxIdx < 0) return;
-      const idx = Math.max(0, Math.min(Math.round(chunkRef.current + delta), maxIdx));
-
-      const wasPlaying = !stoppedRef.current;
-      const tts = await getTTS();
-      await tts.stop();
-      stoppedRef.current = true;
-      setIsPlaying(false);
-      setIsBuffering(false);
+      const idx = Math.max(
+        0,
+        Math.min(Math.round(chunkRef.current + delta), maxIdx),
+      );
 
       setChunkIndex(idx);
       chunkRef.current = idx;
       reportListenProgress(idx, chunksRef.current.length);
 
-      if (wasPlaying) {
-        stoppedRef.current = false;
-        setIsPlaying(true);
-        setIsBuffering(true);
-        setTimeout(() => {
-          if (!stoppedRef.current) playChunkRef.current!(idx);
-        }, 50);
+      if (playingRef.current) {
+        startNativePlayback(idx);
       }
     },
-    [reportListenProgress],
+    [reportListenProgress, startNativePlayback],
   );
 
-  const progress = totalChunks > 0 ? chunkIndex / totalChunks : 0;
+  const progress = totalChunks > 0 ? Math.max(0, Math.min(1, chunkIndex / totalChunks)) : 0;
 
   return {
     isPlaying: isPlaying || isBuffering,
     isBuffering,
-    isOffline: false, // native TTS is always offline-capable
+    isOffline: false,
     mode: "streaming" as const,
     progress,
     chunkIndex,
     totalChunks,
     rate,
+    pitch,
     toggle,
     changeRate,
+    changePitch,
     restartChunk,
     seekChunk,
+    ttsError,
   };
 }

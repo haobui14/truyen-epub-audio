@@ -7,6 +7,11 @@ const config: CapacitorConfig = {
   server: {
     androidScheme: "https",
   },
+  plugins: {
+    KeepAwake: {
+      // Prevents the device screen from dimming/locking during TTS playback
+    },
+  },
 };
 
 export default config;

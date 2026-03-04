@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.services import task_queue
 from app.routers import auth, books, chapters, progress, upload, tts
+from app.routers import settings as settings_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -44,6 +45,7 @@ app.include_router(chapters.router)
 app.include_router(upload.router)
 app.include_router(tts.router)
 app.include_router(progress.router)
+app.include_router(settings_router.router)
 
 
 @app.get("/api/health")

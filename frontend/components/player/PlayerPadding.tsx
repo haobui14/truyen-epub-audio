@@ -7,5 +7,5 @@ import { usePlayerContext } from "@/context/PlayerContext";
  */
 export function PlayerPadding() {
   const { track } = usePlayerContext();
-  return track ? <div className="h-17" /> : null;
+  return track ? <div style={{ height: "calc(4.25rem + var(--sab))" }} /> : null;
 }

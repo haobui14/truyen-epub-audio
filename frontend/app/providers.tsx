@@ -1,9 +1,32 @@
 "use client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { PlayerProvider } from "@/context/PlayerContext";
+import { flushProgressQueue } from "@/lib/progressQueue";
+import { hydrateAuthFromNative } from "@/lib/auth";
+import { isNativePlatform } from "@/lib/capacitor";
 
 export function Providers({ children }: { children: React.ReactNode }) {
+  // On native, restore auth from SharedPreferences into localStorage.
+  // Non-blocking: dispatches auth-change when done so listeners re-check.
+  useEffect(() => {
+    if (!isNativePlatform()) return;
+    hydrateAuthFromNative().then(() => {
+      window.dispatchEvent(new Event("auth-change"));
+    });
+  }, []);
+
+  // Flush queued offline progress when connectivity is restored
+  useEffect(() => {
+    const handleOnline = () => {
+      flushProgressQueue();
+    };
+    window.addEventListener("online", handleOnline);
+    // Also attempt flush on app start (in case user was offline last session)
+    flushProgressQueue();
+    return () => window.removeEventListener("online", handleOnline);
+  }, []);
+
   const [queryClient] = useState(
     () =>
       new QueryClient({
