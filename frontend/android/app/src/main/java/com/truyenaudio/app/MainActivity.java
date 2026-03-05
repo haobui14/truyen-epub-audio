@@ -8,6 +8,7 @@ import android.media.AudioFocusRequest;
 import android.media.AudioManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.KeyEvent;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
@@ -130,6 +131,12 @@ public class MainActivity extends BridgeActivity {
                         "window.dispatchEvent(new Event('native-tts-done'))", null));
             }
             @Override
+            public void onChapterAdvance(String chapterId) {
+                String safeId = chapterId != null ? chapterId.replace("'", "\\'") : "";
+                runOnUiThread(() -> getBridge().getWebView().evaluateJavascript(
+                        "window.dispatchEvent(new CustomEvent('native-tts-chapter-advance',{detail:{chapterId:'" + safeId + "'}}))", null));
+            }
+            @Override
             public void onStateChanged(boolean playing, int chunkIndex) {
                 runOnUiThread(() -> getBridge().getWebView().evaluateJavascript(
                         "window.dispatchEvent(new CustomEvent('native-tts-state',{detail:{playing:" + playing + ",index:" + chunkIndex + "}}))", null));
@@ -235,12 +242,17 @@ public class MainActivity extends BridgeActivity {
         /** Send all chunks to native for uninterrupted playback (no JS callbacks needed) */
         @JavascriptInterface
         public void playChunks(String chunksJson, float rate, float pitch, int startIdx, String title) {
+            playChunksWithId(chunksJson, rate, pitch, startIdx, title, null);
+        }
+
+        @JavascriptInterface
+        public void playChunksWithId(String chunksJson, float rate, float pitch, int startIdx, String title, String chapterId) {
             try {
                 org.json.JSONArray arr = new org.json.JSONArray(chunksJson);
                 String[] chunks = new String[arr.length()];
                 for (int i = 0; i < arr.length(); i++) chunks[i] = arr.getString(i);
                 TtsPlaybackService.updateTitle(title);
-                TtsPlaybackService.startPlayback(chunks, rate, pitch, startIdx);
+                TtsPlaybackService.startPlayback(chunks, rate, pitch, startIdx, chapterId);
             } catch (org.json.JSONException e) {
                 e.printStackTrace();
             }
@@ -276,15 +288,100 @@ public class MainActivity extends BridgeActivity {
             TtsPlaybackService.updateTitle(title);
         }
 
+        /** Queue a single next chapter so the service auto-advances without JS. */
+        @JavascriptInterface
+        public void queueNextChapter(String chunksJson, String chapterId, String title, float rate, float pitch) {
+            try {
+                org.json.JSONArray arr = new org.json.JSONArray(chunksJson);
+                String[] chunks = new String[arr.length()];
+                for (int i = 0; i < arr.length(); i++) chunks[i] = arr.getString(i);
+                TtsPlaybackService.queueNextChapter(chunks, chapterId, title, rate, pitch);
+            } catch (org.json.JSONException e) {
+                e.printStackTrace();
+            }
+        }
+
+        /**
+         * Queue ALL remaining chapters at once so the service can play through
+         * the entire book without any JS involvement (screen off safe).
+         * chaptersJson format: [{"chunks":["...","..."],"chapterId":"abc","title":"Ch 1","rate":1.0,"pitch":1.0}, ...]
+         */
+        @JavascriptInterface
+        public void queueAllChapters(String chaptersJson) {
+            try {
+                org.json.JSONArray arr = new org.json.JSONArray(chaptersJson);
+                for (int i = 0; i < arr.length(); i++) {
+                    org.json.JSONObject obj = arr.getJSONObject(i);
+                    org.json.JSONArray chunksArr = obj.getJSONArray("chunks");
+                    String[] chunks = new String[chunksArr.length()];
+                    for (int j = 0; j < chunksArr.length(); j++) chunks[j] = chunksArr.getString(j);
+                    String chapterId = obj.getString("chapterId");
+                    String title = obj.optString("title", "Đang phát...");
+                    float rate = (float) obj.optDouble("rate", 1.0);
+                    float pitch = (float) obj.optDouble("pitch", 1.0);
+                    TtsPlaybackService.queueNextChapter(chunks, chapterId, title, rate, pitch);
+                }
+            } catch (org.json.JSONException e) {
+                e.printStackTrace();
+            }
+        }
+
+        @JavascriptInterface
+        public void clearNextChapter() {
+            TtsPlaybackService.clearNextChapter();
+        }
+
         @JavascriptInterface
         public int getCurrentChunk() {
             return TtsPlaybackService.getCurrentChunk();
         }
 
         @JavascriptInterface
+        public String getCurrentChapterId() {
+            String id = TtsPlaybackService.getCurrentChapterId();
+            return id != null ? id : "";
+        }
+
+        @JavascriptInterface
         public boolean isPlaying() {
             return TtsPlaybackService.isCurrentlyPlaying();
         }
+    }
+
+    /**
+     * Intercept hardware media button events (earbuds, BT headsets) when the
+     * Activity is in the foreground and route them to the TTS service.
+     */
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (event.getAction() == KeyEvent.ACTION_DOWN && serviceRunning) {
+            int keyCode = event.getKeyCode();
+            if (keyCode == KeyEvent.KEYCODE_HEADSETHOOK
+                    || keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) {
+                if (TtsPlaybackService.isCurrentlyPlaying()) {
+                    TtsPlaybackService.pausePlayback();
+                } else {
+                    TtsPlaybackService.resumePlayback();
+                }
+                return true;
+            }
+            if (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY) {
+                TtsPlaybackService.resumePlayback();
+                return true;
+            }
+            if (keyCode == KeyEvent.KEYCODE_MEDIA_PAUSE) {
+                TtsPlaybackService.pausePlayback();
+                return true;
+            }
+            if (keyCode == KeyEvent.KEYCODE_MEDIA_NEXT) {
+                // Forward to JS callback
+                return true;
+            }
+            if (keyCode == KeyEvent.KEYCODE_MEDIA_PREVIOUS) {
+                return true;
+            }
+        }
+        return super.dispatchKeyEvent(event);
     }
 
     @Override

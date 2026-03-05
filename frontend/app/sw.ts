@@ -8,7 +8,7 @@ declare global {
   }
 }
 
-declare const self: ServiceWorkerGlobalScope;
+declare const self: WorkerGlobalScope;
 
 const serwist = new Serwist({
   precacheEntries: self.__SW_MANIFEST,
@@ -18,7 +18,8 @@ const serwist = new Serwist({
   runtimeCaching: [
     // Audio files — explicit cache-first (user taps download)
     {
-      matcher: /^https:\/\/.*\.supabase\.co\/storage\/v1\/object\/public\/audio\/.*/i,
+      matcher:
+        /^https:\/\/.*\.supabase\.co\/storage\/v1\/object\/public\/audio\/.*/i,
       handler: new CacheFirst({
         cacheName: "audio-cache-v1",
         plugins: [
@@ -31,11 +32,15 @@ const serwist = new Serwist({
     },
     // Cover images — cache-first
     {
-      matcher: /^https:\/\/.*\.supabase\.co\/storage\/v1\/object\/public\/covers\/.*/i,
+      matcher:
+        /^https:\/\/.*\.supabase\.co\/storage\/v1\/object\/public\/covers\/.*/i,
       handler: new CacheFirst({
         cacheName: "covers-cache-v1",
         plugins: [
-          new ExpirationPlugin({ maxEntries: 100, maxAgeSeconds: 7 * 24 * 60 * 60 }),
+          new ExpirationPlugin({
+            maxEntries: 100,
+            maxAgeSeconds: 7 * 24 * 60 * 60,
+          }),
         ],
       }),
     },

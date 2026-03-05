@@ -2,15 +2,22 @@
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { isLoggedIn } from "@/lib/auth";
 import { SpeechPlayer } from "@/components/player/SpeechPlayer";
 import { Spinner } from "@/components/ui/Spinner";
 import { usePlayerContext } from "@/context/PlayerContext";
 import { splitIntoChunks } from "@/lib/textChunks";
-import { cacheChapterText, isChapterTextCached, getCachedChapterText } from "@/lib/chapterTextCache";
+import {
+  cacheChapterText,
+  isChapterTextCached,
+  getCachedChapterText,
+} from "@/lib/chapterTextCache";
 import { getQueuedProgress } from "@/lib/progressQueue";
+import { prefetchNextChapterAudio } from "@/hooks/useSpeechPlayer";
+import { getTtsBridge } from "@/lib/backgroundLock";
+import { splitIntoChunks as splitChunks } from "@/lib/textChunks";
 
 export default function ListenPage() {
   const bookId = usePathname().split("/")[2];
@@ -81,18 +88,35 @@ export default function ListenPage() {
   const nextChapter =
     allChapters.find((c) => c.chapter_index === currentIndex + 1) ?? null;
 
-  // Preload adjacent chapter texts so navigation fires the player effect only once
+  // Preload adjacent chapter texts so navigation fires the player effect only once.
+  // Includes offline fallback (IndexedDB) so queuing works even without network.
   const prevChapterId = prevChapter?.id ?? null;
   const nextChapterId = nextChapter?.id ?? null;
   useQuery({
     queryKey: ["chapterText", prevChapterId],
-    queryFn: () => api.getChapterText(prevChapterId!),
+    queryFn: async () => {
+      try {
+        return await api.getChapterText(prevChapterId!);
+      } catch {
+        const cached = await getCachedChapterText(prevChapterId!);
+        if (cached) return { id: prevChapterId!, text_content: cached };
+        throw new Error("offline");
+      }
+    },
     enabled: !!prevChapterId,
     staleTime: Infinity,
   });
-  useQuery({
+  const { data: nextChapterTextData } = useQuery({
     queryKey: ["chapterText", nextChapterId],
-    queryFn: () => api.getChapterText(nextChapterId!),
+    queryFn: async () => {
+      try {
+        return await api.getChapterText(nextChapterId!);
+      } catch {
+        const cached = await getCachedChapterText(nextChapterId!);
+        if (cached) return { id: nextChapterId!, text_content: cached };
+        throw new Error("offline");
+      }
+    },
     enabled: !!nextChapterId,
     staleTime: Infinity,
   });
@@ -118,12 +142,16 @@ export default function ListenPage() {
     [bookId, router],
   );
 
-  const { setTrack, chunkIndex } = usePlayerContext();
+  const queryClient = useQueryClient();
+  const { setTrack, chunkIndex, totalChunks, voice, rate, pitch } =
+    usePlayerContext();
 
   const [isCached, setIsCached] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [showText, setShowText] = useState(false);
   const activeChunkRef = useRef<HTMLDivElement>(null);
+  const activeChapterRef = useRef<HTMLButtonElement>(null);
+  const chapterListScrolledRef = useRef(false);
 
   const chapterTextContent = chapterText?.text_content ?? null;
   const chunks = useMemo(
@@ -137,12 +165,149 @@ export default function ListenPage() {
     isChapterTextCached(chapterId).then(setIsCached);
   }, [chapterId]);
 
+  // ── Sync JS with native service on app resume (screen on / tab visible) ──
+  // When the WebView is suspended (screen off), native auto-advances chapters
+  // but JS events don't fire. On resume, check what native is actually playing
+  // and navigate to it if it differs from the current JS chapter.
+  useEffect(() => {
+    if (!voice.startsWith("native:")) return;
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      const bridge = getTtsBridge();
+      if (!bridge || typeof bridge.getCurrentChapterId !== "function") return;
+      const nativeChapterId = bridge.getCurrentChapterId();
+      if (nativeChapterId && nativeChapterId !== chapterId) {
+        // Native advanced to a different chapter — navigate to it
+        const targetChapter = allChapters.find((c) => c.id === nativeChapterId);
+        if (targetChapter) {
+          const nativePlaying = bridge.isPlaying();
+          const url = `/books/${bookId}/listen?chapter=${nativeChapterId}${nativePlaying ? "&autoplay=1" : ""}`;
+          router.replace(url);
+        }
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [voice, chapterId, bookId, allChapters, router]);
+
+  // ── Native TTS: queue ALL remaining chapters in the Java service ──
+  // When the current chapter starts playing on native TTS, we fetch all
+  // remaining chapters' text and queue them so the service can play
+  // through the entire book with screen off.
+  const nextChapterText = nextChapterTextData?.text_content ?? null;
+  useEffect(() => {
+    if (!voice.startsWith("native:") || allChapters.length === 0 || currentIndex < 0) return;
+    const bridge = getTtsBridge();
+    if (!bridge) return;
+
+    // Clear old queue first
+    bridge.clearNextChapter();
+
+    // Gather all chapters after the current one
+    const remainingChapters = allChapters
+      .filter((c) => c.chapter_index > currentIndex)
+      .sort((a, b) => a.chapter_index - b.chapter_index);
+
+    if (remainingChapters.length === 0) return;
+
+    let cancelled = false;
+
+    (async () => {
+      // Phase 1: immediately queue chapters whose text is already cached
+      const cachedToQueue: { chunks: string[]; chapterId: string; title: string; rate: number; pitch: number }[] = [];
+      const uncachedChapters: typeof remainingChapters = [];
+
+      for (const ch of remainingChapters) {
+        let text: string | null = null;
+        const cached = queryClient.getQueryData<{ text_content: string }>(["chapterText", ch.id]);
+        if (cached?.text_content) {
+          text = cached.text_content;
+        } else {
+          try {
+            text = await getCachedChapterText(ch.id);
+          } catch {
+            // not in IndexedDB
+          }
+        }
+        if (text) {
+          const chunks = splitChunks(text);
+          if (chunks.length > 0) {
+            cachedToQueue.push({
+              chunks,
+              chapterId: ch.id,
+              title: ch.title ?? "Đang phát...",
+              rate,
+              pitch,
+            });
+          }
+        } else {
+          uncachedChapters.push(ch);
+        }
+      }
+
+      if (cancelled) return;
+      if (cachedToQueue.length > 0) {
+        bridge.queueAllChapters(JSON.stringify(cachedToQueue));
+      }
+
+      // Phase 2: fetch uncached chapters from API and add to queue individually.
+      // Each chapter is available to the native service as soon as it's fetched,
+      // so playback continues even if the WebView suspends mid-fetch.
+      for (const ch of uncachedChapters) {
+        if (cancelled) break;
+        try {
+          const data = await api.getChapterText(ch.id);
+          if (data?.text_content) {
+            queryClient.setQueryData(["chapterText", ch.id], data);
+            const chunks = splitChunks(data.text_content);
+            if (chunks.length > 0) {
+              bridge.queueNextChapter(
+                JSON.stringify(chunks),
+                ch.id,
+                ch.title ?? "Đang phát...",
+                rate,
+                pitch,
+              );
+            }
+          }
+        } catch {
+          // API fetch failed (offline?) — skip this chapter
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [chapterId, voice, rate, pitch, allChapters, currentIndex, queryClient, nextChapterText]);
+
+  // ── Web streaming: prefetch first TTS audio chunks when near end ──
+  useEffect(() => {
+    if (!nextChapterId || !nextChapterText || voice.startsWith("native:"))
+      return;
+    if (totalChunks === 0 || chunkIndex < totalChunks - 3) return;
+    prefetchNextChapterAudio(nextChapterId, nextChapterText, voice);
+  }, [chunkIndex, totalChunks, nextChapterId, nextChapterText, voice]);
+
   // Auto-scroll active chunk into view
   useEffect(() => {
     if (showText && activeChunkRef.current) {
-      activeChunkRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+      activeChunkRef.current.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
     }
   }, [chunkIndex, showText]);
+
+  // Auto-scroll chapter list to the active chapter on first render
+  useEffect(() => {
+    if (!chapterListScrolledRef.current && activeChapterRef.current) {
+      chapterListScrolledRef.current = true;
+      activeChapterRef.current.scrollIntoView({ block: "center" });
+    }
+  }, [chapterId, allChapters]);
 
   async function handleSaveOffline() {
     if (!chapterId || !chapterTextContent) return;
@@ -163,6 +328,8 @@ export default function ListenPage() {
     listenProgress,
     autoPlay,
     navigateTo,
+    voice,
+    queryClient,
   });
   latestRef.current = {
     currentChapter,
@@ -175,6 +342,8 @@ export default function ListenPage() {
     listenProgress,
     autoPlay,
     navigateTo,
+    voice,
+    queryClient,
   };
 
   const bookDataId = book?.id ?? null;
@@ -204,7 +373,21 @@ export default function ListenPage() {
       isLoadingText,
       onPrev: prevChapter ? () => navigateTo(prevChapter) : null,
       onNext: nextChapter ? () => navigateTo(nextChapter) : null,
-      onEnded: nextChapter ? () => navigateTo(nextChapter, true) : undefined,
+      onEnded: nextChapter
+        ? () => {
+            // Pre-fetch next chapter audio before navigation starts (safety net)
+            const { voice: v, queryClient: qc } = latestRef.current;
+            if (nextChapter.id && v && !v.startsWith("native:")) {
+              const td = qc.getQueryData<{ text_content: string }>([
+                "chapterText",
+                nextChapter.id,
+              ]);
+              if (td?.text_content)
+                prefetchNextChapterAudio(nextChapter.id, td.text_content, v);
+            }
+            navigateTo(nextChapter, true);
+          }
+        : undefined,
       neighborChapters,
       initialChunkIndex:
         listenProgress?.progress_value != null
@@ -303,8 +486,18 @@ export default function ListenPage() {
                 : "border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-400"
             }`}
           >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h10" />
+            <svg
+              className="w-3.5 h-3.5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 6h16M4 10h16M4 14h10"
+              />
             </svg>
             {showText ? "Ẩn văn bản" : "Hiện văn bản"}
           </button>
@@ -321,12 +514,32 @@ export default function ListenPage() {
             {isSaving ? (
               <Spinner className="w-3 h-3" />
             ) : isCached ? (
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              <svg
+                className="w-3.5 h-3.5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M5 13l4 4L19 7"
+                />
               </svg>
             ) : (
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              <svg
+                className="w-3.5 h-3.5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                />
               </svg>
             )}
             {isCached ? "Đã lưu offline" : "Lưu offline"}
@@ -345,8 +558,8 @@ export default function ListenPage() {
                 i === chunkIndex
                   ? "bg-indigo-100 dark:bg-indigo-900/60 text-indigo-900 dark:text-indigo-100 font-medium"
                   : i < chunkIndex
-                  ? "text-gray-400 dark:text-gray-600"
-                  : "text-gray-600 dark:text-gray-400"
+                    ? "text-gray-400 dark:text-gray-600"
+                    : "text-gray-600 dark:text-gray-400"
               }`}
             >
               {chunk}
@@ -365,6 +578,7 @@ export default function ListenPage() {
             {allChapters.map((ch) => (
               <button
                 key={ch.id}
+                ref={ch.id === chapterId ? activeChapterRef : null}
                 onClick={() => navigateTo(ch)}
                 className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
                   ch.id === chapterId

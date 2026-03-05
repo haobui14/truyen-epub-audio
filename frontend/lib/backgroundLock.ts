@@ -5,6 +5,7 @@ interface TtsBridgeNative {
   startService(): void;
   stopService(): void;
   playChunks(chunksJson: string, rate: number, pitch: number, startIdx: number, title: string): void;
+  playChunksWithId(chunksJson: string, rate: number, pitch: number, startIdx: number, title: string, chapterId: string): void;
   pausePlayback(): void;
   resumePlayback(): void;
   stopPlayback(): void;
@@ -12,7 +13,13 @@ interface TtsBridgeNative {
   setPitch(pitch: number): void;
   updateTitle(title: string): void;
   getCurrentChunk(): number;
+  getCurrentChapterId(): string;
   isPlaying(): boolean;
+  /** Queue next chapter for seamless background auto-advance. */
+  queueNextChapter(chunksJson: string, chapterId: string, title: string, rate: number, pitch: number): void;
+  /** Queue ALL remaining chapters at once for continuous background playback. */
+  queueAllChapters(chaptersJson: string): void;
+  clearNextChapter(): void;
 }
 
 export function getTtsBridge(): TtsBridgeNative | undefined {

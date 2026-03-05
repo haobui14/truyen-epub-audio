@@ -5,6 +5,41 @@ import { useProgressSync } from "@/hooks/useProgressSync";
 import { getCachedAudioUrl } from "@/lib/audioFileCache";
 import { splitIntoChunks } from "@/lib/textChunks";
 
+// ── Cross-chapter prefetch cache ──────────────────────────────────────
+// Persists across chapter resets so pre-fetched audio for the NEXT chapter
+// survives the cleanup that happens when chapterId changes.
+const crossChapterCache = new Map<string, Promise<string>>();
+const crossChapterAbort = { ctrl: null as AbortController | null };
+
+function ccKey(chapterId: string, idx: number, voice: string) {
+  return `${chapterId}:${idx}:${voice}`;
+}
+
+/**
+ * Pre-fetch the first few TTS audio chunks for the next chapter.
+ * Call this while the current chapter is still playing (near the end)
+ * so playback can start instantly on auto-advance.
+ */
+export function prefetchNextChapterAudio(
+  chapterId: string,
+  text: string,
+  voice: string,
+) {
+  const chunks = splitIntoChunks(text);
+  if (chunks.length === 0) return;
+  // Reuse existing controller or create new one
+  if (!crossChapterAbort.ctrl) crossChapterAbort.ctrl = new AbortController();
+  const signal = crossChapterAbort.ctrl.signal;
+  for (let i = 0; i < Math.min(3, chunks.length); i++) {
+    const key = ccKey(chapterId, i, voice);
+    if (!crossChapterCache.has(key)) {
+      const p = fetchChunkAudio(chunks[i], voice, signal);
+      p.catch(() => {}); // suppress unhandled rejection
+      crossChapterCache.set(key, p);
+    }
+  }
+}
+
 /** Wait until the browser has a network connection. */
 function waitForOnline(): Promise<void> {
   if (typeof navigator === "undefined" || navigator.onLine)
@@ -316,6 +351,28 @@ export function useSpeechPlayer(
         setChunkIndex(startIdx);
         chunkRef.current = startIdx;
 
+        // Transfer any pre-fetched audio from cross-chapter cache
+        // (populated by prefetchNextChapterAudio before navigation)
+        for (
+          let i = startIdx;
+          i < Math.min(startIdx + 3, chunksRef.current.length);
+          i++
+        ) {
+          const ck = ccKey(chapterId, i, voiceRef.current);
+          const cached = crossChapterCache.get(ck);
+          if (cached) {
+            prefetchRef.current.set(
+              i,
+              cached.then((url) => {
+                blobUrlsRef.current.push(url);
+                return url;
+              }),
+            );
+          }
+        }
+        crossChapterCache.clear();
+        crossChapterAbort.ctrl = null;
+
         if (chunksRef.current.length > startIdx) prefetch(startIdx);
         if (chunksRef.current.length > startIdx + 1) prefetch(startIdx + 1);
         if (chunksRef.current.length > startIdx + 2) prefetch(startIdx + 2);
@@ -323,9 +380,9 @@ export function useSpeechPlayer(
         if (autoPlay && chunksRef.current.length > 0) {
           stoppedRef.current = false;
           setIsPlaying(true);
-          setTimeout(() => {
-            if (!stoppedRef.current) playChunkRef.current!(startIdx);
-          }, 100);
+          // Start immediately — no delay. The first chunk may already be
+          // in the cross-chapter cache, giving near-instant playback.
+          playChunkRef.current!(startIdx);
         }
       }
     });

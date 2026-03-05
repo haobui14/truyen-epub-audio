@@ -4,7 +4,7 @@ import Image from "next/image";
 import { usePlayerContext } from "@/context/PlayerContext";
 import { SliderControl } from "./SpeedControl";
 import { Spinner } from "@/components/ui/Spinner";
-import { useNativeTTSVoices, useNativeTTSAvailable } from "@/hooks/useNativeTTSPlayer";
+import { useNativeTTSAvailable } from "@/hooks/useNativeTTSPlayer";
 
 const SLEEP_PRESETS = [15, 30, 45, 60] as const;
 
@@ -40,7 +40,6 @@ export function SpeechPlayer() {
     cancelSleepTimer,
   } = usePlayerContext();
 
-  const nativeVoices = useNativeTTSVoices("vi");
   const isNative = useNativeTTSAvailable();
 
   const [showTimerPanel, setShowTimerPanel] = useState(false);
@@ -262,10 +261,20 @@ export function SpeechPlayer() {
         {/* Native TTS error banner */}
         {nativeTtsError && (
           <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800/50 -mt-1">
-            <svg className="w-4 h-4 text-red-500 shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clipRule="evenodd" />
+            <svg
+              className="w-4 h-4 text-red-500 shrink-0 mt-0.5"
+              fill="currentColor"
+              viewBox="0 0 20 20"
+            >
+              <path
+                fillRule="evenodd"
+                d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z"
+                clipRule="evenodd"
+              />
             </svg>
-            <p className="text-xs text-red-700 dark:text-red-400 leading-snug">{nativeTtsError}</p>
+            <p className="text-xs text-red-700 dark:text-red-400 leading-snug">
+              {nativeTtsError}
+            </p>
           </div>
         )}
 
@@ -304,7 +313,14 @@ export function SpeechPlayer() {
             <span className="text-xs text-gray-400 dark:text-gray-500 font-medium w-16 shrink-0">
               Tốc độ
             </span>
-            <SliderControl label="x" value={rate} min={0.5} max={3} step={0.05} onChange={changeRate} />
+            <SliderControl
+              label="x"
+              value={rate}
+              min={0.5}
+              max={3}
+              step={0.05}
+              onChange={changeRate}
+            />
           </div>
 
           {/* Pitch (native voice only) */}
@@ -313,7 +329,15 @@ export function SpeechPlayer() {
               <span className="text-xs text-gray-400 dark:text-gray-500 font-medium w-16 shrink-0">
                 Tông
               </span>
-              <SliderControl label="x" value={pitch} min={0.5} max={2} step={0.05} onChange={changePitch} accent="emerald" />
+              <SliderControl
+                label="x"
+                value={pitch}
+                min={0.5}
+                max={2}
+                step={0.05}
+                onChange={changePitch}
+                accent="emerald"
+              />
             </div>
           )}
 
@@ -324,20 +348,21 @@ export function SpeechPlayer() {
             </span>
             <div className="flex gap-1.5 flex-wrap">
               {/* Backend voices (indigo) — hidden on native app */}
-              {!isOnNative && BACKEND_VOICES.map((opt) => (
-                <button
-                  key={opt.value}
-                  onClick={() => handleVoiceChange(opt.value)}
-                  title={opt.sub}
-                  className={`flex flex-col items-center px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
-                    voice === opt.value
-                      ? "bg-indigo-600 border-indigo-600 text-white"
-                      : "border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-400"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
+              {!isOnNative &&
+                BACKEND_VOICES.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => handleVoiceChange(opt.value)}
+                    title={opt.sub}
+                    className={`flex flex-col items-center px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                      voice === opt.value
+                        ? "bg-indigo-600 border-indigo-600 text-white"
+                        : "border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-400"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
 
               {/* Divider if both backend and native voices shown */}
               {!isOnNative && isNative && (
@@ -346,54 +371,19 @@ export function SpeechPlayer() {
                 </span>
               )}
 
-              {/* Native (Capacitor) voices — shown only in app */}
+              {/* Native (Capacitor) voice — shown only in app */}
               {isNative && (
-                <>
-                  <button
-                    onClick={() => handleVoiceChange("native:vi-VN-default")}
-                    title="Giọng thiết bị — không cần mạng"
-                    className={`flex flex-col items-center px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
-                      voice === "native:vi-VN-default"
-                        ? "bg-emerald-600 border-emerald-600 text-white"
-                        : "border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-400"
-                    }`}
-                  >
-                    Thiết bị
-                  </button>
-                  {(() => {
-                    // Deduplicate voices by display label (Samsung lists multiple quality variants)
-                    const seen = new Set<string>();
-                    return nativeVoices
-                      .filter((nv) => {
-                        const label = nv.name
-                          .replace(/^(Google|Samsung)\s+/i, "")
-                          .split(/\s+/)[0];
-                        if (seen.has(label)) return false;
-                        seen.add(label);
-                        return true;
-                      })
-                      .map((nv) => {
-                        const nvKey = `native:${nv.index}`;
-                        const label = nv.name
-                          .replace(/^(Google|Samsung)\s+/i, "")
-                          .split(/\s+/)[0];
-                        return (
-                          <button
-                            key={nvKey}
-                            onClick={() => handleVoiceChange(nvKey)}
-                            title={`${nv.name} — không cần mạng`}
-                            className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
-                              voice === nvKey
-                                ? "bg-emerald-600 border-emerald-600 text-white"
-                                : "border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-400"
-                            }`}
-                          >
-                            {label}
-                          </button>
-                        );
-                      });
-                  })()}
-                </>
+                <button
+                  onClick={() => handleVoiceChange("native:vi-VN-default")}
+                  title="Giọng thiết bị — không cần mạng"
+                  className={`flex flex-col items-center px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                    voice.startsWith("native:")
+                      ? "bg-emerald-600 border-emerald-600 text-white"
+                      : "border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-400"
+                  }`}
+                >
+                  Thiết bị
+                </button>
               )}
             </div>
           </div>

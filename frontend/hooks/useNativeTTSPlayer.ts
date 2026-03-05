@@ -2,7 +2,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useProgressSync } from "@/hooks/useProgressSync";
 import { isNativePlatform } from "@/lib/capacitor";
-import { acquireBackgroundLock, releaseBackgroundLock, getTtsBridge } from "@/lib/backgroundLock";
+import {
+  acquireBackgroundLock,
+  releaseBackgroundLock,
+  getTtsBridge,
+} from "@/lib/backgroundLock";
 import { splitIntoChunks } from "@/lib/textChunks";
 
 /**
@@ -68,11 +72,18 @@ export function useNativeTTSPlayer(
   const onEndedRef = useRef(onEnded);
   onEndedRef.current = onEnded;
 
+  // Set when the native service auto-advances to the next chapter.
+  // Prevents the reset effect from stopping the already-playing service.
+  const chapterAdvancedRef = useRef(false);
+
   const { reportProgress: reportListenProgress } = useProgressSync({
     bookId,
     chapterId,
     progressType: "listen",
   });
+
+  const chapterIdRef = useRef(chapterId);
+  chapterIdRef.current = chapterId;
 
   // Send chunks to native and start playback
   const startNativePlayback = useCallback((startIdx: number) => {
@@ -80,12 +91,38 @@ export function useNativeTTSPlayer(
     if (!bridge || chunksRef.current.length === 0) return;
 
     const chunksJson = JSON.stringify(chunksRef.current);
-    bridge.playChunks(chunksJson, rateRef.current, pitchRef.current, startIdx, "Đang phát...");
-    playingRef.current = true;
-    setIsPlaying(true);
-    setIsBuffering(false);
-    setChunkIndex(startIdx);
-    chunkRef.current = startIdx;
+    try {
+      // Use playChunksWithId (sends chapterId to native) if available,
+      // fall back to playChunks for older APKs that lack the new method.
+      if (typeof bridge.playChunksWithId === "function") {
+        bridge.playChunksWithId(
+          chunksJson,
+          rateRef.current,
+          pitchRef.current,
+          startIdx,
+          "Đang phát...",
+          chapterIdRef.current,
+        );
+      } else {
+        bridge.playChunks(
+          chunksJson,
+          rateRef.current,
+          pitchRef.current,
+          startIdx,
+          "Đang phát...",
+        );
+      }
+      playingRef.current = true;
+      setIsPlaying(true);
+      setIsBuffering(false);
+      setChunkIndex(startIdx);
+      chunkRef.current = startIdx;
+    } catch {
+      // Bridge call failed — clear buffering so UI isn't stuck
+      playingRef.current = false;
+      setIsPlaying(false);
+      setIsBuffering(false);
+    }
   }, []);
 
   // Listen for native TTS events
@@ -94,10 +131,26 @@ export function useNativeTTSPlayer(
 
     const onChunk = (e: Event) => {
       const idx = (e as CustomEvent).detail?.index ?? 0;
+      // Only update state & report progress if native is still on this JS chapter.
+      // When native auto-advances chapters in the background, chunk events arrive
+      // for a different chapter — saving them would corrupt this chapter's progress.
+      const bridge = getTtsBridge();
+      const nativeChId = bridge?.getCurrentChapterId?.() ?? "";
+      if (nativeChId && nativeChId !== chapterIdRef.current) return;
+
       setChunkIndex(idx);
       chunkRef.current = idx;
       setIsBuffering(false);
       reportListenProgress(idx, chunksRef.current.length);
+    };
+
+    const onChapterAdvance = () => {
+      // The native service auto-advanced to the queued next chapter.
+      // Set a flag so the reset effect (triggered by the upcoming navigation)
+      // doesn't stop the service that's already playing.
+      chapterAdvancedRef.current = true;
+      // Trigger navigation to the new chapter via onEnded
+      onEndedRef.current?.();
     };
 
     const onDone = () => {
@@ -109,7 +162,13 @@ export function useNativeTTSPlayer(
       // Do NOT release the background lock here — the next chapter's autoPlay
       // needs the service alive so sInstance is non-null and ttsReady is true.
       // The lock is released on unmount or when isActive becomes false.
-      onEndedRef.current?.();
+
+      // If the service auto-advanced, onChapterAdvance already called onEnded.
+      // Don't call it again to avoid double navigation.
+      if (!chapterAdvancedRef.current) {
+        onEndedRef.current?.();
+      }
+      chapterAdvancedRef.current = false;
     };
 
     const onState = (e: Event) => {
@@ -124,11 +183,16 @@ export function useNativeTTSPlayer(
     };
 
     window.addEventListener("native-tts-chunk", onChunk);
+    window.addEventListener("native-tts-chapter-advance", onChapterAdvance);
     window.addEventListener("native-tts-done", onDone);
     window.addEventListener("native-tts-state", onState);
 
     return () => {
       window.removeEventListener("native-tts-chunk", onChunk);
+      window.removeEventListener(
+        "native-tts-chapter-advance",
+        onChapterAdvance,
+      );
       window.removeEventListener("native-tts-done", onDone);
       window.removeEventListener("native-tts-state", onState);
     };
@@ -138,31 +202,53 @@ export function useNativeTTSPlayer(
   useEffect(() => {
     setTtsError(null);
 
-    // Stop any in-flight native speech
-    if (isActive) {
+    const wasAutoAdvanced = chapterAdvancedRef.current;
+
+    // If the native service auto-advanced to this chapter, DON'T stop it.
+    // It's already playing the right content.
+    if (isActive && !wasAutoAdvanced) {
       getTtsBridge()?.stopPlayback();
     }
 
     if (!isActive || !text) {
-      playingRef.current = false;
-      setIsPlaying(false);
-      setIsBuffering(false);
+      if (!wasAutoAdvanced) {
+        playingRef.current = false;
+        setIsPlaying(false);
+        setIsBuffering(false);
+      }
       // Only release the service when the engine is deactivated entirely.
       // When text is just temporarily null during a chapter transition, keep
       // the service alive so TTS engine stays initialized and ready.
       if (!isActive) releaseBackgroundLock();
-      chunksRef.current = [];
-      setTotalChunks(0);
+      if (!wasAutoAdvanced) {
+        chunksRef.current = [];
+        setTotalChunks(0);
+      }
       return;
     }
 
-    const startIdx = initialChunkIndex ?? 0;
-    // Reset chunkIndex to 0 FIRST so it can never be stale-high against
-    // the incoming totalChunks (avoids progressPct > 100 between renders)
-    setChunkIndex(0);
-    chunkRef.current = 0;
+    // Text is available — split chunks for progress tracking
     chunksRef.current = splitIntoChunks(text);
     setTotalChunks(chunksRef.current.length);
+
+    if (wasAutoAdvanced) {
+      // Service auto-advanced — sync JS state with what's already playing.
+      chapterAdvancedRef.current = false;
+      const bridge = getTtsBridge();
+      const idx = bridge?.getCurrentChunk() ?? 0;
+      setChunkIndex(idx >= 0 ? idx : 0);
+      chunkRef.current = idx >= 0 ? idx : 0;
+      const playing = bridge?.isPlaying() ?? false;
+      playingRef.current = playing;
+      setIsPlaying(playing);
+      setIsBuffering(false);
+      return;
+    }
+
+    // Normal path: fresh start for this chapter
+    const startIdx = initialChunkIndex ?? 0;
+    setChunkIndex(0);
+    chunkRef.current = 0;
     if (startIdx > 0) {
       setChunkIndex(startIdx);
       chunkRef.current = startIdx;
@@ -171,8 +257,8 @@ export function useNativeTTSPlayer(
     if (autoPlay && chunksRef.current.length > 0) {
       setIsBuffering(true);
       acquireBackgroundLock();
-      // Start native playback immediately
-      Promise.resolve().then(() => startNativePlayback(startIdx));
+      // Start native playback immediately — no microtask defer
+      startNativePlayback(startIdx);
     } else {
       playingRef.current = false;
       setIsPlaying(false);
@@ -208,6 +294,29 @@ export function useNativeTTSPlayer(
     [isActive],
   );
 
+  // Sync JS state with native service when app resumes from background.
+  // Earbud play/pause events are handled natively in Java but the JS state
+  // updates (dispatched via evaluateJavascript) are lost when WebView is suspended.
+  useEffect(() => {
+    if (!isActive) return;
+    const syncState = () => {
+      if (document.visibilityState !== "visible") return;
+      const bridge = getTtsBridge();
+      if (!bridge) return;
+      const nativePlaying = bridge.isPlaying();
+      const nativeIdx = bridge.getCurrentChunk();
+      playingRef.current = nativePlaying;
+      setIsPlaying(nativePlaying);
+      setIsBuffering(false);
+      if (nativeIdx >= 0) {
+        setChunkIndex(nativeIdx);
+        chunkRef.current = nativeIdx;
+      }
+    };
+    document.addEventListener("visibilitychange", syncState);
+    return () => document.removeEventListener("visibilitychange", syncState);
+  }, [isActive]);
+
   const toggle = useCallback(async () => {
     if (!isActive) return;
     setTtsError(null);
@@ -234,24 +343,30 @@ export function useNativeTTSPlayer(
     }
   }, [isActive, startNativePlayback]);
 
-  const changeRate = useCallback((newRate: number) => {
-    rateRef.current = newRate;
-    setRateState(newRate);
-    getTtsBridge()?.setRate(newRate);
-    // If currently playing, restart current chunk with new rate
-    if (playingRef.current && chunksRef.current.length > 0) {
-      startNativePlayback(chunkRef.current);
-    }
-  }, [startNativePlayback]);
+  const changeRate = useCallback(
+    (newRate: number) => {
+      rateRef.current = newRate;
+      setRateState(newRate);
+      getTtsBridge()?.setRate(newRate);
+      // If currently playing, restart current chunk with new rate
+      if (playingRef.current && chunksRef.current.length > 0) {
+        startNativePlayback(chunkRef.current);
+      }
+    },
+    [startNativePlayback],
+  );
 
-  const changePitch = useCallback((newPitch: number) => {
-    pitchRef.current = newPitch;
-    setPitchState(newPitch);
-    getTtsBridge()?.setPitch(newPitch);
-    if (playingRef.current && chunksRef.current.length > 0) {
-      startNativePlayback(chunkRef.current);
-    }
-  }, [startNativePlayback]);
+  const changePitch = useCallback(
+    (newPitch: number) => {
+      pitchRef.current = newPitch;
+      setPitchState(newPitch);
+      getTtsBridge()?.setPitch(newPitch);
+      if (playingRef.current && chunksRef.current.length > 0) {
+        startNativePlayback(chunkRef.current);
+      }
+    },
+    [startNativePlayback],
+  );
 
   const restartChunk = useCallback(() => {
     if (!isActive) return;
@@ -280,7 +395,8 @@ export function useNativeTTSPlayer(
     [reportListenProgress, startNativePlayback],
   );
 
-  const progress = totalChunks > 0 ? Math.max(0, Math.min(1, chunkIndex / totalChunks)) : 0;
+  const progress =
+    totalChunks > 0 ? Math.max(0, Math.min(1, chunkIndex / totalChunks)) : 0;
 
   return {
     isPlaying: isPlaying || isBuffering,
