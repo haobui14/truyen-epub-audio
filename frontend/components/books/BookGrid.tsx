@@ -2,8 +2,17 @@ import Link from "next/link";
 import type { Book } from "@/types";
 import { BookCard } from "./BookCard";
 
-export function BookGrid({ books }: { books: Book[] }) {
-  if (books.length === 0) {
+interface BookGridProps {
+  books: Book[];
+  activeGenre?: string | null;
+}
+
+export function BookGrid({ books, activeGenre }: BookGridProps) {
+  const filtered = activeGenre
+    ? books.filter((b) => b.genres?.some((g) => g.id === activeGenre))
+    : books;
+
+  if (filtered.length === 0) {
     return (
       <div className="text-center py-24 text-gray-400 dark:text-gray-500">
         <div className="inline-flex items-center justify-center w-20 h-20 bg-gray-100 dark:bg-gray-800 rounded-2xl mb-4">
@@ -38,7 +47,7 @@ export function BookGrid({ books }: { books: Book[] }) {
 
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-      {books.map((book) => (
+      {filtered.map((book) => (
         <BookCard key={book.id} book={book} />
       ))}
     </div>

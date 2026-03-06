@@ -6,6 +6,7 @@ const USER_KEY = "auth_user";
 export interface AuthUser {
   user_id: string;
   email: string;
+  role?: string;
 }
 
 export function getToken(): string | null {
@@ -40,6 +41,10 @@ export function clearAuth() {
 
 export function isLoggedIn(): boolean {
   return !!getToken();
+}
+
+export function isAdmin(): boolean {
+  return getUser()?.role === "admin";
 }
 
 // ── Native persistence (Android SharedPreferences via @capacitor/preferences) ──

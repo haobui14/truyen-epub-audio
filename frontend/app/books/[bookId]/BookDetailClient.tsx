@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter, usePathname } from "next/navigation";
@@ -9,6 +9,7 @@ import { isLoggedIn } from "@/lib/auth";
 import { ChapterList } from "@/components/books/ChapterList";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Spinner } from "@/components/ui/Spinner";
+import { GenreTag, GenreManager } from "@/components/books/GenreManager";
 import {
   cacheChapterText,
   isChapterTextCached,
@@ -18,6 +19,7 @@ export default function BookDetailPage() {
   const bookId = usePathname().split("/")[2];
   const [page, setPage] = useState(1);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [admin, setAdmin] = useState(false);
   const [dlProgress, setDlProgress] = useState<{
     done: number;
     total: number;
@@ -25,6 +27,13 @@ export default function BookDetailPage() {
   const [dlDone, setDlDone] = useState(false);
   const router = useRouter();
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    const sync = () => setAdmin(isAdmin());
+    sync();
+    window.addEventListener("auth-change", sync);
+    return () => window.removeEventListener("auth-change", sync);
+  }, []);
 
   const deleteMutation = useMutation({
     mutationFn: () => api.deleteBook(bookId),
@@ -188,25 +197,38 @@ export default function BookDetailPage() {
             {book.title}
           </span>
         </div>
-        <button
-          onClick={() => setShowDeleteConfirm(true)}
-          className="shrink-0 ml-3 p-2 rounded-lg text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
-          title="Xóa truyện"
-        >
-          <svg
-            className="w-5 h-5"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
+        {admin && (
+        <div className="flex items-center gap-1.5 shrink-0 ml-3">
+          <Link
+            href={`/admin/books/${bookId}/add-chapter`}
+            className="p-2 rounded-lg text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors"
+            title="Thêm chương mới"
           >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-            />
-          </svg>
-        </button>
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+          </Link>
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            className="p-2 rounded-lg text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+            title="Xóa truyện"
+          >
+            <svg
+              className="w-5 h-5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+              />
+            </svg>
+          </button>
+        </div>
+        )}
       </nav>
 
       {/* Book header card */}
@@ -269,6 +291,15 @@ export default function BookDetailPage() {
                   </span>
                 )}
               </div>
+              {/* Genre tags */}
+              {book.genres && book.genres.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {book.genres.map((g) => <GenreTag key={g.id} genre={g} />)}
+                </div>
+              )}
+              {admin && (
+                <GenreManager bookId={bookId} assignedGenres={book.genres ?? []} />
+              )}
             </div>
           </div>
         </div>

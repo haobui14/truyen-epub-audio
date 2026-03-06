@@ -69,13 +69,49 @@ CREATE TABLE IF NOT EXISTS user_settings (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- User roles (admin-only access control)
+CREATE TABLE IF NOT EXISTS user_roles (
+    user_id    UUID PRIMARY KEY,
+    role       TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- To grant admin: INSERT INTO user_roles (user_id, role) VALUES ('<uuid>', 'admin')
+-- ON CONFLICT (user_id) DO UPDATE SET role = 'admin';
+
+-- Genres (admin-managed global tags for books)
+CREATE TABLE IF NOT EXISTS genres (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name        TEXT NOT NULL UNIQUE,
+    color       TEXT NOT NULL DEFAULT 'indigo',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Book ↔ Genre many-to-many
+CREATE TABLE IF NOT EXISTS book_genres (
+    book_id     UUID NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    genre_id    UUID NOT NULL REFERENCES genres(id) ON DELETE CASCADE,
+    PRIMARY KEY (book_id, genre_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_book_genres_genre_id ON book_genres(genre_id);
+
+-- Storage RLS policies
+-- Allow backend service role to upload EPUBs (epub-uploads is private)
+CREATE POLICY "Service role full access on epub-uploads"
+ON storage.objects FOR ALL TO service_role
+USING (bucket_id = 'epub-uploads')
+WITH CHECK (bucket_id = 'epub-uploads');
+
+-- Allow public read on audio and covers buckets
+CREATE POLICY "Public read on audio"
+ON storage.objects FOR SELECT TO anon
+USING (bucket_id = 'audio');
+
+CREATE POLICY "Public read on covers"
+ON storage.objects FOR SELECT TO anon
+USING (bucket_id = 'covers');
+
 -- Storage buckets (run in Supabase dashboard > Storage):
 -- 1. Create bucket "epub-uploads" (private)
 -- 2. Create bucket "audio" (public)
 -- 3. Create bucket "covers" (public)
---
--- Add this RLS policy for "audio" and "covers" buckets:
--- Policy name: "Public read"
--- Operation: SELECT
--- Role: anon
--- USING: true

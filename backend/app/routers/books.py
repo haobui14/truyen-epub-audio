@@ -1,7 +1,9 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import List
+from pydantic import BaseModel
 
 from app.database import get_client
+from app.dependencies import get_admin_user
 from app.models.book import BookResponse
 from app.models.chapter import ChapterResponse, AudioSummary, PaginatedChaptersResponse
 from app.services import storage_service
@@ -9,24 +11,36 @@ from app.services import storage_service
 router = APIRouter(prefix="/api/books", tags=["books"])
 
 
+def _attach_genres(rows: list) -> list:
+    """Flatten nested book_genres → genres into a top-level list."""
+    out = []
+    for row in rows:
+        raw_bg = row.pop("book_genres", []) or []
+        genres = [bg["genres"] for bg in raw_bg if bg.get("genres")]
+        out.append({**row, "genres": genres})
+    return out
+
+
+_BOOK_SELECT = (
+    "id,title,author,cover_url,voice,status,total_chapters,created_at,"
+    "book_genres(genres(id,name,color))"
+)
+
+
 @router.get("", response_model=List[BookResponse])
 async def list_books():
     db = get_client()
-    result = db.table("books").select(
-        "id,title,author,cover_url,voice,status,total_chapters,created_at"
-    ).order("created_at", desc=True).execute()
-    return result.data
+    result = db.table("books").select(_BOOK_SELECT).order("created_at", desc=True).execute()
+    return _attach_genres(result.data)
 
 
 @router.get("/{book_id}", response_model=BookResponse)
 async def get_book(book_id: str):
     db = get_client()
-    result = db.table("books").select(
-        "id,title,author,cover_url,voice,status,total_chapters,created_at"
-    ).eq("id", book_id).single().execute()
+    result = db.table("books").select(_BOOK_SELECT).eq("id", book_id).single().execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Book not found")
-    return result.data
+    return _attach_genres([result.data])[0]
 
 
 @router.get("/{book_id}/chapters", response_model=PaginatedChaptersResponse)
@@ -84,7 +98,7 @@ async def get_book_chapters(
 
 
 @router.delete("/{book_id}")
-async def delete_book(book_id: str):
+async def delete_book(book_id: str, _admin: dict = Depends(get_admin_user)):
     db = get_client()
     book = db.table("books").select("id").eq("id", book_id).single().execute()
     if not book.data:
@@ -98,3 +112,56 @@ async def delete_book(book_id: str):
     # Delete from DB (cascades to chapters + audio_files)
     db.table("books").delete().eq("id", book_id).execute()
     return {"message": "Book deleted"}
+
+
+class ChapterCreateBody(BaseModel):
+    chapter_index: int
+    title: str
+    text_content: str
+
+
+@router.post("/{book_id}/chapters", response_model=ChapterResponse, status_code=201)
+async def create_chapter(
+    book_id: str,
+    body: ChapterCreateBody,
+    _admin: dict = Depends(get_admin_user),
+):
+    """Admin-only: manually add a chapter to an existing book."""
+    if body.chapter_index < 0:
+        raise HTTPException(status_code=400, detail="chapter_index must be >= 0")
+    title = body.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Title cannot be empty")
+    text_content = body.text_content.strip()
+
+    db = get_client()
+    book = db.table("books").select("id").eq("id", book_id).single().execute()
+    if not book.data:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    word_count = len(text_content.split()) if text_content else 0
+
+    try:
+        result = db.table("chapters").insert({
+            "book_id": book_id,
+            "chapter_index": body.chapter_index,
+            "title": title,
+            "text_content": text_content,
+            "word_count": word_count,
+            "status": "pending",
+        }).execute()
+    except Exception as e:
+        if "unique" in str(e).lower():
+            raise HTTPException(
+                status_code=409,
+                detail=f"Chapter index {body.chapter_index} already exists for this book",
+            )
+        raise HTTPException(status_code=500, detail="Failed to create chapter")
+
+    # Recalculate total_chapters
+    count_result = db.table("chapters").select("id", count="exact").eq("book_id", book_id).execute()
+    total = count_result.count or 0
+    db.table("books").update({"total_chapters": total}).eq("id", book_id).execute()
+
+    ch = result.data[0]
+    return ChapterResponse(**ch, audio=None)

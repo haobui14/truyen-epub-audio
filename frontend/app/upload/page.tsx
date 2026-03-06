@@ -1,13 +1,18 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { UploadZone } from "@/components/upload/UploadZone";
 import { Spinner } from "@/components/ui/Spinner";
 import { api } from "@/lib/api";
+import { isLoggedIn, isAdmin } from "@/lib/auth";
 
 export default function UploadPage() {
   const router = useRouter();
+
+  useEffect(() => {
+    if (!isLoggedIn() || !isAdmin()) router.replace("/");
+  }, [router]);
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);

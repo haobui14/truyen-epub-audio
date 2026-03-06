@@ -3,6 +3,7 @@ import { getToken, clearAuth } from "./auth";
 import type {
   Book,
   Chapter,
+  Genre,
   TtsStatus,
   AudioSummary,
   PaginatedChapters,
@@ -88,7 +89,7 @@ export const api = {
 
   // Auth
   login: (email: string, password: string) =>
-    request<{ access_token: string; user_id: string; email: string }>(
+    request<{ access_token: string; user_id: string; email: string; role: string }>(
       "/api/auth/login",
       {
         method: "POST",
@@ -97,7 +98,7 @@ export const api = {
       },
     ),
   signup: (email: string, password: string) =>
-    request<{ access_token: string; user_id: string; email: string }>(
+    request<{ access_token: string; user_id: string; email: string; role: string }>(
       "/api/auth/signup",
       {
         method: "POST",
@@ -105,7 +106,7 @@ export const api = {
         body: JSON.stringify({ email, password }),
       },
     ),
-  getMe: () => request<{ id: string; email: string }>("/api/auth/me"),
+  getMe: () => request<{ id: string; email: string; role: string }>("/api/auth/me"),
 
   // Progress
   saveProgress: (data: {
@@ -148,4 +149,32 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     }),
+  // Admin: manual chapter creation
+  createChapter: (bookId: string, data: { chapter_index: number; title: string; text_content: string }) =>
+    request<Chapter>(`/api/books/${bookId}/chapters`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }),
+
+  // Genres
+  listGenres: () => request<Genre[]>("/api/genres"),
+  createGenre: (name: string, color: string) =>
+    request<Genre>("/api/genres", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, color }),
+    }),
+  updateGenre: (genreId: string, data: { name?: string; color?: string }) =>
+    request<Genre>(`/api/genres/${genreId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }),
+  deleteGenre: (genreId: string) =>
+    request<void>(`/api/genres/${genreId}`, { method: "DELETE" }),
+  assignGenre: (bookId: string, genreId: string) =>
+    request<void>(`/api/genres/assign/${bookId}/${genreId}`, { method: "POST" }),
+  removeGenre: (bookId: string, genreId: string) =>
+    request<void>(`/api/genres/assign/${bookId}/${genreId}`, { method: "DELETE" }),
 };

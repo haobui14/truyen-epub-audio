@@ -1,15 +1,25 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Book } from "@/types";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { GenreTag } from "@/components/books/GenreManager";
+import { isAdmin } from "@/lib/auth";
 import { api } from "@/lib/api";
 
 export function BookCard({ book }: { book: Book }) {
   const [showConfirm, setShowConfirm] = useState(false);
+  const [admin, setAdmin] = useState(false);
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    const sync = () => setAdmin(isAdmin());
+    sync();
+    window.addEventListener("auth-change", sync);
+    return () => window.removeEventListener("auth-change", sync);
+  }, []);
 
   const deleteMutation = useMutation({
     mutationFn: () => api.deleteBook(book.id),
@@ -85,10 +95,21 @@ export function BookCard({ book }: { book: Book }) {
               </svg>
               <span>{book.total_chapters} chương</span>
             </div>
+            {book.genres && book.genres.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-1.5">
+                {book.genres.slice(0, 2).map((g) => (
+                  <GenreTag key={g.id} genre={g} />
+                ))}
+                {book.genres.length > 2 && (
+                  <span className="text-[10px] text-gray-400 dark:text-gray-500 leading-5">+{book.genres.length - 2}</span>
+                )}
+              </div>
+            )}
           </div>
         </Link>
 
-        {/* Delete button - visible on hover */}
+        {/* Delete button - visible on hover for admins only */}
+        {admin && (
         <button
           onClick={(e) => {
             e.preventDefault();
@@ -112,6 +133,7 @@ export function BookCard({ book }: { book: Book }) {
             />
           </svg>
         </button>
+        )}
       </div>
 
       <ConfirmDialog

@@ -20,7 +20,7 @@ async def get_settings(user: dict = Depends(get_current_user)):
         .maybe_single()
         .execute()
     )
-    if result.data:
+    if result and result.data:
         return result.data
     # No row yet — return defaults without inserting
     return {

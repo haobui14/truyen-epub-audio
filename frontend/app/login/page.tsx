@@ -25,6 +25,7 @@ export default function LoginPage() {
       setAuth(result.access_token, {
         user_id: result.user_id,
         email: result.email,
+        role: result.role,
       });
       router.push("/");
     } catch (err: unknown) {

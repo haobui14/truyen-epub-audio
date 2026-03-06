@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, EmailStr
 
 from app.database import get_client
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, _lookup_role
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -16,6 +16,7 @@ class AuthResponse(BaseModel):
     access_token: str
     user_id: str
     email: str
+    role: str = "user"
 
 
 @router.post("/signup", response_model=AuthResponse)
@@ -30,10 +31,12 @@ async def signup(body: AuthRequest):
                 status_code=400,
                 detail="Signup failed. Check if email confirmation is disabled in Supabase settings.",
             )
+        user_id = str(result.user.id)
         return AuthResponse(
             access_token=result.session.access_token,
-            user_id=str(result.user.id),
+            user_id=user_id,
             email=result.user.email,
+            role=_lookup_role(user_id),
         )
     except HTTPException:
         raise
@@ -48,10 +51,12 @@ async def login(body: AuthRequest):
         result = db.auth.sign_in_with_password(
             {"email": body.email, "password": body.password}
         )
+        user_id = str(result.user.id)
         return AuthResponse(
             access_token=result.session.access_token,
-            user_id=str(result.user.id),
+            user_id=user_id,
             email=result.user.email,
+            role=_lookup_role(user_id),
         )
     except Exception:
         raise HTTPException(status_code=401, detail="Email hoặc mật khẩu không đúng")

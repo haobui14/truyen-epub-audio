@@ -2,10 +2,11 @@ import asyncio
 import uuid
 import logging
 
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
 
 from app.database import get_client
 from app.config import settings
+from app.dependencies import get_admin_user
 from app.services import storage_service, epub_parser
 
 router = APIRouter(prefix="/api", tags=["upload"])
@@ -18,6 +19,7 @@ VALID_VOICES = ["vi-VN-HoaiMyNeural", "vi-VN-NamMinhNeural"]
 async def upload_epub(
     file: UploadFile = File(...),
     voice: str = Form(default="vi-VN-HoaiMyNeural"),
+    _admin: dict = Depends(get_admin_user),
 ):
     # Validate file type
     filename = file.filename or ""

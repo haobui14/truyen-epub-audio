@@ -1,6 +1,12 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
+
+
+class GenreInBook(BaseModel):
+    id: str
+    name: str
+    color: str
 
 
 class BookResponse(BaseModel):
@@ -12,3 +18,4 @@ class BookResponse(BaseModel):
     status: str
     total_chapters: int
     created_at: datetime
+    genres: List[GenreInBook] = []

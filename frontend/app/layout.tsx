@@ -75,25 +75,6 @@ export default function RootLayout({
               <div className="flex items-center gap-1.5 sm:gap-2">
                 <HeaderAuth />
                 <DarkModeToggle />
-                <Link
-                  href="/upload"
-                  className="flex items-center gap-1.5 bg-indigo-600 text-white text-sm font-medium px-3.5 sm:px-4 py-2 rounded-lg hover:bg-indigo-700 active:scale-[0.98] transition-all shadow-sm hover:shadow-md"
-                >
-                  <svg
-                    className="w-4 h-4"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 4v16m8-8H4"
-                    />
-                  </svg>
-                  <span className="hidden sm:inline">Tải lên</span>
-                </Link>
               </div>
             </div>
           </header>

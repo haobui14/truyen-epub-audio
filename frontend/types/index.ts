@@ -1,3 +1,10 @@
+export interface Genre {
+  id: string;
+  name: string;
+  color: string;
+  created_at: string;
+}
+
 export interface Book {
   id: string;
   title: string;
@@ -7,6 +14,7 @@ export interface Book {
   status: "pending" | "parsing" | "parsed" | "converting" | "ready" | "error";
   total_chapters: number;
   created_at: string;
+  genres: Genre[];
 }
 
 export interface AudioSummary {

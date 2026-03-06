@@ -5,6 +5,8 @@ import { PlayerProvider } from "@/context/PlayerContext";
 import { flushProgressQueue } from "@/lib/progressQueue";
 import { hydrateAuthFromNative } from "@/lib/auth";
 import { isNativePlatform } from "@/lib/capacitor";
+import { api } from "@/lib/api";
+import { isLoggedIn, getUser, getToken, setAuth } from "@/lib/auth";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -25,14 +27,30 @@ export function Providers({ children }: { children: React.ReactNode }) {
   );
 
   // On native, restore auth from SharedPreferences into localStorage.
-  // After hydration, invalidate all queries so they re-run with the
-  // restored token (avoids a stale 401 error state from the initial load).
+  // After hydration, sync role from server and invalidate all queries.
   useEffect(() => {
-    if (!isNativePlatform()) return;
-    hydrateAuthFromNative().then(() => {
-      window.dispatchEvent(new Event("auth-change"));
-      queryClient.invalidateQueries();
-    });
+    const init = async () => {
+      if (isNativePlatform()) {
+        await hydrateAuthFromNative();
+        window.dispatchEvent(new Event("auth-change"));
+        queryClient.invalidateQueries();
+      }
+      // Sync role from server so existing sessions get the correct role
+      // without requiring a re-login (handles new admins and role revocations).
+      if (isLoggedIn()) {
+        try {
+          const me = await api.getMe();
+          const user = getUser();
+          const token = getToken();
+          if (user && token && me.role !== user.role) {
+            setAuth(token, { ...user, role: me.role });
+          }
+        } catch {
+          // Expired token — api.ts already cleared auth on 401
+        }
+      }
+    };
+    init();
   }, [queryClient]);
 
   // Flush queued offline progress when connectivity is restored
