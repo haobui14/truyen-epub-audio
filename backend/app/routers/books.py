@@ -151,7 +151,8 @@ async def update_book(
 
 
 @router.delete("/{book_id}")
-async def delete_book(book_id: str, _admin: dict = Depends(get_admin_user)):    db = get_client()
+async def delete_book(book_id: str, _admin: dict = Depends(get_admin_user)):
+    db = get_client()
     book = db.table("books").select("id").eq("id", book_id).single().execute()
     if not book.data:
         raise HTTPException(status_code=404, detail="Book not found")
