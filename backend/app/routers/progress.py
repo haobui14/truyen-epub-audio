@@ -24,7 +24,7 @@ async def save_progress(body: ProgressUpsert, user: dict = Depends(get_current_u
     }
     result = (
         db.table("user_progress")
-        .upsert(data, on_conflict="user_id,book_id,chapter_id,progress_type")
+        .upsert(data, on_conflict="user_id,book_id,progress_type")
         .execute()
     )
     if not result.data:

@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS user_progress (
     progress_value  FLOAT NOT NULL DEFAULT 0,
     total_value     FLOAT,
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE(user_id, book_id, chapter_id, progress_type)
+    UNIQUE(user_id, book_id, progress_type)
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_progress_user_book ON user_progress(user_id, book_id);
