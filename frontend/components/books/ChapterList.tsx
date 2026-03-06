@@ -56,7 +56,7 @@ function PaginationButton({
   return (
     <button
       onClick={() => onClick(page)}
-      className={`min-w-[36px] h-9 px-2 text-sm font-medium rounded-lg transition-colors ${
+      className={`min-w-9 h-9 px-2 text-sm font-medium rounded-lg transition-colors ${
         isActive
           ? "bg-indigo-600 text-white shadow-sm"
           : "text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700"
