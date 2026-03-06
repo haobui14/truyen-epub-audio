@@ -19,7 +19,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     // Expired / invalid token — clear stored credentials so the app
     // treats the user as logged out immediately and stops retrying.
-    if (res.status === 401) {
+    // Only clear when a token was actually sent; a 401 with no token just
+    // means the endpoint requires auth (e.g. during native hydration race).
+    if (res.status === 401 && token) {
       clearAuth();
     }
     const err = await res.text();
