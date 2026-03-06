@@ -37,6 +37,13 @@ export const api = {
   getBook: (id: string) => request<Book>(`/api/books/${id}`),
   deleteBook: (id: string) =>
     request<{ message: string }>(`/api/books/${id}`, { method: "DELETE" }),
+  updateBook: (id: string, fields: { title?: string; author?: string; cover?: File | null }) => {
+    const form = new FormData();
+    if (fields.title !== undefined) form.append("title", fields.title);
+    if (fields.author !== undefined) form.append("author", fields.author);
+    if (fields.cover) form.append("cover", fields.cover);
+    return request<Book>(`/api/books/${id}`, { method: "PATCH", body: form });
+  },
 
   // Chapters
   getBookChapters: (bookId: string, page = 1, pageSize = 100) =>
@@ -77,10 +84,11 @@ export const api = {
     }>(`/api/audio/${chapterId}`),
 
   // Upload
-  uploadEpub: (file: File, voice: string) => {
+  uploadEpub: (file: File, voice: string, cover?: File | null) => {
     const form = new FormData();
     form.append("file", file);
     form.append("voice", voice);
+    if (cover) form.append("cover", cover);
     return request<{ book_id: string; status: string }>("/api/upload", {
       method: "POST",
       body: form,

@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter, usePathname } from "next/navigation";
@@ -20,6 +20,8 @@ export default function BookDetailPage() {
   const [page, setPage] = useState(1);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [admin, setAdmin] = useState(false);
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [adminTab, setAdminTab] = useState<"info" | "genres" | "chapter">("info");
   const [dlProgress, setDlProgress] = useState<{
     done: number;
     total: number;
@@ -199,15 +201,6 @@ export default function BookDetailPage() {
         </div>
         {admin && (
         <div className="flex items-center gap-1.5 shrink-0 ml-3">
-          <Link
-            href={`/admin/books/${bookId}/add-chapter`}
-            className="p-2 rounded-lg text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors"
-            title="Thêm chương mới"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-          </Link>
           <button
             onClick={() => setShowDeleteConfirm(true)}
             className="p-2 rounded-lg text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
@@ -297,12 +290,64 @@ export default function BookDetailPage() {
                   {book.genres.map((g) => <GenreTag key={g.id} genre={g} />)}
                 </div>
               )}
-              {admin && (
-                <GenreManager bookId={bookId} assignedGenres={book.genres ?? []} />
-              )}
             </div>
           </div>
         </div>
+
+        {/* Admin panel */}
+        {admin && (
+          <div className="border-t border-gray-100 dark:border-gray-700">
+            <button
+              onClick={() => setShowAdminPanel((v) => !v)}
+              className="w-full flex items-center justify-between px-5 sm:px-6 py-3 text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors"
+            >
+              <span className="flex items-center gap-1.5">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                Quản trị
+              </span>
+              <svg className={`w-4 h-4 transition-transform ${showAdminPanel ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {showAdminPanel && (
+              <div className="px-5 sm:px-6 pb-5">
+                {/* Tabs */}
+                <div className="flex gap-1 mb-4 bg-gray-100 dark:bg-gray-700/50 p-1 rounded-lg">
+                  {(["info", "genres", "chapter"] as const).map((tab) => (
+                    <button
+                      key={tab}
+                      onClick={() => setAdminTab(tab)}
+                      className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                        adminTab === tab
+                          ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm"
+                          : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                      }`}
+                    >
+                      {tab === "info" ? "Thông tin" : tab === "genres" ? "Thể loại" : "Thêm chương"}
+                    </button>
+                  ))}
+                </div>
+
+                {adminTab === "info" && (
+                  <BookInfoEditor bookId={bookId} book={book} onSaved={() => queryClient.invalidateQueries({ queryKey: ["book", bookId] })} />
+                )}
+                {adminTab === "genres" && (
+                  <GenreManager bookId={bookId} assignedGenres={book.genres ?? []} />
+                )}
+                {adminTab === "chapter" && (
+                  <AddChapterForm bookId={bookId} onSaved={() => {
+                    queryClient.invalidateQueries({ queryKey: ["chapters", bookId] });
+                    queryClient.invalidateQueries({ queryKey: ["book", bookId] });
+                  }} />
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Action buttons */}
         {isParsing ? (
@@ -485,5 +530,165 @@ export default function BookDetailPage() {
         onCancel={() => setShowDeleteConfirm(false)}
       />
     </div>
+  );
+}
+
+// ---------- BookInfoEditor ----------
+function BookInfoEditor({
+  bookId,
+  book,
+  onSaved,
+}: {
+  bookId: string;
+  book: { title: string; author?: string | null; cover_url?: string | null };
+  onSaved: () => void;
+}) {
+  const [title, setTitle] = useState(book.title);
+  const [author, setAuthor] = useState(book.author ?? "");
+  const [cover, setCover] = useState<File | null>(null);
+  const [coverPreview, setCoverPreview] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const handleCover = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0] ?? null;
+    setCover(f);
+    setCoverPreview(f ? URL.createObjectURL(f) : null);
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setError(null);
+    setSuccess(false);
+    try {
+      await api.updateBook(bookId, { title, author: author || undefined, cover });
+      onSaved();
+      setSuccess(true);
+      setCover(null);
+      setCoverPreview(null);
+      if (fileRef.current) fileRef.current.value = "";
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Lưu thất bại");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSave} className="space-y-3">
+      <div>
+        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Tên truyện</label>
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          required
+          className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        />
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Tác giả</label>
+        <input
+          value={author}
+          onChange={(e) => setAuthor(e.target.value)}
+          placeholder="Không rõ"
+          className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        />
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Ảnh bìa</label>
+        <div className="flex items-center gap-3">
+          {(coverPreview ?? book.cover_url) && (
+            <img
+              src={coverPreview ?? book.cover_url!}
+              alt="cover"
+              className="w-12 h-16 object-cover rounded-lg border border-gray-200 dark:border-gray-700 shrink-0"
+            />
+          )}
+          <label className="flex-1 cursor-pointer">
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 hover:border-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors text-xs text-gray-500 dark:text-gray-400">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+              </svg>
+              {cover ? cover.name : "Thay ảnh bìa…"}
+            </div>
+            <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={handleCover} className="sr-only" />
+          </label>
+        </div>
+      </div>
+      {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+      {success && <p className="text-xs text-emerald-600 dark:text-emerald-400">Đã lưu thành công!</p>}
+      <button
+        type="submit"
+        disabled={saving}
+        className="flex items-center gap-1.5 bg-indigo-600 text-white text-xs font-medium px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-60 transition-colors"
+      >
+        {saving && <Spinner className="w-3 h-3" />}
+        {saving ? "Đang lưu…" : "Lưu thay đổi"}
+      </button>
+    </form>
+  );
+}
+
+// ---------- AddChapterForm ----------
+function AddChapterForm({ bookId, onSaved }: { bookId: string; onSaved: () => void }) {
+  const [chapterIndex, setChapterIndex] = useState("");
+  const [title, setTitle] = useState("");
+  const [textContent, setTextContent] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const index = parseInt(chapterIndex, 10);
+    if (isNaN(index) || index < 1) { setError("Số chương phải là số nguyên dương."); return; }
+    setSaving(true);
+    setError(null);
+    setSuccess(false);
+    try {
+      await api.createChapter(bookId, { chapter_index: index, title: title.trim(), text_content: textContent.trim() });
+      onSaved();
+      setSuccess(true);
+      setChapterIndex("");
+      setTitle("");
+      setTextContent("");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Lỗi không xác định";
+      setError(msg.includes("409") || msg.toLowerCase().includes("conflict") ? `Chương số ${chapterIndex} đã tồn tại.` : msg);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Số chương</label>
+          <input type="number" min={1} value={chapterIndex} onChange={(e) => setChapterIndex(e.target.value)} required placeholder="1"
+            className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Tiêu đề</label>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} required placeholder="Chương 1: …"
+            className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        </div>
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Nội dung</label>
+        <textarea value={textContent} onChange={(e) => setTextContent(e.target.value)} required rows={8} placeholder="Nhập nội dung chương…"
+          className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-y font-mono leading-relaxed" />
+      </div>
+      {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+      {success && <p className="text-xs text-emerald-600 dark:text-emerald-400">Đã thêm chương thành công!</p>}
+      <button type="submit" disabled={saving}
+        className="flex items-center gap-1.5 bg-indigo-600 text-white text-xs font-medium px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-60 transition-colors">
+        {saving && <Spinner className="w-3 h-3" />}
+        {saving ? "Đang lưu…" : "Thêm chương"}
+      </button>
+    </form>
   );
 }

@@ -1,5 +1,5 @@
-from fastapi import APIRouter, HTTPException, Query, Depends
-from typing import List
+from fastapi import APIRouter, HTTPException, Query, Depends, UploadFile, File, Form
+from typing import List, Optional
 from pydantic import BaseModel
 
 from app.database import get_client
@@ -97,9 +97,61 @@ async def get_book_chapters(
     )
 
 
-@router.delete("/{book_id}")
-async def delete_book(book_id: str, _admin: dict = Depends(get_admin_user)):
+VALID_COVER_TYPES = {"image/jpeg", "image/png", "image/webp"}
+
+
+@router.patch("/{book_id}", response_model=BookResponse)
+async def update_book(
+    book_id: str,
+    title: Optional[str] = Form(None),
+    author: Optional[str] = Form(None),
+    cover: Optional[UploadFile] = File(None),
+    _admin: dict = Depends(get_admin_user),
+):
+    """Admin-only: update book metadata (title, author, cover image)."""
     db = get_client()
+    book = db.table("books").select("id,cover_url").eq("id", book_id).single().execute()
+    if not book.data:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    updates: dict = {}
+    if title is not None:
+        t = title.strip()
+        if not t:
+            raise HTTPException(status_code=400, detail="Title cannot be empty")
+        updates["title"] = t
+    if author is not None:
+        updates["author"] = author.strip() or None
+
+    if cover and cover.filename:
+        content_type = cover.content_type or "image/jpeg"
+        if content_type not in VALID_COVER_TYPES:
+            raise HTTPException(status_code=400, detail="Cover must be JPEG, PNG, or WebP")
+        cover_data = await cover.read()
+        if len(cover_data) > 5 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Cover image must be under 5MB")
+        ext = content_type.split("/")[-1].replace("jpeg", "jpg")
+        cover_path = f"covers/{book_id}/cover.{ext}"
+        try:
+            cover_url = await storage_service.upload_bytes(
+                bucket="covers",
+                path=cover_path,
+                data=cover_data,
+                content_type=content_type,
+            )
+            updates["cover_url"] = cover_url
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Cover upload failed: {e}")
+
+    if updates:
+        db.table("books").update(updates).eq("id", book_id).execute()
+
+    result = db.table("books").select(_BOOK_SELECT).eq("id", book_id).single().execute()
+    return _attach_genres([result.data])[0]
+
+
+@router.delete("/{book_id}")
+async def delete_book(book_id: str, _admin: dict = Depends(get_admin_user)):    db = get_client()
     book = db.table("books").select("id").eq("id", book_id).single().execute()
     if not book.data:
         raise HTTPException(status_code=404, detail="Book not found")
