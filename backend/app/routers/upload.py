@@ -52,12 +52,17 @@ async def upload_epub(
 
     # Upload raw EPUB to storage
     epub_storage_path = f"epub-uploads/{book_id}/original.epub"
-    await storage_service.upload_bytes(
-        bucket="epub-uploads",
-        path=epub_storage_path,
-        data=content,
-        content_type="application/epub+zip",
-    )
+    try:
+        await storage_service.upload_bytes(
+            bucket="epub-uploads",
+            path=epub_storage_path,
+            data=content,
+            content_type="application/epub+zip",
+        )
+    except Exception as e:
+        logger.error(f"Storage upload failed for book {book_id}: {e}")
+        db.table("books").delete().eq("id", book_id).execute()
+        raise HTTPException(status_code=500, detail=f"Storage upload failed: {e}")
 
     # Start async parsing in background
     asyncio.create_task(epub_parser.parse_epub_task(book_id, content))
