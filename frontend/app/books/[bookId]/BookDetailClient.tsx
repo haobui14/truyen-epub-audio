@@ -5,7 +5,7 @@ import Image from "next/image";
 import { useRouter, usePathname } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { isLoggedIn } from "@/lib/auth";
+import { isLoggedIn, isAdmin } from "@/lib/auth";
 import { ChapterList } from "@/components/books/ChapterList";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Spinner } from "@/components/ui/Spinner";
