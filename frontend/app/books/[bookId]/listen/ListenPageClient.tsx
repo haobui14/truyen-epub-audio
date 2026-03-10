@@ -33,7 +33,7 @@ export default function ListenPage() {
 
   const { data: chaptersData } = useQuery({
     queryKey: ["chapters", bookId, "all"],
-    queryFn: () => api.getBookChapters(bookId, 1, 5000),
+    queryFn: () => api.getAllBookChapters(bookId),
   });
 
   // Fetch text for the current chapter — falls back to IndexedDB cache when offline

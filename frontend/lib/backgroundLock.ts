@@ -20,6 +20,10 @@ interface TtsBridgeNative {
   /** Queue ALL remaining chapters at once for continuous background playback. */
   queueAllChapters(chaptersJson: string): void;
   clearNextChapter(): void;
+  /** Set sleep timer to fire at an absolute epoch-ms timestamp (screen-off safe). */
+  setSleepTimer(expireAtMs: number): void;
+  /** Cancel the sleep timer. */
+  cancelSleepTimer(): void;
 }
 
 export function getTtsBridge(): TtsBridgeNative | undefined {

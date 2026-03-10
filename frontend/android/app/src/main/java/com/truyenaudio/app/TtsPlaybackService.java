@@ -57,6 +57,15 @@ public class TtsPlaybackService extends Service {
      *    the OS routes earbud/BT button events to the TTS engine's internal session. ── */
     private MediaPlayer             silentPlayer;
 
+    /* ── Sleep timer (absolute epoch-ms; -1 = not active) ── */
+    private long sleepExpireAtMs = -1;
+    private final Runnable sleepExpireRunnable = new Runnable() {
+        @Override public void run() {
+            if (currentlyPlaying) pausePlayback();
+            sleepExpireAtMs = -1;
+        }
+    };
+
     /* ── Periodic re-assertion of MediaSession while playing ── */
     private static final long REASSERT_INTERVAL_MS = 3000;
     private final Runnable reassertRunnable = new Runnable() {
@@ -433,7 +442,9 @@ public class TtsPlaybackService extends Service {
         if (sInstance == null) return;
         if (sInstance.mainHandler != null) {
             sInstance.mainHandler.removeCallbacks(sInstance.reassertRunnable);
+            sInstance.mainHandler.removeCallbacks(sInstance.sleepExpireRunnable);
         }
+        sInstance.sleepExpireAtMs = -1;
         if (sInstance.ttsEngine != null) sInstance.ttsEngine.stop();
         sInstance.chunks = null;
         sInstance.currentChunkIdx = -1;
@@ -484,6 +495,30 @@ public class TtsPlaybackService extends Service {
 
     public static boolean isCurrentlyPlaying() {
         return sInstance != null && sInstance.currentlyPlaying;
+    }
+
+    /**
+     * Schedule the sleep timer to fire at an absolute epoch-ms timestamp.
+     * Uses Handler.postDelayed so it fires even when the WebView is suspended.
+     */
+    public static void setSleepTimer(long expireAtMs) {
+        if (sInstance == null) return;
+        sInstance.mainHandler.removeCallbacks(sInstance.sleepExpireRunnable);
+        sInstance.sleepExpireAtMs = expireAtMs;
+        long delay = expireAtMs - System.currentTimeMillis();
+        if (delay <= 0) {
+            if (sInstance.currentlyPlaying) pausePlayback();
+            sInstance.sleepExpireAtMs = -1;
+        } else {
+            sInstance.mainHandler.postDelayed(sInstance.sleepExpireRunnable, delay);
+        }
+    }
+
+    /** Cancel the sleep timer without stopping playback. */
+    public static void cancelSleepTimer() {
+        if (sInstance == null) return;
+        sInstance.mainHandler.removeCallbacks(sInstance.sleepExpireRunnable);
+        sInstance.sleepExpireAtMs = -1;
     }
 
     /* ═══════════════════════════════ MediaSession ═══════════════════════════ */

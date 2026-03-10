@@ -394,10 +394,18 @@ export function SpeechPlayer() {
               Hẹn giờ
             </span>
             <button
-              onClick={() => setShowTimerPanel((v) => !v)}
+              onClick={() => {
+                if (sleepRemaining !== null) {
+                  // Timer is active → cancel it directly (no need to open panel)
+                  cancelSleepTimer();
+                  setShowTimerPanel(false);
+                } else {
+                  setShowTimerPanel((v) => !v);
+                }
+              }}
               className={`flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border transition-colors ${
                 sleepRemaining !== null
-                  ? "bg-amber-500 border-amber-500 text-white"
+                  ? "bg-amber-500 border-amber-500 text-white hover:bg-amber-600"
                   : showTimerPanel
                     ? "bg-indigo-50 dark:bg-indigo-950 border-indigo-300 dark:border-indigo-700 text-indigo-600 dark:text-indigo-400"
                     : "border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-400"
@@ -416,7 +424,9 @@ export function SpeechPlayer() {
                   d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"
                 />
               </svg>
-              {sleepRemaining !== null ? fmtTime(sleepRemaining) : "Tắt"}
+              {sleepRemaining !== null
+                ? `${fmtTime(sleepRemaining)} ✕`
+                : "Tắt"}
             </button>
           </div>
 

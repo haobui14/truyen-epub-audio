@@ -14,9 +14,14 @@ class AuthRequest(BaseModel):
 
 class AuthResponse(BaseModel):
     access_token: str
+    refresh_token: str = ""
     user_id: str
     email: str
     role: str = "user"
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
 
 
 @router.post("/signup", response_model=AuthResponse)
@@ -34,6 +39,7 @@ async def signup(body: AuthRequest):
         user_id = str(result.user.id)
         return AuthResponse(
             access_token=result.session.access_token,
+            refresh_token=result.session.refresh_token or "",
             user_id=user_id,
             email=result.user.email,
             role=_lookup_role(user_id),
@@ -54,12 +60,34 @@ async def login(body: AuthRequest):
         user_id = str(result.user.id)
         return AuthResponse(
             access_token=result.session.access_token,
+            refresh_token=result.session.refresh_token or "",
             user_id=user_id,
             email=result.user.email,
             role=_lookup_role(user_id),
         )
     except Exception:
         raise HTTPException(status_code=401, detail="Email hoặc mật khẩu không đúng")
+
+
+@router.post("/refresh", response_model=AuthResponse)
+async def refresh_token(body: RefreshRequest):
+    db = get_client()
+    try:
+        result = db.auth.refresh_session(body.refresh_token)
+        if not result or not result.session:
+            raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+        user_id = str(result.user.id)
+        return AuthResponse(
+            access_token=result.session.access_token,
+            refresh_token=result.session.refresh_token or "",
+            user_id=user_id,
+            email=result.user.email,
+            role=_lookup_role(user_id),
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail="Token refresh failed")
 
 
 @router.get("/me")

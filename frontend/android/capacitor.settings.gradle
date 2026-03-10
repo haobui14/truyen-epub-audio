@@ -6,7 +6,7 @@ include ':capacitor-community-keep-awake'
 project(':capacitor-community-keep-awake').projectDir = new File('../node_modules/.pnpm/@capacitor-community+keep-awake@8.0.0_@capacitor+core@8.1.0/node_modules/@capacitor-community/keep-awake/android')
 
 include ':capacitor-community-text-to-speech'
-project(':capacitor-community-text-to-speech').projectDir = new File('../node_modules/.pnpm/@capacitor-community+text-t_ecb284f884f1506d473874f66a436523/node_modules/@capacitor-community/text-to-speech/android')
+project(':capacitor-community-text-to-speech').projectDir = new File('../node_modules/.pnpm/@capacitor-community+text-to-speech@8.0.0_@capacitor+core@8.1.0/node_modules/@capacitor-community/text-to-speech/android')
 
 include ':capacitor-preferences'
 project(':capacitor-preferences').projectDir = new File('../node_modules/.pnpm/@capacitor+preferences@8.0.1_@capacitor+core@8.1.0/node_modules/@capacitor/preferences/android')

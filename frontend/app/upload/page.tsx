@@ -66,8 +66,8 @@ export default function UploadPage() {
                 d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
             </svg>
           </div>
-          <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">Tải lên truyện EPUB</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Chọn file EPUB để bắt đầu</p>
+          <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">Tải lên truyện</h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Hỗ trợ EPUB, PDF (kể cả ảnh scan) và TXT</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5">
@@ -184,7 +184,7 @@ export default function UploadPage() {
             </svg>
           </div>
           <p className="text-xs font-medium text-gray-700 dark:text-gray-300">Tải lên</p>
-          <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">File EPUB</p>
+          <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">EPUB · PDF · TXT</p>
         </div>
         <div className="text-center p-3">
           <div className="inline-flex items-center justify-center w-8 h-8 bg-purple-100 dark:bg-purple-950 rounded-lg mb-2">

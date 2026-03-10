@@ -1,5 +1,5 @@
 import { API_URL } from "./constants";
-import { getToken, clearAuth } from "./auth";
+import { getToken, getRefreshToken, clearAuth, setAuth, getUser } from "./auth";
 import type {
   Book,
   Chapter,
@@ -10,7 +10,42 @@ import type {
   UserProgress,
 } from "@/types";
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+// Prevent multiple concurrent refresh attempts
+let refreshPromise: Promise<boolean> | null = null;
+
+export async function tryRefreshToken(): Promise<boolean> {
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = (async () => {
+    const refreshToken = getRefreshToken();
+    if (!refreshToken) return false;
+    try {
+      const res = await fetch(`${API_URL}/api/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+      if (!res.ok) return false;
+      const data = await res.json();
+      const user = getUser();
+      if (data.access_token && user) {
+        setAuth(data.access_token, {
+          user_id: data.user_id ?? user.user_id,
+          email: data.email ?? user.email,
+          role: data.role ?? user.role,
+        }, data.refresh_token ?? refreshToken);
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+  return refreshPromise;
+}
+
+async function request<T>(path: string, init?: RequestInit, _retry = true): Promise<T> {
   const token = getToken();
   const headers = new Headers(init?.headers);
   if (token) {
@@ -18,11 +53,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   const res = await fetch(`${API_URL}${path}`, { ...init, headers });
   if (!res.ok) {
-    // Expired / invalid token — clear stored credentials so the app
-    // treats the user as logged out immediately and stops retrying.
-    // Only clear when a token was actually sent; a 401 with no token just
-    // means the endpoint requires auth (e.g. during native hydration race).
-    if (res.status === 401 && token) {
+    if (res.status === 401 && token && _retry) {
+      // Token expired — try to refresh once, then retry the original request.
+      const refreshed = await tryRefreshToken();
+      if (refreshed) {
+        return request<T>(path, init, false); // retry with new token, no further refresh
+      }
+      // Refresh also failed — clear auth and surface the error
       clearAuth();
     }
     const err = await res.text();
@@ -50,6 +87,24 @@ export const api = {
     request<PaginatedChapters>(
       `/api/books/${bookId}/chapters?page=${page}&page_size=${pageSize}`,
     ),
+  getAllBookChapters: async (bookId: string): Promise<PaginatedChapters> => {
+    const PAGE_SIZE = 1000;
+    const first = await request<PaginatedChapters>(
+      `/api/books/${bookId}/chapters?page=1&page_size=${PAGE_SIZE}`,
+    );
+    if (first.total_pages <= 1) return first;
+    const rest = await Promise.all(
+      Array.from({ length: first.total_pages - 1 }, (_, i) =>
+        request<PaginatedChapters>(
+          `/api/books/${bookId}/chapters?page=${i + 2}&page_size=${PAGE_SIZE}`,
+        ),
+      ),
+    );
+    return {
+      ...first,
+      items: [first, ...rest].flatMap((p) => p.items),
+    };
+  },
   getChapter: (chapterId: string) =>
     request<Chapter>(`/api/chapters/${chapterId}`),
   getChapterText: (chapterId: string) =>
@@ -97,7 +152,7 @@ export const api = {
 
   // Auth
   login: (email: string, password: string) =>
-    request<{ access_token: string; user_id: string; email: string; role: string }>(
+    request<{ access_token: string; refresh_token?: string; user_id: string; email: string; role: string }>(
       "/api/auth/login",
       {
         method: "POST",
@@ -106,7 +161,7 @@ export const api = {
       },
     ),
   signup: (email: string, password: string) =>
-    request<{ access_token: string; user_id: string; email: string; role: string }>(
+    request<{ access_token: string; refresh_token?: string; user_id: string; email: string; role: string }>(
       "/api/auth/signup",
       {
         method: "POST",

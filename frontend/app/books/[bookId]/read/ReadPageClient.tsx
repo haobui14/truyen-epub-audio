@@ -74,7 +74,7 @@ export default function ReadPage() {
 
   const { data: chaptersData } = useQuery({
     queryKey: ["chapters", bookId, "all"],
-    queryFn: () => api.getBookChapters(bookId, 1, 5000),
+    queryFn: () => api.getAllBookChapters(bookId),
   });
 
   const { data: chapterText, isLoading: isLoadingText } = useQuery({

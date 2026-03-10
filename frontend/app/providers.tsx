@@ -5,8 +5,8 @@ import { PlayerProvider } from "@/context/PlayerContext";
 import { flushProgressQueue } from "@/lib/progressQueue";
 import { hydrateAuthFromNative } from "@/lib/auth";
 import { isNativePlatform } from "@/lib/capacitor";
-import { api } from "@/lib/api";
-import { isLoggedIn, getUser, getToken, setAuth } from "@/lib/auth";
+import { api, tryRefreshToken } from "@/lib/api";
+import { isLoggedIn, getUser, getToken, getRefreshToken, setAuth } from "@/lib/auth";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -35,8 +35,15 @@ export function Providers({ children }: { children: React.ReactNode }) {
         window.dispatchEvent(new Event("auth-change"));
         queryClient.invalidateQueries();
       }
-      // Sync role from server so existing sessions get the correct role
-      // without requiring a re-login (handles new admins and role revocations).
+      // On every app open, proactively refresh the token if we have a refresh
+      // token. This resets the refresh-token expiry clock so users stay logged
+      // in for up to 90 days as long as they open the app at least once in
+      // that period. (Requires Supabase refresh token expiry ≥ 7776000 s.)
+      if (isLoggedIn() && getRefreshToken()) {
+        await tryRefreshToken();
+      }
+
+      // Sync role from server (handles new admins and role revocations).
       if (isLoggedIn()) {
         try {
           const me = await api.getMe();

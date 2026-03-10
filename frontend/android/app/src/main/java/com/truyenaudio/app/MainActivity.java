@@ -331,6 +331,21 @@ public class MainActivity extends BridgeActivity {
             TtsPlaybackService.clearNextChapter();
         }
 
+        /**
+         * Set a sleep timer that fires at an absolute epoch-ms timestamp.
+         * Uses a Java Handler so it fires even when the WebView is suspended (screen off).
+         */
+        @JavascriptInterface
+        public void setSleepTimer(long expireAtMs) {
+            TtsPlaybackService.setSleepTimer(expireAtMs);
+        }
+
+        /** Cancel the sleep timer without stopping playback. */
+        @JavascriptInterface
+        public void cancelSleepTimer() {
+            TtsPlaybackService.cancelSleepTimer();
+        }
+
         @JavascriptInterface
         public int getCurrentChunk() {
             return TtsPlaybackService.getCurrentChunk();

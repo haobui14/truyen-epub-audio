@@ -26,7 +26,7 @@ export default function LoginPage() {
         user_id: result.user_id,
         email: result.email,
         role: result.role,
-      });
+      }, result.refresh_token);
       router.push("/");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Đã xảy ra lỗi");

@@ -10,25 +10,32 @@ from app.database import get_client
 from app.config import settings
 from app.dependencies import get_admin_user
 from app.services import storage_service, epub_parser
+from app.services.converter import txt_to_epub, pdf_to_epub
 
 router = APIRouter(prefix="/api", tags=["upload"])
 logger = logging.getLogger(__name__)
 
 VALID_VOICES = ["vi-VN-HoaiMyNeural", "vi-VN-NamMinhNeural"]
 VALID_COVER_TYPES = {"image/jpeg", "image/png", "image/webp"}
+VALID_EXTENSIONS = {".epub", ".pdf", ".txt"}
 
 
 @router.post("/upload")
-async def upload_epub(
+async def upload_book(
     file: UploadFile = File(...),
     voice: str = Form(default="vi-VN-HoaiMyNeural"),
     cover: Optional[UploadFile] = File(None),
     _admin: dict = Depends(get_admin_user),
 ):
-    # Validate EPUB
+    # Validate file type
     filename = file.filename or ""
-    if not filename.lower().endswith(".epub"):
-        raise HTTPException(status_code=400, detail="Only .epub files are accepted")
+    fname_lower = filename.lower()
+    ext = next((e for e in VALID_EXTENSIONS if fname_lower.endswith(e)), None)
+    if not ext:
+        raise HTTPException(
+            status_code=400,
+            detail="Only .epub, .pdf, and .txt files are accepted",
+        )
 
     if voice not in VALID_VOICES:
         raise HTTPException(status_code=400, detail=f"Invalid voice. Choose from: {VALID_VOICES}")
@@ -44,7 +51,7 @@ async def upload_epub(
         if len(cover_content) > 5 * 1024 * 1024:
             raise HTTPException(status_code=400, detail="Cover image must be under 5MB")
 
-    # Check EPUB file size
+    # Read and size-check uploaded file
     content = await file.read()
     max_bytes = settings.max_upload_size_mb * 1024 * 1024
     if len(content) > max_bytes:
@@ -55,12 +62,13 @@ async def upload_epub(
 
     book_id = str(uuid.uuid4())
     db = get_client()
+    base_title = filename[: -len(ext)]  # strip extension
 
-    # Upload cover first so we have the URL for the book row
+    # Upload cover
     cover_url: Optional[str] = None
     if cover_content:
-        ext = cover_content_type.split("/")[-1].replace("jpeg", "jpg")  # type: ignore[union-attr]
-        cover_path = f"covers/{book_id}/cover.{ext}"
+        cext = cover_content_type.split("/")[-1].replace("jpeg", "jpg")  # type: ignore[union-attr]
+        cover_path = f"covers/{book_id}/cover.{cext}"
         try:
             cover_url = await storage_service.upload_bytes(
                 bucket="covers",
@@ -70,34 +78,60 @@ async def upload_epub(
             )
         except Exception as e:
             logger.warning(f"Cover upload failed for book {book_id}: {e}")
-            # Non-fatal — proceed without cover
 
-    # Insert book row
+    # Insert book row (status=parsing)
     db.table("books").insert({
         "id": book_id,
-        "title": filename.replace(".epub", ""),
+        "title": base_title,
         "voice": voice,
         "status": "parsing",
         "total_chapters": 0,
         **({"cover_url": cover_url} if cover_url else {}),
     }).execute()
 
-    # Upload raw EPUB to storage
-    epub_storage_path = f"epub-uploads/{book_id}/original.epub"
+    # Store the original file
+    storage_path = f"epub-uploads/{book_id}/original{ext}"
+    orig_content_type = {
+        ".epub": "application/epub+zip",
+        ".pdf": "application/pdf",
+        ".txt": "text/plain",
+    }[ext]
     try:
         await storage_service.upload_bytes(
             bucket="epub-uploads",
-            path=epub_storage_path,
+            path=storage_path,
             data=content,
-            content_type="application/epub+zip",
+            content_type=orig_content_type,
         )
     except Exception as e:
         logger.error(f"Storage upload failed for book {book_id}: {e}")
         db.table("books").delete().eq("id", book_id).execute()
         raise HTTPException(status_code=500, detail=f"Storage upload failed: {e}")
 
-    # Start async parsing in background
-    asyncio.create_task(epub_parser.parse_epub_task(book_id, content))
+    # Convert to EPUB if needed, then parse
+    asyncio.create_task(_convert_and_parse(book_id, content, ext, base_title))
 
-    logger.info(f"Book {book_id} uploaded, parsing started")
+    logger.info(f"Book {book_id} ({ext}) uploaded, conversion+parsing started")
     return {"book_id": book_id, "status": "parsing"}
+
+
+async def _convert_and_parse(
+    book_id: str, content: bytes, ext: str, title: str
+) -> None:
+    """Convert TXT/PDF → EPUB (if needed) then run the standard EPUB parser."""
+    db = get_client()
+    try:
+        if ext == ".epub":
+            epub_bytes = content
+        elif ext == ".txt":
+            logger.info(f"Book {book_id}: converting TXT → EPUB")
+            epub_bytes = await asyncio.to_thread(txt_to_epub, content, title)
+        else:  # .pdf
+            logger.info(f"Book {book_id}: converting PDF → EPUB")
+            epub_bytes = await asyncio.to_thread(pdf_to_epub, content, title)
+
+        await epub_parser.parse_epub_task(book_id, epub_bytes)
+
+    except Exception as e:
+        logger.exception(f"Book {book_id}: conversion failed: {e}")
+        db.table("books").update({"status": "error"}).eq("id", book_id).execute()
