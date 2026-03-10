@@ -53,6 +53,7 @@ export function useNativeTTSPlayer(
   onEnded?: (nativeChapterId?: string) => void,
   autoPlay?: boolean,
   initialChunkIndex?: number,
+  chapterTitle?: string,
 ) {
   const isActive = !!voiceName?.startsWith("native:");
 
@@ -83,6 +84,8 @@ export function useNativeTTSPlayer(
 
   const chapterIdRef = useRef(chapterId);
   chapterIdRef.current = chapterId;
+  const chapterTitleRef = useRef(chapterTitle);
+  chapterTitleRef.current = chapterTitle;
 
   // Send chunks to native and start playback
   const startNativePlayback = useCallback((startIdx: number) => {
@@ -90,6 +93,7 @@ export function useNativeTTSPlayer(
     if (!bridge || chunksRef.current.length === 0) return;
 
     const chunksJson = JSON.stringify(chunksRef.current);
+    const notifTitle = chapterTitleRef.current ?? "Đang phát...";
     try {
       // Use playChunksWithId (sends chapterId to native) if available,
       // fall back to playChunks for older APKs that lack the new method.
@@ -99,7 +103,7 @@ export function useNativeTTSPlayer(
           rateRef.current,
           pitchRef.current,
           startIdx,
-          "Đang phát...",
+          notifTitle,
           chapterIdRef.current,
         );
       } else {
@@ -108,9 +112,13 @@ export function useNativeTTSPlayer(
           rateRef.current,
           pitchRef.current,
           startIdx,
-          "Đang phát...",
+          notifTitle,
         );
       }
+      // Always call updateTitle after starting playback so the notification
+      // reflects the correct chapter title even if the track didn't change
+      // (e.g., user replays the same chapter, or rate/pitch was adjusted).
+      bridge.updateTitle?.(notifTitle);
       playingRef.current = true;
       setIsPlaying(true);
       setIsBuffering(false);

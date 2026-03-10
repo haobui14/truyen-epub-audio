@@ -75,7 +75,7 @@ function BookRow({ entry }: { entry: MyBookEntry }) {
         <div className="mt-1.5 space-y-1.5">
           <div className="flex items-center">
             <span className="text-xs text-gray-500 dark:text-gray-400 truncate">
-              Chương {chapter.chapter_index + 1}: {chapter.title}
+              {chapter.title}
             </span>
           </div>
 

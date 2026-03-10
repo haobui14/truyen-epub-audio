@@ -286,10 +286,10 @@ export default function ListenPage() {
     };
   }, [voice, chapterId, bookId, allChapters, router]);
 
-  // ── Native TTS: queue ALL remaining chapters in the Java service ──
-  // When the current chapter starts playing on native TTS, we fetch all
-  // remaining chapters' text and queue them so the service can play
-  // through the entire book with screen off.
+  // ── Native TTS: queue cached chapters in the Java service ──
+  // Queues all chapters whose text is already in React Query / IndexedDB.
+  // Uncached chapters are handled later: when the queue runs out, native fires
+  // native-tts-done and JS navigates to the next chapter.
   const nextChapterText = nextChapterTextData?.text_content ?? null;
   useEffect(() => {
     if (!voice.startsWith("native:") || allChapters.length === 0 || currentIndex < 0) return;
@@ -318,9 +318,13 @@ export default function ListenPage() {
     let cancelled = false;
 
     (async () => {
-      // Phase 1: immediately queue chapters whose text is already cached
-      const cachedToQueue: { chunks: string[]; chapterId: string; title: string; rate: number; pitch: number }[] = [];
-      const uncachedChapters: typeof remainingChapters = [];
+      // Queue chapters whose text is already in React Query cache or IndexedDB.
+      // Uncached chapters are intentionally skipped — calling queueNextChapter
+      // repeatedly replaces the single "next chapter" slot each time, causing
+      // the player to skip ahead (e.g. ch45 → ch55). When the cached queue runs
+      // out, native fires native-tts-done and JS navigates to the next chapter,
+      // triggering a fresh queue build for the new chapter.
+      const toQueue: { chunks: string[]; chapterId: string; title: string; rate: number; pitch: number }[] = [];
 
       for (const ch of remainingChapters) {
         let text: string | null = null;
@@ -337,7 +341,7 @@ export default function ListenPage() {
         if (text) {
           const chunks = splitChunks(text);
           if (chunks.length > 0) {
-            cachedToQueue.push({
+            toQueue.push({
               chunks,
               chapterId: ch.id,
               title: ch.title ?? "Đang phát...",
@@ -345,39 +349,12 @@ export default function ListenPage() {
               pitch,
             });
           }
-        } else {
-          uncachedChapters.push(ch);
         }
       }
 
       if (cancelled) return;
-      if (cachedToQueue.length > 0) {
-        bridge.queueAllChapters(JSON.stringify(cachedToQueue));
-      }
-
-      // Phase 2: fetch uncached chapters from API and add to queue individually.
-      // Each chapter is available to the native service as soon as it's fetched,
-      // so playback continues even if the WebView suspends mid-fetch.
-      for (const ch of uncachedChapters) {
-        if (cancelled) break;
-        try {
-          const data = await api.getChapterText(ch.id);
-          if (data?.text_content) {
-            queryClient.setQueryData(["chapterText", ch.id], data);
-            const chunks = splitChunks(data.text_content);
-            if (chunks.length > 0) {
-              bridge.queueNextChapter(
-                JSON.stringify(chunks),
-                ch.id,
-                ch.title ?? "Đang phát...",
-                rate,
-                pitch,
-              );
-            }
-          }
-        } catch {
-          // API fetch failed (offline?) — skip this chapter
-        }
+      if (toQueue.length > 0) {
+        bridge.queueAllChapters(JSON.stringify(toQueue));
       }
     })();
 

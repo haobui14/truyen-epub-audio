@@ -136,6 +136,7 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
     track?.onEnded,
     track?.autoPlay,
     track?.initialChunkIndex,
+    track?.chapter?.title,
   );
 
   // Destructure ttsError and pitch out so they are handled explicitly
@@ -240,11 +241,12 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // Update notification title when track changes
+  // Update notification title when track changes.
+  // Also fires when book title loads so the notification stays current.
   useEffect(() => {
     if (!isNativePlatform() || !track?.chapter?.title) return;
     getTtsBridge()?.updateTitle(track.chapter.title);
-  }, [track?.chapter?.title]);
+  }, [track?.chapter?.title, track?.book?.title]);
 
   // ── navigator.mediaSession: register handlers so hardware media buttons
   // (earbuds, Bluetooth, lock-screen) can control playback even in the WebView. ──
