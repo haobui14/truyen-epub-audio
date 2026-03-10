@@ -91,6 +91,3 @@ export function useChapterAudioPreload(
   return { cacheStatuses: statuses };
 }
 
-// ─── Legacy no-op exports kept for compatibility ──────────────────────────────
-// (useSpeechPlayer no longer uses chapterBlobCache)
-export const chapterBlobCache = new Map<never, never>();
