@@ -85,19 +85,18 @@ export default function ReadPage() {
 
   // Fetch saved reading progress — falls back to offline queue
   const { data: savedProgress } = useQuery({
-    queryKey: ["progress", chapterId, "read"],
+    queryKey: ["progress", chapterId],
     queryFn: async () => {
       try {
-        return await api.getChapterProgress(chapterId!, "read");
+        return await api.getChapterProgress(chapterId!);
       } catch {
-        const queued = await getLocalProgress(chapterId!, "read");
+        const queued = await getLocalProgress(chapterId!);
         if (queued) {
           return {
             id: "",
             user_id: "",
             book_id: queued.book_id,
             chapter_id: queued.chapter_id,
-            progress_type: queued.progress_type,
             progress_value: queued.progress_value,
             total_value: queued.total_value,
             updated_at: new Date(queued.updated_at).toISOString(),
@@ -118,7 +117,6 @@ export default function ReadPage() {
   const { reportProgress } = useProgressSync({
     bookId,
     chapterId: chapterId ?? "",
-    progressType: "read",
   });
 
   const navigateTo = useCallback(

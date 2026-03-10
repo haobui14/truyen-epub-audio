@@ -11,20 +11,19 @@ router = APIRouter(prefix="/api/progress", tags=["progress"])
 
 @router.put("", response_model=ProgressResponse)
 async def save_progress(body: ProgressUpsert, user: dict = Depends(get_current_user)):
-    """Upsert progress for user + book + chapter + type."""
+    """Upsert progress for user + book (one row per book)."""
     db = get_client()
     data = {
         "user_id": user["id"],
         "book_id": body.book_id,
         "chapter_id": body.chapter_id,
-        "progress_type": body.progress_type,
         "progress_value": body.progress_value,
         "total_value": body.total_value,
         "updated_at": "now()",
     }
     result = (
         db.table("user_progress")
-        .upsert(data, on_conflict="user_id,book_id,progress_type")
+        .upsert(data, on_conflict="user_id,book_id")
         .execute()
     )
     if not result.data:
@@ -35,7 +34,6 @@ async def save_progress(body: ProgressUpsert, user: dict = Depends(get_current_u
 @router.get("/chapter/{chapter_id}", response_model=Optional[ProgressResponse])
 async def get_chapter_progress(
     chapter_id: str,
-    progress_type: str = "read",
     user: dict = Depends(get_current_user),
 ):
     """Get progress for a specific chapter."""
@@ -45,7 +43,6 @@ async def get_chapter_progress(
         .select("*")
         .eq("user_id", user["id"])
         .eq("chapter_id", chapter_id)
-        .eq("progress_type", progress_type)
         .maybe_single()
         .execute()
     )
@@ -55,16 +52,15 @@ async def get_chapter_progress(
 @router.get("/my-books", response_model=List[Dict[str, Any]])
 async def get_my_books(user: dict = Depends(get_current_user)):
     """
-    Return one entry per book the user has any progress on.
+    Return one entry per book the user has progress on.
     Each entry contains book metadata + the last-stopped chapter info.
     Sorted by most recently updated.
     """
     db = get_client()
-    # Fetch all progress rows for this user, joined with books and chapters
     result = (
         db.table("user_progress")
         .select(
-            "progress_type, progress_value, total_value, updated_at, "
+            "progress_value, total_value, updated_at, "
             "books(id, title, author, cover_url, total_chapters), "
             "chapters(id, chapter_index, title)"
         )
@@ -75,20 +71,13 @@ async def get_my_books(user: dict = Depends(get_current_user)):
     if not result.data:
         return []
 
-    # Deduplicate: keep the most recent row per (book_id, progress_type)
-    seen: set = set()
     rows = []
     for row in result.data:
         book = row.get("books") or {}
         chapter = row.get("chapters") or {}
-        key = (book.get("id", ""), row["progress_type"])
-        if key in seen:
-            continue
-        seen.add(key)
         rows.append({
             "book": book,
             "chapter": chapter,
-            "progress_type": row["progress_type"],
             "progress_value": row["progress_value"],
             "total_value": row["total_value"],
             "updated_at": row["updated_at"],
@@ -96,21 +85,19 @@ async def get_my_books(user: dict = Depends(get_current_user)):
     return rows
 
 
-@router.get("/book/{book_id}", response_model=List[ProgressResponse])
+@router.get("/book/{book_id}", response_model=Optional[ProgressResponse])
 async def get_book_progress(
     book_id: str,
-    progress_type: Optional[str] = None,
     user: dict = Depends(get_current_user),
 ):
-    """Get all progress entries for a book."""
+    """Get progress for a book."""
     db = get_client()
-    query = (
+    result = (
         db.table("user_progress")
         .select("*")
         .eq("user_id", user["id"])
         .eq("book_id", book_id)
+        .maybe_single()
+        .execute()
     )
-    if progress_type:
-        query = query.eq("progress_type", progress_type)
-    result = query.order("updated_at", desc=True).execute()
     return result.data

@@ -11,7 +11,6 @@ import { getCachedMyBooks, setCachedMyBooks } from "@/lib/progressQueue";
 type MyBookEntry = {
   book: { id: string; title: string; author?: string; cover_url?: string; total_chapters: number };
   chapter: { id: string; chapter_index: number; title: string };
-  progress_type: "read" | "listen";
   progress_value: number;
   total_value?: number;
   updated_at: string;
@@ -39,11 +38,8 @@ function ProgressBar({ value, total }: { value: number; total?: number }) {
 }
 
 function BookRow({ entry }: { entry: MyBookEntry }) {
-  const { book, chapter, progress_type, progress_value, total_value, updated_at } = entry;
-  const isListen = progress_type === "listen";
-  const href = isListen
-    ? `/books/${book.id}/listen?chapter=${chapter.id}`
-    : `/books/${book.id}/read?chapter=${chapter.id}`;
+  const { book, chapter, progress_value, total_value, updated_at } = entry;
+  const href = `/books/${book.id}/listen?chapter=${chapter.id}`;
   const pct = total_value && total_value > 0 ? Math.round((progress_value / total_value) * 100) : null;
 
   return (
@@ -77,23 +73,7 @@ function BookRow({ entry }: { entry: MyBookEntry }) {
         </div>
 
         <div className="mt-1.5 space-y-1.5">
-          <div className="flex items-center gap-1.5">
-            <span className={`inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-md ${
-              isListen
-                ? "bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-400"
-                : "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-400"
-            }`}>
-              {isListen ? (
-                <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M12 6v12m-3.536-9.536a5 5 0 000 7.072" />
-                </svg>
-              ) : (
-                <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-                </svg>
-              )}
-              {isListen ? "Nghe" : "Đọc"}
-            </span>
+          <div className="flex items-center">
             <span className="text-xs text-gray-500 dark:text-gray-400 truncate">
               Chương {chapter.chapter_index + 1}: {chapter.title}
             </span>
@@ -122,7 +102,6 @@ function BookRow({ entry }: { entry: MyBookEntry }) {
 
 export default function MyBooksPage() {
   const [loggedIn, setLoggedIn] = useState(() => isLoggedIn());
-  const [activeType, setActiveType] = useState<"all" | "read" | "listen">("all");
 
   useEffect(() => {
     const h = () => setLoggedIn(isLoggedIn());
@@ -135,11 +114,9 @@ export default function MyBooksPage() {
     queryFn: async () => {
       try {
         const result = await api.getMyBooks();
-        // Cache the response in IndexedDB for offline access
         await setCachedMyBooks(result);
         return result as MyBookEntry[];
       } catch {
-        // Offline or server error — return last cached response
         const cached = await getCachedMyBooks();
         return (cached as MyBookEntry[] | null) ?? [];
       }
@@ -166,8 +143,6 @@ export default function MyBooksPage() {
   }
 
   const entries = data ?? [];
-  const filtered = activeType === "all" ? entries : entries.filter((e) => e.progress_type === activeType);
-  const bookCount = new Set(filtered.map((e) => e.book.id)).size;
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -181,29 +156,10 @@ export default function MyBooksPage() {
         </div>
         {entries.length > 0 && (
           <span className="text-xs font-medium text-gray-400 bg-gray-100 dark:bg-gray-800 px-3 py-1.5 rounded-full">
-            {bookCount} truyện
+            {entries.length} truyện
           </span>
         )}
       </div>
-
-      {/* Filter tabs */}
-      {entries.length > 0 && (
-        <div className="flex gap-1.5 mb-4">
-          {(["all", "listen", "read"] as const).map((t) => (
-            <button
-              key={t}
-              onClick={() => setActiveType(t)}
-              className={`px-3.5 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                activeType === t
-                  ? "bg-indigo-600 text-white"
-                  : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700"
-              }`}
-            >
-              {t === "all" ? "Tất cả" : t === "listen" ? "Nghe" : "Đọc"}
-            </button>
-          ))}
-        </div>
-      )}
 
       {isLoading && (
         <div className="flex flex-col items-center gap-3 py-24">
@@ -231,15 +187,9 @@ export default function MyBooksPage() {
         </div>
       )}
 
-      {!isLoading && filtered.length === 0 && entries.length > 0 && (
-        <div className="text-center py-12 text-sm text-gray-400">
-          Không có truyện nào trong mục này.
-        </div>
-      )}
-
       <div className="space-y-2.5">
-        {filtered.map((entry) => (
-          <BookRow key={`${entry.book.id}-${entry.progress_type}`} entry={entry} />
+        {entries.map((entry) => (
+          <BookRow key={entry.book.id} entry={entry} />
         ))}
       </div>
     </div>

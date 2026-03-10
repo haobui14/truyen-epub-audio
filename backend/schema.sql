@@ -45,21 +45,20 @@ CREATE TABLE IF NOT EXISTS audio_files (
 
 CREATE INDEX IF NOT EXISTS idx_audio_files_book_id ON audio_files(book_id);
 
--- User reading/listening progress
+-- User reading/listening progress (one row per user+book)
 CREATE TABLE IF NOT EXISTS user_progress (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id         UUID NOT NULL,
     book_id         UUID NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     chapter_id      UUID NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
-    progress_type   TEXT NOT NULL CHECK (progress_type IN ('read', 'listen')),
     progress_value  FLOAT NOT NULL DEFAULT 0,
     total_value     FLOAT,
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE(user_id, book_id, progress_type)
+    UNIQUE(user_id, book_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_progress_user_book ON user_progress(user_id, book_id);
-CREATE INDEX IF NOT EXISTS idx_user_progress_user_chapter ON user_progress(user_id, chapter_id, progress_type);
+CREATE INDEX IF NOT EXISTS idx_user_progress_user_chapter ON user_progress(user_id, chapter_id);
 
 -- User playback settings (speed, pitch — synced across devices)
 CREATE TABLE IF NOT EXISTS user_settings (

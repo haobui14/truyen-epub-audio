@@ -69,13 +69,30 @@ async def parse_epub_task(book_id: str, epub_bytes: bytes) -> None:
                 content_type="image/jpeg",
             )
 
-        # Parse chapters from spine
+        # Parse chapters in spine (reading) order so chapter_index matches the
+        # actual reading sequence, not the epub's internal manifest order.
+        # Fall back to get_items() if the epub has no spine (malformed epubs).
         chapters_data = []
         seen_ids = set()
         idx = 0
-        for item in book.get_items():
-            if item.get_type() != ebooklib.ITEM_DOCUMENT:
-                continue
+
+        spine_ids = [iid for iid, _ in getattr(book, "spine", [])]
+        if spine_ids:
+            ordered_items = [
+                book.get_item_with_id(iid)
+                for iid in spine_ids
+            ]
+            ordered_items = [
+                i for i in ordered_items
+                if i is not None and i.get_type() == ebooklib.ITEM_DOCUMENT
+            ]
+        else:
+            ordered_items = [
+                i for i in book.get_items()
+                if i.get_type() == ebooklib.ITEM_DOCUMENT
+            ]
+
+        for item in ordered_items:
             item_id = item.get_id()
             if item_id in seen_ids:
                 continue

@@ -66,17 +66,21 @@ export default function BookDetailPage() {
     enabled: !!book && !isParsing,
   });
 
-  // Fetch last-accessed chapter per mode so buttons resume where user left off
-  const { data: listenProgressList } = useQuery({
-    queryKey: ["bookProgress", bookId, "listen"],
-    queryFn: () => api.getBookProgress(bookId, "listen"),
+  // Fetch last-accessed chapter so buttons resume where user left off
+  const { data: bookProgress } = useQuery({
+    queryKey: ["bookProgress", bookId],
+    queryFn: () => api.getBookProgress(bookId),
     enabled: !!book && isLoggedIn(),
   });
-  const { data: readProgressList } = useQuery({
-    queryKey: ["bookProgress", bookId, "read"],
-    queryFn: () => api.getBookProgress(bookId, "read"),
-    enabled: !!book && isLoggedIn(),
-  });
+
+  // Read + listen share one DB progress row (progress_type was removed).
+  // The listen page saves its own last-chapter to localStorage so "Continue
+  // Listening" resumes at the correct audio chapter even when reading got ahead.
+  const [lastListenChapterId, setLastListenChapterId] = useState<string | null>(null);
+  useEffect(() => {
+    const stored = localStorage.getItem(`listen-chapter:${bookId}`);
+    setLastListenChapterId(stored);
+  }, [bookId]);
 
   async function handleDownloadBook() {
     if (dlProgress) return;
@@ -154,22 +158,11 @@ export default function BookDetailPage() {
   const chapters = chaptersData?.items ?? [];
   const firstChapter = chapters[0] ?? null;
 
-  // Most-recently-updated progress entry for each mode
-  const sortByRecent = (list: typeof listenProgressList) =>
-    list
-      ?.slice()
-      .sort(
-        (a, b) =>
-          new Date(b.updated_at).getTime() -
-          new Date(a.updated_at).getTime(),
-      )[0] ?? null;
-  const lastListenEntry = sortByRecent(listenProgressList);
-  const lastReadEntry = sortByRecent(readProgressList);
-
-  const listenChapterId = lastListenEntry?.chapter_id ?? firstChapter?.id;
-  const readChapterId = lastReadEntry?.chapter_id ?? firstChapter?.id;
-  const hasListenProgress = !!lastListenEntry;
-  const hasReadProgress = !!lastReadEntry;
+  // Use localStorage-tracked listen chapter for audio resumption;
+  // fall back to DB progress (which may be a read position), then first chapter.
+  const listenResumeId = lastListenChapterId ?? bookProgress?.chapter_id ?? firstChapter?.id;
+  const readResumeId = bookProgress?.chapter_id ?? firstChapter?.id;
+  const hasProgress = !!bookProgress || !!lastListenChapterId;
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -367,8 +360,8 @@ export default function BookDetailPage() {
             <div className="grid grid-cols-2 gap-3">
               <Link
                 href={
-                  listenChapterId
-                    ? `/books/${bookId}/listen?chapter=${listenChapterId}`
+                  listenResumeId
+                    ? `/books/${bookId}/listen?chapter=${listenResumeId}`
                     : "#"
                 }
                 className="flex items-center gap-3 px-4 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 transition-colors text-white group"
@@ -384,10 +377,10 @@ export default function BookDetailPage() {
                 </div>
                 <div className="min-w-0">
                   <p className="font-semibold text-sm">
-                    {hasListenProgress ? "Nghe tiếp" : "Nghe ngay"}
+                    {hasProgress ? "Nghe tiếp" : "Nghe ngay"}
                   </p>
                   <p className="text-[11px] text-indigo-200 mt-0.5">
-                    {hasListenProgress
+                    {hasProgress
                       ? "Tiếp tục từ chỗ dừng"
                       : "TTS trực tiếp"}
                   </p>
@@ -395,8 +388,8 @@ export default function BookDetailPage() {
               </Link>
               <Link
                 href={
-                  readChapterId
-                    ? `/books/${bookId}/read?chapter=${readChapterId}`
+                  readResumeId
+                    ? `/books/${bookId}/read?chapter=${readResumeId}`
                     : "#"
                 }
                 className="flex items-center gap-3 px-4 py-3.5 rounded-xl bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors text-gray-800 dark:text-gray-200 group"
@@ -418,10 +411,10 @@ export default function BookDetailPage() {
                 </div>
                 <div className="min-w-0">
                   <p className="font-semibold text-sm">
-                    {hasReadProgress ? "Đọc tiếp" : "Đọc truyện"}
+                    {hasProgress ? "Đọc tiếp" : "Đọc truyện"}
                   </p>
                   <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
-                    {hasReadProgress
+                    {hasProgress
                       ? "Tiếp tục từ chỗ dừng"
                       : "Đọc văn bản"}
                   </p>

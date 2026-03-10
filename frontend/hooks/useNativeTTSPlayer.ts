@@ -79,7 +79,6 @@ export function useNativeTTSPlayer(
   const { reportProgress: reportListenProgress } = useProgressSync({
     bookId,
     chapterId,
-    progressType: "listen",
   });
 
   const chapterIdRef = useRef(chapterId);

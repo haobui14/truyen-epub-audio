@@ -157,7 +157,6 @@ export function useSpeechPlayer(
   const { reportProgress: reportListenProgress } = useProgressSync({
     bookId,
     chapterId,
-    progressType: "listen",
   });
 
   // Create audio element once

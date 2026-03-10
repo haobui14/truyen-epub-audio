@@ -7,14 +7,12 @@ import { enqueueProgress, saveLocalProgress } from "@/lib/progressQueue";
 interface ProgressSyncOptions {
   bookId: string;
   chapterId: string;
-  progressType: "read" | "listen";
   debounceMs?: number;
 }
 
 export function useProgressSync({
   bookId,
   chapterId,
-  progressType,
   debounceMs = 5000,
 }: ProgressSyncOptions) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -29,11 +27,9 @@ export function useProgressSync({
     lastSavedRef.current = value;
     pendingRef.current = null;
 
-    // Always persist locally first so progress survives offline/app kills
     saveLocalProgress({
       book_id: bookId,
       chapter_id: chapterId,
-      progress_type: progressType,
       progress_value: value,
       total_value: total,
     });
@@ -42,22 +38,19 @@ export function useProgressSync({
       .saveProgress({
         book_id: bookId,
         chapter_id: chapterId,
-        progress_type: progressType,
         progress_value: value,
         total_value: total,
       })
       .catch(() => {
-        // Offline — queue for later sync (local store already has the value)
         lastSavedRef.current = -1;
         enqueueProgress({
           book_id: bookId,
           chapter_id: chapterId,
-          progress_type: progressType,
           progress_value: value,
           total_value: total,
         });
       });
-  }, [bookId, chapterId, progressType]);
+  }, [bookId, chapterId]);
 
   const reportProgress = useCallback(
     (value: number, total?: number) => {
@@ -69,7 +62,6 @@ export function useProgressSync({
     [flush, debounceMs],
   );
 
-  // Flush on unmount and page unload
   useEffect(() => {
     const handleUnload = () => flush();
     window.addEventListener("beforeunload", handleUnload);

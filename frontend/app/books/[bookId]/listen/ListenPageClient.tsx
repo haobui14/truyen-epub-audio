@@ -27,6 +27,15 @@ export default function ListenPage() {
   const autoPlay = searchParams.get("autoplay") === "1";
   const router = useRouter();
 
+  // Track last-listened chapter per book in localStorage so the BookDetail
+  // "Continue Listening" button resumes here rather than at the reading position
+  // (reading and listening share a single DB progress row since progress_type was removed).
+  useEffect(() => {
+    if (chapterId && bookId) {
+      localStorage.setItem(`listen-chapter:${bookId}`, chapterId);
+    }
+  }, [bookId, chapterId]);
+
   const { data: book } = useQuery({
     queryKey: ["book", bookId],
     queryFn: () => api.getBook(bookId),
@@ -56,19 +65,18 @@ export default function ListenPage() {
 
   // Fetch saved listening progress — falls back to offline queue
   const { data: listenProgress } = useQuery({
-    queryKey: ["progress", chapterId, "listen"],
+    queryKey: ["progress", chapterId],
     queryFn: async () => {
       try {
-        return await api.getChapterProgress(chapterId!, "listen");
+        return await api.getChapterProgress(chapterId!);
       } catch {
-        const queued = await getLocalProgress(chapterId!, "listen");
+        const queued = await getLocalProgress(chapterId!);
         if (queued) {
           return {
             id: "",
             user_id: "",
             book_id: queued.book_id,
             chapter_id: queued.chapter_id,
-            progress_type: queued.progress_type,
             progress_value: queued.progress_value,
             total_value: queued.total_value,
             updated_at: new Date(queued.updated_at).toISOString(),
@@ -150,7 +158,6 @@ export default function ListenPage() {
   const { reportProgress } = useProgressSync({
     bookId,
     chapterId: chapterId ?? "",
-    progressType: "listen",
   });
 
   // Save listen progress whenever the chunk index advances.

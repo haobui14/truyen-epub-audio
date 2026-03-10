@@ -1,10 +1,6 @@
 /**
  * Offline progress queue — stores progress updates in IndexedDB when the
  * network is unavailable and flushes them to the backend when back online.
- *
- * There are two separate stores:
- *  - "progress-queue"  : pending API syncs, deleted after successful upload
- *  - "progress-store"  : persistent local copy, never deleted, always up-to-date
  */
 
 import { api } from "./api";
@@ -16,52 +12,35 @@ const MY_BOOKS_CACHE_STORE = "my-books-cache";
 const MY_BOOKS_CACHE_KEY = "latest";
 
 export interface QueuedProgress {
-  /** Composite key: `${bookId}:${chapterId}:${progressType}` */
+  /** Composite key: `${bookId}:${chapterId}` */
   id: string;
   book_id: string;
   chapter_id: string;
-  progress_type: "read" | "listen";
   progress_value: number;
   total_value?: number;
   queued_at: number;
 }
 
-/** Enqueue a progress update for later sync. Overwrites any existing entry for the same key. */
 export async function enqueueProgress(entry: Omit<QueuedProgress, "id" | "queued_at">): Promise<void> {
   try {
     const db = await openOfflineDB();
-    const id = `${entry.book_id}:${entry.chapter_id}:${entry.progress_type}`;
+    const id = `${entry.book_id}:${entry.chapter_id}`;
     const tx = db.transaction(STORE_NAME, "readwrite");
-    tx.objectStore(STORE_NAME).put({
-      ...entry,
-      id,
-      queued_at: Date.now(),
-    });
-  } catch {
-    // IndexedDB unavailable — nothing we can do
-  }
+    tx.objectStore(STORE_NAME).put({ ...entry, id, queued_at: Date.now() });
+  } catch {}
 }
 
-/** Get the queued progress value for a specific chapter+type (for local reads). */
-export async function getQueuedProgress(
-  chapterId: string,
-  progressType: "read" | "listen",
-): Promise<QueuedProgress | null> {
+export async function getQueuedProgress(chapterId: string): Promise<QueuedProgress | null> {
   try {
     const db = await openOfflineDB();
     return new Promise((resolve) => {
       const tx = db.transaction(STORE_NAME, "readonly");
-      const store = tx.objectStore(STORE_NAME);
-      // We don't know the bookId, so scan all entries
-      const req = store.openCursor();
+      const req = tx.objectStore(STORE_NAME).openCursor();
       req.onsuccess = () => {
         const cursor = req.result;
         if (!cursor) { resolve(null); return; }
         const val = cursor.value as QueuedProgress;
-        if (val.chapter_id === chapterId && val.progress_type === progressType) {
-          resolve(val);
-          return;
-        }
+        if (val.chapter_id === chapterId) { resolve(val); return; }
         cursor.continue();
       };
       req.onerror = () => resolve(null);
@@ -74,35 +53,25 @@ export async function getQueuedProgress(
 // ── Persistent local progress store ──────────────────────────────────────────
 
 export interface LocalProgress {
-  /** Composite key: `${bookId}:${chapterId}:${progressType}` */
+  /** Composite key: `${bookId}:${chapterId}` */
   id: string;
   book_id: string;
   chapter_id: string;
-  progress_type: "read" | "listen";
   progress_value: number;
   total_value?: number;
-  updated_at: number; // ms timestamp
+  updated_at: number;
 }
 
-/** Save (or overwrite) local progress. Called on every flush so it's always current. */
-export async function saveLocalProgress(
-  entry: Omit<LocalProgress, "id" | "updated_at">,
-): Promise<void> {
+export async function saveLocalProgress(entry: Omit<LocalProgress, "id" | "updated_at">): Promise<void> {
   try {
     const db = await openOfflineDB();
-    const id = `${entry.book_id}:${entry.chapter_id}:${entry.progress_type}`;
+    const id = `${entry.book_id}:${entry.chapter_id}`;
     const tx = db.transaction(LOCAL_STORE, "readwrite");
     tx.objectStore(LOCAL_STORE).put({ ...entry, id, updated_at: Date.now() });
-  } catch {
-    // IndexedDB unavailable
-  }
+  } catch {}
 }
 
-/** Get the local progress for a specific chapter+type. Falls back to queue if not found. */
-export async function getLocalProgress(
-  chapterId: string,
-  progressType: "read" | "listen",
-): Promise<LocalProgress | null> {
+export async function getLocalProgress(chapterId: string): Promise<LocalProgress | null> {
   try {
     const db = await openOfflineDB();
     return new Promise((resolve) => {
@@ -112,10 +81,7 @@ export async function getLocalProgress(
         const cursor = req.result;
         if (!cursor) { resolve(null); return; }
         const val = cursor.value as LocalProgress;
-        if (val.chapter_id === chapterId && val.progress_type === progressType) {
-          resolve(val);
-          return;
-        }
+        if (val.chapter_id === chapterId) { resolve(val); return; }
         cursor.continue();
       };
       req.onerror = () => resolve(null);
@@ -151,7 +117,6 @@ export async function getCachedMyBooks(): Promise<any[] | null> {
   }
 }
 
-/** Flush all queued progress entries to the backend. Returns count of successfully synced items. */
 export async function flushProgressQueue(): Promise<number> {
   try {
     const db = await openOfflineDB();
@@ -170,16 +135,13 @@ export async function flushProgressQueue(): Promise<number> {
         await api.saveProgress({
           book_id: entry.book_id,
           chapter_id: entry.chapter_id,
-          progress_type: entry.progress_type,
           progress_value: entry.progress_value,
           total_value: entry.total_value,
         });
-        // Remove from queue on success
         const delTx = db.transaction(STORE_NAME, "readwrite");
         delTx.objectStore(STORE_NAME).delete(entry.id);
         synced++;
       } catch {
-        // Still offline or API error — leave in queue for next attempt
         break;
       }
     }

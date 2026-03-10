@@ -64,7 +64,6 @@ export interface UserProgress {
   user_id: string;
   book_id: string;
   chapter_id: string;
-  progress_type: "read" | "listen";
   progress_value: number;
   total_value?: number;
   updated_at: string;

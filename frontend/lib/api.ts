@@ -175,7 +175,6 @@ export const api = {
   saveProgress: (data: {
     book_id: string;
     chapter_id: string;
-    progress_type: "read" | "listen";
     progress_value: number;
     total_value?: number;
   }) =>
@@ -188,19 +187,14 @@ export const api = {
     request<Array<{
       book: { id: string; title: string; author?: string; cover_url?: string; total_chapters: number };
       chapter: { id: string; chapter_index: number; title: string };
-      progress_type: "read" | "listen";
       progress_value: number;
       total_value?: number;
       updated_at: string;
     }>>("/api/progress/my-books"),
-  getChapterProgress: (chapterId: string, type: "read" | "listen") =>
-    request<UserProgress | null>(
-      `/api/progress/chapter/${chapterId}?progress_type=${type}`,
-    ),
-  getBookProgress: (bookId: string, type?: string) =>
-    request<UserProgress[]>(
-      `/api/progress/book/${bookId}${type ? `?progress_type=${type}` : ""}`,
-    ),
+  getChapterProgress: (chapterId: string) =>
+    request<UserProgress | null>(`/api/progress/chapter/${chapterId}`),
+  getBookProgress: (bookId: string) =>
+    request<UserProgress | null>(`/api/progress/book/${bookId}`),
 
   // Settings
   getSettings: () =>
