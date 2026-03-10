@@ -44,8 +44,6 @@ export default function RootLayout({
         className={`${geist.variable} font-sans antialiased bg-gray-50 dark:bg-gray-950 min-h-screen flex flex-col`}
       >
         <Providers>
-          {/* Fill the status-bar safe area with the header background so it
-              doesn't look transparent above the navbar on mobile. */}
           <div
             className="fixed top-0 inset-x-0 bg-white dark:bg-gray-900 z-50"
             style={{ height: "var(--sat)" }}
