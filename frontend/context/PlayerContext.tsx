@@ -36,7 +36,7 @@ export interface PlayerTrack {
   isLoadingText: boolean;
   onPrev: (() => void) | null;
   onNext: (() => void) | null;
-  onEnded?: () => void;
+  onEnded?: (nativeChapterId?: string) => void;
   neighborChapters: { id: string }[];
   initialChunkIndex?: number;
   autoPlay?: boolean;

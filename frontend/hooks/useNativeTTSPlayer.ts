@@ -50,7 +50,7 @@ export function useNativeTTSPlayer(
   chapterId: string,
   text: string | null | undefined,
   voiceName: string | null,
-  onEnded?: () => void,
+  onEnded?: (nativeChapterId?: string) => void,
   autoPlay?: boolean,
   initialChunkIndex?: number,
 ) {
@@ -148,8 +148,12 @@ export function useNativeTTSPlayer(
       // Set a flag so the reset effect (triggered by the upcoming navigation)
       // doesn't stop the service that's already playing.
       chapterAdvancedRef.current = true;
-      // Trigger navigation to the new chapter via onEnded
-      onEndedRef.current?.();
+      // Pass the native bridge's actual current chapter ID so the navigation
+      // target is always what native is ACTUALLY playing, not a stale JS closure.
+      // This prevents cascade skips when native advances faster than React renders.
+      const bridge = getTtsBridge();
+      const nativeChId = bridge?.getCurrentChapterId?.() ?? undefined;
+      onEndedRef.current?.(nativeChId);
     };
 
     const onDone = () => {

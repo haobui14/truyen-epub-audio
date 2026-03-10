@@ -382,7 +382,10 @@ export default function ListenPage() {
     })();
 
     return () => { cancelled = true; };
-  }, [chapterId, voice, rate, pitch, allChapters, currentIndex, queryClient, nextChapterText]);
+  // nextChapterText intentionally excluded: it changes async when adjacent chapter
+  // text loads, which would re-fire this effect and clear the native queue mid-play,
+  // causing premature "done" events and chapter cascade skips.
+  }, [chapterId, voice, rate, pitch, allChapters, currentIndex, queryClient]);
 
   // ── Web streaming: prefetch first TTS audio chunks when near end ──
   useEffect(() => {
@@ -479,20 +482,29 @@ export default function ListenPage() {
       onPrev: prevChapter ? () => navigateTo(prevChapter) : null,
       onNext: nextChapter ? () => navigateTo(nextChapter) : null,
       onEnded: nextChapter
-        ? () => {
+        ? (nativeChapterId?: string) => {
             // Mark as auto-advance so the queue effect doesn't clear/rebuild
             wasAutoAdvanceRef.current = true;
-            // Pre-fetch next chapter audio before navigation starts (safety net)
-            const { voice: v, queryClient: qc } = latestRef.current;
-            if (nextChapter.id && v && !v.startsWith("native:")) {
+            if (nativeChapterId) {
+              // Native TTS passed us its actual current chapter — navigate there
+              // directly instead of using the stale JS closure. This prevents
+              // cascade skips when native advances faster than React renders.
+              router.push(`/books/${bookId}/listen?chapter=${nativeChapterId}&autoplay=1`);
+              return;
+            }
+            // Web TTS or native without bridge — use JS-computed next chapter
+            const { voice: v, queryClient: qc, nextChapter: latestNext } = latestRef.current;
+            const target = latestNext ?? nextChapter;
+            if (!target) return;
+            if (target.id && v && !v.startsWith("native:")) {
               const td = qc.getQueryData<{ text_content: string }>([
                 "chapterText",
-                nextChapter.id,
+                target.id,
               ]);
               if (td?.text_content)
-                prefetchNextChapterAudio(nextChapter.id, td.text_content, v);
+                prefetchNextChapterAudio(target.id, td.text_content, v);
             }
-            navigateTo(nextChapter, true);
+            navigateTo(target, true);
           }
         : undefined,
       neighborChapters,
@@ -510,6 +522,7 @@ export default function ListenPage() {
     chapterDataId,
     isLoadingText,
     listenProgressValue,
+    router,
   ]);
 
   if (!chapterId) {

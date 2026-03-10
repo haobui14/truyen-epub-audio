@@ -109,7 +109,7 @@ export function useSpeechPlayer(
   chapterId: string,
   text: string | null | undefined,
   voiceName: string | null,
-  onEnded?: () => void,
+  onEnded?: (nativeChapterId?: string) => void,
   autoPlay?: boolean,
   initialChunkIndex?: number,
 ) {
