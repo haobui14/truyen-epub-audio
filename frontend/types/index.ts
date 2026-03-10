@@ -66,6 +66,7 @@ export interface UserProgress {
   chapter_id: string;
   progress_value: number;
   total_value?: number;
+  chapter_index?: number;
   updated_at: string;
 }
 

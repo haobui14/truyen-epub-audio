@@ -14,7 +14,7 @@ import {
   isChapterTextCached,
   getCachedChapterText,
 } from "@/lib/chapterTextCache";
-import { getLocalProgress } from "@/lib/progressQueue";
+import { getLocalProgress, saveLocalBookProgress, syncBookProgressToServer } from "@/lib/progressQueue";
 import { useProgressSync } from "@/hooks/useProgressSync";
 import { prefetchNextChapterAudio } from "@/hooks/useSpeechPlayer";
 import { getTtsBridge } from "@/lib/backgroundLock";
@@ -158,21 +158,59 @@ export default function ListenPage() {
   const { reportProgress } = useProgressSync({
     bookId,
     chapterId: chapterId ?? "",
+    chapterIndex: currentIndex >= 0 ? currentIndex : undefined,
   });
 
   // Save listen progress whenever the chunk index advances.
-  // Skip on chapter change: chunkIndex/totalChunks may still be stale from
-  // the previous chapter, which would save wrong progress and cause a cascade
-  // where the player skips ahead many chapters on the next session.
+  // Use a ref for reportProgress so it doesn't trigger the effect when
+  // chapterId changes (which recreates the useProgressSync callbacks).
+  // Without this, the effect re-fires with stale chunkIndex/totalChunks
+  // from the previous chapter, corrupting the new chapter's progress and
+  // causing a cascade where the player skips ahead many chapters.
+  const reportProgressRef = useRef(reportProgress);
+  useEffect(() => {
+    reportProgressRef.current = reportProgress;
+  }, [reportProgress]);
   const settledChapterRef = useRef<string | null>(null);
+  const staleChunkRef = useRef<number>(-1);
   useEffect(() => {
     if (!chapterId || totalChunks === 0) return;
     if (settledChapterRef.current !== chapterId) {
       settledChapterRef.current = chapterId;
+      staleChunkRef.current = chunkIndex; // Remember potentially stale value
       return; // Wait for first real chunk update before reporting
     }
-    reportProgress(chunkIndex, totalChunks);
-  }, [chapterId, chunkIndex, totalChunks, reportProgress]);
+    // After chapter change, skip until chunkIndex actually changes from
+    // the stale value carried over from the previous chapter.
+    if (staleChunkRef.current >= 0 && chunkIndex === staleChunkRef.current) {
+      return;
+    }
+    staleChunkRef.current = -1;
+    reportProgressRef.current(chunkIndex, totalChunks);
+  }, [chapterId, chunkIndex, totalChunks]);
+
+  // Save book-level progress locally whenever the chapter changes.
+  // This ensures every chapter visited is captured in the local DB
+  // even when the screen is off or the app is killed.
+  useEffect(() => {
+    if (!chapterId || !bookId || currentIndex < 0) return;
+    saveLocalBookProgress({
+      book_id: bookId,
+      chapter_id: chapterId,
+      chapter_index: currentIndex,
+      progress_value: 0,
+    });
+  }, [bookId, chapterId, currentIndex]);
+
+  // Auto-sync book progress to server when network comes back online
+  useEffect(() => {
+    if (!bookId) return;
+    const handleOnline = () => {
+      syncBookProgressToServer(bookId).catch(() => {});
+    };
+    window.addEventListener("online", handleOnline);
+    return () => window.removeEventListener("online", handleOnline);
+  }, [bookId]);
 
   const [isCached, setIsCached] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -180,6 +218,11 @@ export default function ListenPage() {
   const activeChunkRef = useRef<HTMLDivElement>(null);
   const activeChapterRef = useRef<HTMLButtonElement>(null);
   const chapterListScrolledRef = useRef(false);
+
+  // Tracks whether the current chapter navigation was triggered by auto-advance
+  // (onEnded) vs. manual user action. When true, the queue effect skips clearing
+  // and rebuilding the native queue since it's already populated.
+  const wasAutoAdvanceRef = useRef(false);
 
   const chapterTextContent = chapterText?.text_content ?? null;
   const chunks = useMemo(
@@ -197,6 +240,7 @@ export default function ListenPage() {
   // When the WebView is suspended (screen off), native auto-advances chapters
   // but JS events don't fire. On resume, check what native is actually playing
   // and navigate to it if it differs from the current JS chapter.
+  // Also save every chapter played to local DB and trigger server sync.
   useEffect(() => {
     if (!voice.startsWith("native:")) return;
 
@@ -206,13 +250,33 @@ export default function ListenPage() {
       if (!bridge || typeof bridge.getCurrentChapterId !== "function") return;
       const nativeChapterId = bridge.getCurrentChapterId();
       if (nativeChapterId && nativeChapterId !== chapterId) {
-        // Native advanced to a different chapter — navigate to it
+        // Native advanced to a different chapter — save it to local DB first
         const targetChapter = allChapters.find((c) => c.id === nativeChapterId);
         if (targetChapter) {
+          // Save book-level progress for the native chapter BEFORE navigating.
+          // This ensures the local DB reflects the actual playback position
+          // even if the navigation or server sync fails.
+          const nativeChunk = bridge.getCurrentChunk();
+          saveLocalBookProgress({
+            book_id: bookId,
+            chapter_id: nativeChapterId,
+            chapter_index: targetChapter.chapter_index,
+            progress_value: nativeChunk >= 0 ? nativeChunk : 0,
+          });
+
+          // Update localStorage listen-chapter to match native
+          localStorage.setItem(`listen-chapter:${bookId}`, nativeChapterId);
+
+          // Sync book progress to server (async, fire-and-forget)
+          syncBookProgressToServer(bookId).catch(() => {});
+
           const nativePlaying = bridge.isPlaying();
           const url = `/books/${bookId}/listen?chapter=${nativeChapterId}${nativePlaying ? "&autoplay=1" : ""}`;
           router.replace(url);
         }
+      } else {
+        // Same chapter or no native chapter — still sync to server
+        syncBookProgressToServer(bookId).catch(() => {});
       }
     };
 
@@ -232,7 +296,16 @@ export default function ListenPage() {
     const bridge = getTtsBridge();
     if (!bridge) return;
 
-    // Clear old queue first
+    // When the chapter changed via auto-advance (onEnded), the native service
+    // already has the remaining chapters queued. Clearing and re-queueing
+    // creates a window where the queue is empty, causing premature "done"
+    // events and cascading chapter skips.
+    if (wasAutoAdvanceRef.current) {
+      wasAutoAdvanceRef.current = false;
+      return;
+    }
+
+    // Clear old queue first (manual navigation or voice/rate/pitch change)
     bridge.clearNextChapter();
 
     // Gather all chapters after the current one
@@ -407,6 +480,8 @@ export default function ListenPage() {
       onNext: nextChapter ? () => navigateTo(nextChapter) : null,
       onEnded: nextChapter
         ? () => {
+            // Mark as auto-advance so the queue effect doesn't clear/rebuild
+            wasAutoAdvanceRef.current = true;
             // Pre-fetch next chapter audio before navigation starts (safety net)
             const { voice: v, queryClient: qc } = latestRef.current;
             if (nextChapter.id && v && !v.startsWith("native:")) {

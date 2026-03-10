@@ -172,6 +172,11 @@ export function useNativeTTSPlayer(
 
     const onState = (e: Event) => {
       const { playing, index } = (e as CustomEvent).detail ?? {};
+      // Only sync state if native is still on this JS chapter.
+      const bridge = getTtsBridge();
+      const nativeChId = bridge?.getCurrentChapterId?.() ?? "";
+      if (nativeChId && nativeChId !== chapterIdRef.current) return;
+
       playingRef.current = playing;
       setIsPlaying(playing);
       setIsBuffering(false);
@@ -234,6 +239,20 @@ export function useNativeTTSPlayer(
       // Service auto-advanced — sync JS state with what's already playing.
       chapterAdvancedRef.current = false;
       const bridge = getTtsBridge();
+
+      // Verify native is actually still on THIS chapter. If native already
+      // moved further ahead, don't sync — the ListenPageClient visibility
+      // handler will navigate to the correct chapter.
+      const nativeChId = bridge?.getCurrentChapterId?.() ?? "";
+      if (nativeChId && nativeChId !== chapterId) {
+        setChunkIndex(0);
+        chunkRef.current = 0;
+        playingRef.current = false;
+        setIsPlaying(false);
+        setIsBuffering(false);
+        return;
+      }
+
       const idx = bridge?.getCurrentChunk() ?? 0;
       setChunkIndex(idx >= 0 ? idx : 0);
       chunkRef.current = idx >= 0 ? idx : 0;
@@ -302,6 +321,13 @@ export function useNativeTTSPlayer(
       if (document.visibilityState !== "visible") return;
       const bridge = getTtsBridge();
       if (!bridge) return;
+
+      // Only sync chunk index if native is playing this JS chapter.
+      // If native moved ahead, the ListenPageClient visibility handler
+      // will navigate to the correct chapter.
+      const nativeChId = bridge.getCurrentChapterId?.() ?? "";
+      if (nativeChId && nativeChId !== chapterIdRef.current) return;
+
       const nativePlaying = bridge.isPlaying();
       const nativeIdx = bridge.getCurrentChunk();
       playingRef.current = nativePlaying;

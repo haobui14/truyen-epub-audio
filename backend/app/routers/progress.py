@@ -28,7 +28,17 @@ async def save_progress(body: ProgressUpsert, user: dict = Depends(get_current_u
     )
     if not result.data:
         raise HTTPException(status_code=500, detail="Failed to save progress")
-    return result.data[0]
+    row = result.data[0]
+    # Fetch chapter_index from chapters table
+    ch = (
+        db.table("chapters")
+        .select("chapter_index")
+        .eq("id", row["chapter_id"])
+        .maybe_single()
+        .execute()
+    )
+    row["chapter_index"] = (ch.data or {}).get("chapter_index")
+    return row
 
 
 @router.get("/chapter/{chapter_id}", response_model=Optional[ProgressResponse])
@@ -46,7 +56,18 @@ async def get_chapter_progress(
         .maybe_single()
         .execute()
     )
-    return result.data
+    if not result.data:
+        return None
+    row = result.data
+    ch = (
+        db.table("chapters")
+        .select("chapter_index")
+        .eq("id", row["chapter_id"])
+        .maybe_single()
+        .execute()
+    )
+    row["chapter_index"] = (ch.data or {}).get("chapter_index")
+    return row
 
 
 @router.get("/my-books", response_model=List[Dict[str, Any]])
@@ -100,4 +121,15 @@ async def get_book_progress(
         .maybe_single()
         .execute()
     )
-    return result.data
+    if not result.data:
+        return None
+    row = result.data
+    ch = (
+        db.table("chapters")
+        .select("chapter_index")
+        .eq("id", row["chapter_id"])
+        .maybe_single()
+        .execute()
+    )
+    row["chapter_index"] = (ch.data or {}).get("chapter_index")
+    return row

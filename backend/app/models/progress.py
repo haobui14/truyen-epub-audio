@@ -18,4 +18,5 @@ class ProgressResponse(BaseModel):
     chapter_id: str
     progress_value: float
     total_value: Optional[float] = None
+    chapter_index: Optional[int] = None
     updated_at: datetime

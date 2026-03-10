@@ -7,7 +7,7 @@ import { api } from "@/lib/api";
 import { isLoggedIn } from "@/lib/auth";
 import { useProgressSync } from "@/hooks/useProgressSync";
 import { Spinner } from "@/components/ui/Spinner";
-import { getLocalProgress } from "@/lib/progressQueue";
+import { getLocalProgress, saveLocalBookProgress } from "@/lib/progressQueue";
 
 const FONT_SIZES = [14, 16, 18, 20, 22, 24] as const;
 const FONT_KEY = "reader-font-size";
@@ -117,7 +117,19 @@ export default function ReadPage() {
   const { reportProgress } = useProgressSync({
     bookId,
     chapterId: chapterId ?? "",
+    chapterIndex: currentIndex >= 0 ? currentIndex : undefined,
   });
+
+  // Save book-level progress when the reading chapter changes
+  useEffect(() => {
+    if (!chapterId || !bookId || currentIndex < 0) return;
+    saveLocalBookProgress({
+      book_id: bookId,
+      chapter_id: chapterId,
+      chapter_index: currentIndex,
+      progress_value: 0,
+    });
+  }, [bookId, chapterId, currentIndex]);
 
   const navigateTo = useCallback(
     (chapter: typeof currentChapter) => {
