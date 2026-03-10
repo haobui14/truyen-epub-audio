@@ -112,13 +112,15 @@ async def parse_epub_task(book_id: str, epub_bytes: bytes) -> None:
         db.table("chapters").insert(chapters_data).execute()
 
         # Update book metadata
-        db.table("books").update({
+        update_data: dict = {
             "title": title,
             "author": author,
-            "cover_url": cover_url,
             "total_chapters": len(chapters_data),
             "status": "parsed",
-        }).eq("id", book_id).execute()
+        }
+        if cover_url:
+            update_data["cover_url"] = cover_url
+        db.table("books").update(update_data).eq("id", book_id).execute()
 
         logger.info(f"Book {book_id}: parsed {len(chapters_data)} chapters")
 

@@ -15,6 +15,9 @@ from app.services.converter import txt_to_epub, pdf_to_epub
 router = APIRouter(prefix="/api", tags=["upload"])
 logger = logging.getLogger(__name__)
 
+# Keep strong references to background tasks so GC doesn't collect them early
+_background_tasks: set = set()
+
 VALID_VOICES = ["vi-VN-HoaiMyNeural", "vi-VN-NamMinhNeural"]
 VALID_COVER_TYPES = {"image/jpeg", "image/png", "image/webp"}
 VALID_EXTENSIONS = {".epub", ".pdf", ".txt"}
@@ -109,7 +112,9 @@ async def upload_book(
         raise HTTPException(status_code=500, detail=f"Storage upload failed: {e}")
 
     # Convert to EPUB if needed, then parse
-    asyncio.create_task(_convert_and_parse(book_id, content, ext, base_title))
+    task = asyncio.create_task(_convert_and_parse(book_id, content, ext, base_title))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
     logger.info(f"Book {book_id} ({ext}) uploaded, conversion+parsing started")
     return {"book_id": book_id, "status": "parsing"}
