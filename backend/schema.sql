@@ -95,14 +95,35 @@ CREATE TABLE IF NOT EXISTS book_genres (
 
 CREATE INDEX IF NOT EXISTS idx_book_genres_genre_id ON book_genres(genre_id);
 
+-- ============================================================
 -- Storage RLS policies
--- Allow backend service role to upload EPUBs (epub-uploads is private)
+-- Run this in Supabase SQL Editor (safe to re-run)
+-- ============================================================
+
+-- Drop old policies first to avoid conflicts on re-run
+DROP POLICY IF EXISTS "Service role full access on epub-uploads" ON storage.objects;
+DROP POLICY IF EXISTS "Service role full access on audio" ON storage.objects;
+DROP POLICY IF EXISTS "Service role full access on covers" ON storage.objects;
+DROP POLICY IF EXISTS "Public read on audio" ON storage.objects;
+DROP POLICY IF EXISTS "Public read on covers" ON storage.objects;
+
+-- Service role: full access on all buckets (needed for backend uploads)
 CREATE POLICY "Service role full access on epub-uploads"
 ON storage.objects FOR ALL TO service_role
 USING (bucket_id = 'epub-uploads')
 WITH CHECK (bucket_id = 'epub-uploads');
 
--- Allow public read on audio and covers buckets
+CREATE POLICY "Service role full access on audio"
+ON storage.objects FOR ALL TO service_role
+USING (bucket_id = 'audio')
+WITH CHECK (bucket_id = 'audio');
+
+CREATE POLICY "Service role full access on covers"
+ON storage.objects FOR ALL TO service_role
+USING (bucket_id = 'covers')
+WITH CHECK (bucket_id = 'covers');
+
+-- Public: read-only on audio and covers
 CREATE POLICY "Public read on audio"
 ON storage.objects FOR SELECT TO anon
 USING (bucket_id = 'audio');
@@ -111,7 +132,7 @@ CREATE POLICY "Public read on covers"
 ON storage.objects FOR SELECT TO anon
 USING (bucket_id = 'covers');
 
--- Storage buckets (run in Supabase dashboard > Storage):
--- 1. Create bucket "epub-uploads" (private)
--- 2. Create bucket "audio" (public)
--- 3. Create bucket "covers" (public)
+-- Storage buckets (create once in Supabase dashboard > Storage):
+-- 1. "epub-uploads" → private
+-- 2. "audio"        → public
+-- 3. "covers"       → public
