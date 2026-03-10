@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState, useMemo } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -88,7 +88,7 @@ export default function ListenPage() {
     enabled: !!chapterId && isLoggedIn(),
   });
 
-  const allChapters = chaptersData?.items ?? [];
+  const allChapters = useMemo(() => chaptersData?.items ?? [], [chaptersData]);
   const currentChapter = allChapters.find((c) => c.id === chapterId) ?? null;
   const currentIndex = currentChapter?.chapter_index ?? -1;
 
@@ -359,20 +359,24 @@ export default function ListenPage() {
     voice,
     queryClient,
   });
-  latestRef.current = {
-    currentChapter,
-    book,
-    chapterText,
-    isLoadingText,
-    prevChapter,
-    nextChapter,
-    neighborChapters,
-    listenProgress,
-    autoPlay,
-    navigateTo,
-    voice,
-    queryClient,
-  };
+  // Keep the ref current after every render (outside of render phase to satisfy
+  // react-hooks/refs — useLayoutEffect runs synchronously before effects).
+  useLayoutEffect(() => {
+    latestRef.current = {
+      currentChapter,
+      book,
+      chapterText,
+      isLoadingText,
+      prevChapter,
+      nextChapter,
+      neighborChapters,
+      listenProgress,
+      autoPlay,
+      navigateTo,
+      voice,
+      queryClient,
+    };
+  });
 
   const bookDataId = book?.id ?? null;
   const chapterDataId = currentChapter?.id ?? null;
@@ -423,7 +427,6 @@ export default function ListenPage() {
           : undefined,
       autoPlay,
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     bookId,
     chapterId,

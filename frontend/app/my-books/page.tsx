@@ -48,7 +48,7 @@ function BookRow({ entry }: { entry: MyBookEntry }) {
       className="flex gap-3 p-3 bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700/80 hover:shadow-md hover:border-indigo-200 dark:hover:border-indigo-800 transition-all group"
     >
       {/* Cover */}
-      <div className="w-14 h-[4.67rem] shrink-0 rounded-lg overflow-hidden bg-gradient-to-br from-indigo-50 to-purple-50 dark:from-indigo-950 dark:to-purple-950 relative">
+      <div className="w-14 h-[4.67rem] shrink-0 rounded-lg overflow-hidden bg-linear-to-br from-indigo-50 to-purple-50 dark:from-indigo-950 dark:to-purple-950 relative">
         {book.cover_url ? (
           <Image src={book.cover_url} alt={book.title} fill className="object-cover" />
         ) : (
