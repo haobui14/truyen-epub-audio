@@ -318,14 +318,10 @@ export default function ListenPage() {
     let cancelled = false;
 
     (async () => {
-      // Queue chapters whose text is already in React Query cache or IndexedDB.
-      // Uncached chapters are intentionally skipped — calling queueNextChapter
-      // repeatedly replaces the single "next chapter" slot each time, causing
-      // the player to skip ahead (e.g. ch45 → ch55). When the cached queue runs
-      // out, native fires native-tts-done and JS navigates to the next chapter,
-      // triggering a fresh queue build for the new chapter.
-      const toQueue: { chunks: string[]; chapterId: string; title: string; rate: number; pitch: number }[] = [];
+      type QueueItem = { chunks: string[]; chapterId: string; title: string; rate: number; pitch: number };
+      const chunkMap = new Map<string, string[]>();
 
+      // Collect chapters already in React Query cache or IndexedDB
       for (const ch of remainingChapters) {
         let text: string | null = null;
         const cached = queryClient.getQueryData<{ text_content: string }>(["chapterText", ch.id]);
@@ -334,27 +330,54 @@ export default function ListenPage() {
         } else {
           try {
             text = await getCachedChapterText(ch.id);
-          } catch {
-            // not in IndexedDB
-          }
+          } catch { /* not in IndexedDB */ }
         }
         if (text) {
           const chunks = splitChunks(text);
-          if (chunks.length > 0) {
-            toQueue.push({
-              chunks,
-              chapterId: ch.id,
-              title: ch.title ?? "Đang phát...",
-              rate,
-              pitch,
-            });
-          }
+          if (chunks.length > 0) chunkMap.set(ch.id, chunks);
         }
       }
 
       if (cancelled) return;
-      if (toQueue.length > 0) {
-        bridge.queueAllChapters(JSON.stringify(toQueue));
+
+      // Helper: build an ordered queue from whatever is in chunkMap
+      const buildQueue = (): QueueItem[] =>
+        remainingChapters
+          .filter(ch => chunkMap.has(ch.id))
+          .map(ch => ({ chunks: chunkMap.get(ch.id)!, chapterId: ch.id, title: ch.title ?? "Đang phát...", rate, pitch }));
+
+      // Phase 1: send immediately available chapters so native can start
+      // auto-advancing without waiting for the full fetch below.
+      const initialQueue = buildQueue();
+      if (initialQueue.length > 0) {
+        bridge.queueAllChapters(JSON.stringify(initialQueue));
+      }
+
+      // Phase 2: fetch uncached chapters from API and accumulate.
+      // We intentionally do NOT call queueNextChapter here — it replaces the
+      // single "next chapter" slot on each call, so N calls leave only the
+      // last chapter queued (causing ch45 → ch55 jumps).
+      // Instead we collect everything and call queueAllChapters ONCE at the end.
+      const uncached = remainingChapters.filter(ch => !chunkMap.has(ch.id));
+      for (const ch of uncached) {
+        if (cancelled) break;
+        try {
+          const data = await api.getChapterText(ch.id);
+          if (data?.text_content) {
+            queryClient.setQueryData(["chapterText", ch.id], data);
+            const chunks = splitChunks(data.text_content);
+            if (chunks.length > 0) chunkMap.set(ch.id, chunks);
+          }
+        } catch { /* offline or API error — skip */ }
+      }
+
+      if (cancelled) return;
+
+      // Send the complete ordered queue (replaces Phase 1's partial queue).
+      // Only called if Phase 2 actually added new chapters.
+      const finalQueue = buildQueue();
+      if (finalQueue.length > initialQueue.length) {
+        bridge.queueAllChapters(JSON.stringify(finalQueue));
       }
     })();
 
@@ -460,16 +483,17 @@ export default function ListenPage() {
       onNext: nextChapter ? () => navigateTo(nextChapter) : null,
       onEnded: nextChapter
         ? (nativeChapterId?: string) => {
-            // Mark as auto-advance so the queue effect doesn't clear/rebuild
-            wasAutoAdvanceRef.current = true;
             if (nativeChapterId) {
-              // Native TTS passed us its actual current chapter — navigate there
-              // directly instead of using the stale JS closure. This prevents
-              // cascade skips when native advances faster than React renders.
+              // Native TTS passed its actual current chapter (via chapter-advance
+              // event — queue still has chapters). Set flag so the queue effect
+              // skips clearing/rebuilding the existing native queue.
+              wasAutoAdvanceRef.current = true;
               router.push(`/books/${bookId}/listen?chapter=${nativeChapterId}&autoplay=1`);
               return;
             }
-            // Web TTS or native without bridge — use JS-computed next chapter
+            // native-tts-done path: queue is exhausted (or web TTS ended).
+            // Do NOT set wasAutoAdvanceRef — the queue is empty and must be
+            // rebuilt for the next chapter.
             const { voice: v, queryClient: qc, nextChapter: latestNext } = latestRef.current;
             const target = latestNext ?? nextChapter;
             if (!target) return;
