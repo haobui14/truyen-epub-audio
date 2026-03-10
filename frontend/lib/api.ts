@@ -28,7 +28,7 @@ export async function tryRefreshToken(): Promise<boolean> {
       const data = await res.json();
       const user = getUser();
       if (data.access_token && user) {
-        setAuth(data.access_token, {
+        await setAuth(data.access_token, {
           user_id: data.user_id ?? user.user_id,
           email: data.email ?? user.email,
           role: data.role ?? user.role,
@@ -184,6 +184,15 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     }),
+  getMyBooks: () =>
+    request<Array<{
+      book: { id: string; title: string; author?: string; cover_url?: string; total_chapters: number };
+      chapter: { id: string; chapter_index: number; title: string };
+      progress_type: "read" | "listen";
+      progress_value: number;
+      total_value?: number;
+      updated_at: string;
+    }>>("/api/progress/my-books"),
   getChapterProgress: (chapterId: string, type: "read" | "listen") =>
     request<UserProgress | null>(
       `/api/progress/chapter/${chapterId}?progress_type=${type}`,

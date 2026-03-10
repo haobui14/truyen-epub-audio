@@ -22,7 +22,7 @@ export default function LoginPage() {
         mode === "login"
           ? await api.login(email, password)
           : await api.signup(email, password);
-      setAuth(result.access_token, {
+      await setAuth(result.access_token, {
         user_id: result.user_id,
         email: result.email,
         role: result.role,

@@ -31,11 +31,15 @@ export function getUser(): AuthUser | null {
   }
 }
 
-export function setAuth(token: string, user: AuthUser, refreshToken?: string) {
+export async function setAuth(token: string, user: AuthUser, refreshToken?: string): Promise<void> {
   localStorage.setItem(TOKEN_KEY, token);
   localStorage.setItem(USER_KEY, JSON.stringify(user));
   if (refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
-  persistAuthToNative(token, user, refreshToken);
+  // Await native persistence so the new refresh token is safely written to
+  // SharedPreferences before we return. If the app is killed immediately after
+  // a token rotation and native storage still has the old token, Supabase will
+  // treat it as a compromised token replay and revoke the entire session.
+  await persistAuthToNative(token, user, refreshToken);
   window.dispatchEvent(new Event("auth-change"));
 }
 
@@ -57,13 +61,14 @@ export function isAdmin(): boolean {
 
 // ── Native persistence (Android SharedPreferences via @capacitor/preferences) ──
 
-function persistAuthToNative(token: string, user: AuthUser, refreshToken?: string) {
+async function persistAuthToNative(token: string, user: AuthUser, refreshToken?: string): Promise<void> {
   if (!isNativePlatform()) return;
-  import("@capacitor/preferences").then(({ Preferences }) => {
-    Preferences.set({ key: TOKEN_KEY, value: token });
-    Preferences.set({ key: USER_KEY, value: JSON.stringify(user) });
-    if (refreshToken) Preferences.set({ key: REFRESH_TOKEN_KEY, value: refreshToken });
-  }).catch(() => {});
+  try {
+    const { Preferences } = await import("@capacitor/preferences");
+    await Preferences.set({ key: TOKEN_KEY, value: token });
+    await Preferences.set({ key: USER_KEY, value: JSON.stringify(user) });
+    if (refreshToken) await Preferences.set({ key: REFRESH_TOKEN_KEY, value: refreshToken });
+  } catch {}
 }
 
 function clearNativeAuth() {

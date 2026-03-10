@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -50,6 +50,50 @@ async def get_chapter_progress(
         .execute()
     )
     return result.data
+
+
+@router.get("/my-books", response_model=List[Dict[str, Any]])
+async def get_my_books(user: dict = Depends(get_current_user)):
+    """
+    Return one entry per book the user has any progress on.
+    Each entry contains book metadata + the last-stopped chapter info.
+    Sorted by most recently updated.
+    """
+    db = get_client()
+    # Fetch all progress rows for this user, joined with books and chapters
+    result = (
+        db.table("user_progress")
+        .select(
+            "progress_type, progress_value, total_value, updated_at, "
+            "books(id, title, author, cover_url, total_chapters), "
+            "chapters(id, chapter_index, title)"
+        )
+        .eq("user_id", user["id"])
+        .order("updated_at", desc=True)
+        .execute()
+    )
+    if not result.data:
+        return []
+
+    # Deduplicate: keep the most recent row per (book_id, progress_type)
+    seen: set = set()
+    rows = []
+    for row in result.data:
+        book = row.get("books") or {}
+        chapter = row.get("chapters") or {}
+        key = (book.get("id", ""), row["progress_type"])
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append({
+            "book": book,
+            "chapter": chapter,
+            "progress_type": row["progress_type"],
+            "progress_value": row["progress_value"],
+            "total_value": row["total_value"],
+            "updated_at": row["updated_at"],
+        })
+    return rows
 
 
 @router.get("/book/{book_id}", response_model=List[ProgressResponse])

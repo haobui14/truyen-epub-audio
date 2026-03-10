@@ -14,7 +14,8 @@ import {
   isChapterTextCached,
   getCachedChapterText,
 } from "@/lib/chapterTextCache";
-import { getQueuedProgress } from "@/lib/progressQueue";
+import { getLocalProgress } from "@/lib/progressQueue";
+import { useProgressSync } from "@/hooks/useProgressSync";
 import { prefetchNextChapterAudio } from "@/hooks/useSpeechPlayer";
 import { getTtsBridge } from "@/lib/backgroundLock";
 import { splitIntoChunks as splitChunks } from "@/lib/textChunks";
@@ -60,7 +61,7 @@ export default function ListenPage() {
       try {
         return await api.getChapterProgress(chapterId!, "listen");
       } catch {
-        const queued = await getQueuedProgress(chapterId!, "listen");
+        const queued = await getLocalProgress(chapterId!, "listen");
         if (queued) {
           return {
             id: "",
@@ -70,7 +71,7 @@ export default function ListenPage() {
             progress_type: queued.progress_type,
             progress_value: queued.progress_value,
             total_value: queued.total_value,
-            updated_at: new Date(queued.queued_at).toISOString(),
+            updated_at: new Date(queued.updated_at).toISOString(),
           };
         }
         return null;
@@ -145,6 +146,26 @@ export default function ListenPage() {
   const queryClient = useQueryClient();
   const { setTrack, chunkIndex, totalChunks, voice, rate, pitch } =
     usePlayerContext();
+
+  const { reportProgress } = useProgressSync({
+    bookId,
+    chapterId: chapterId ?? "",
+    progressType: "listen",
+  });
+
+  // Save listen progress whenever the chunk index advances.
+  // Skip on chapter change: chunkIndex/totalChunks may still be stale from
+  // the previous chapter, which would save wrong progress and cause a cascade
+  // where the player skips ahead many chapters on the next session.
+  const settledChapterRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!chapterId || totalChunks === 0) return;
+    if (settledChapterRef.current !== chapterId) {
+      settledChapterRef.current = chapterId;
+      return; // Wait for first real chunk update before reporting
+    }
+    reportProgress(chunkIndex, totalChunks);
+  }, [chapterId, chunkIndex, totalChunks, reportProgress]);
 
   const [isCached, setIsCached] = useState(false);
   const [isSaving, setIsSaving] = useState(false);

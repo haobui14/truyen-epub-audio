@@ -7,7 +7,7 @@ import { api } from "@/lib/api";
 import { isLoggedIn } from "@/lib/auth";
 import { useProgressSync } from "@/hooks/useProgressSync";
 import { Spinner } from "@/components/ui/Spinner";
-import { getQueuedProgress } from "@/lib/progressQueue";
+import { getLocalProgress } from "@/lib/progressQueue";
 
 const FONT_SIZES = [14, 16, 18, 20, 22, 24] as const;
 const FONT_KEY = "reader-font-size";
@@ -90,7 +90,7 @@ export default function ReadPage() {
       try {
         return await api.getChapterProgress(chapterId!, "read");
       } catch {
-        const queued = await getQueuedProgress(chapterId!, "read");
+        const queued = await getLocalProgress(chapterId!, "read");
         if (queued) {
           return {
             id: "",
@@ -100,7 +100,7 @@ export default function ReadPage() {
             progress_type: queued.progress_type,
             progress_value: queued.progress_value,
             total_value: queued.total_value,
-            updated_at: new Date(queued.queued_at).toISOString(),
+            updated_at: new Date(queued.updated_at).toISOString(),
           };
         }
         return null;
@@ -156,7 +156,7 @@ export default function ReadPage() {
       const scrollMax = document.documentElement.scrollHeight - window.innerHeight;
       if (scrollMax <= 0) return;
       const pct = Math.round((window.scrollY / scrollMax) * 100);
-      reportProgress(Math.min(pct, 100));
+      reportProgress(Math.min(pct, 100), 100);
     };
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);

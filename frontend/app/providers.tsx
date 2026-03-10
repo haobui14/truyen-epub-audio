@@ -35,29 +35,54 @@ export function Providers({ children }: { children: React.ReactNode }) {
         window.dispatchEvent(new Event("auth-change"));
         queryClient.invalidateQueries();
       }
-      // On every app open, proactively refresh the token if we have a refresh
-      // token. This resets the refresh-token expiry clock so users stay logged
-      // in for up to 90 days as long as they open the app at least once in
-      // that period. (Requires Supabase refresh token expiry ≥ 7776000 s.)
+      // Proactively refresh the access token on every app start. Track whether
+      // it succeeded — if the refresh fails (expired refresh token OR network
+      // down), we must NOT call getMe() with the stale access token because
+      // that path ends in: 401 → tryRefreshToken() fails → clearAuth() → logout.
+      // Instead, leave auth as-is and let the user keep their session until
+      // they perform a real authenticated action with network available.
+      // (Requires Supabase refresh token expiry ≥ 15552000 s / 180 days.)
+      let tokenOk = isLoggedIn() && !getRefreshToken(); // no refresh token = rely on existing access token
       if (isLoggedIn() && getRefreshToken()) {
-        await tryRefreshToken();
+        tokenOk = await tryRefreshToken();
       }
 
-      // Sync role from server (handles new admins and role revocations).
-      if (isLoggedIn()) {
+      // Sync role from server — best-effort only when we have a fresh token.
+      // Skipping this on failed refresh avoids the 401 → clearAuth() path.
+      if (isLoggedIn() && tokenOk) {
         try {
           const me = await api.getMe();
           const user = getUser();
           const token = getToken();
           if (user && token && me.role !== user.role) {
-            setAuth(token, { ...user, role: me.role });
+            await setAuth(token, { ...user, role: me.role });
           }
         } catch {
-          // Expired token — api.ts already cleared auth on 401
+          // Best-effort — ignore failures (e.g. server down)
         }
       }
     };
     init();
+  }, [queryClient]);
+
+  // Refresh token and re-hydrate auth whenever the app comes back to the
+  // foreground (e.g. after screen-off on Android). Without this, the access
+  // token expires while backgrounded and the first API call after resume
+  // triggers a 401 → clearAuth() → user gets logged out.
+  useEffect(() => {
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState !== "visible") return;
+      if (isNativePlatform()) {
+        await hydrateAuthFromNative();
+      }
+      if (isLoggedIn() && getRefreshToken()) {
+        const ok = await tryRefreshToken();
+        if (ok) queryClient.invalidateQueries();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () =>
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, [queryClient]);
 
   // Flush queued offline progress when connectivity is restored

@@ -1,12 +1,19 @@
 /**
  * Offline progress queue — stores progress updates in IndexedDB when the
  * network is unavailable and flushes them to the backend when back online.
+ *
+ * There are two separate stores:
+ *  - "progress-queue"  : pending API syncs, deleted after successful upload
+ *  - "progress-store"  : persistent local copy, never deleted, always up-to-date
  */
 
 import { api } from "./api";
 import { openOfflineDB } from "./offlineDB";
 
 const STORE_NAME = "progress-queue";
+const LOCAL_STORE = "progress-store";
+const MY_BOOKS_CACHE_STORE = "my-books-cache";
+const MY_BOOKS_CACHE_KEY = "latest";
 
 export interface QueuedProgress {
   /** Composite key: `${bookId}:${chapterId}:${progressType}` */
@@ -57,6 +64,86 @@ export async function getQueuedProgress(
         }
         cursor.continue();
       };
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+}
+
+// ── Persistent local progress store ──────────────────────────────────────────
+
+export interface LocalProgress {
+  /** Composite key: `${bookId}:${chapterId}:${progressType}` */
+  id: string;
+  book_id: string;
+  chapter_id: string;
+  progress_type: "read" | "listen";
+  progress_value: number;
+  total_value?: number;
+  updated_at: number; // ms timestamp
+}
+
+/** Save (or overwrite) local progress. Called on every flush so it's always current. */
+export async function saveLocalProgress(
+  entry: Omit<LocalProgress, "id" | "updated_at">,
+): Promise<void> {
+  try {
+    const db = await openOfflineDB();
+    const id = `${entry.book_id}:${entry.chapter_id}:${entry.progress_type}`;
+    const tx = db.transaction(LOCAL_STORE, "readwrite");
+    tx.objectStore(LOCAL_STORE).put({ ...entry, id, updated_at: Date.now() });
+  } catch {
+    // IndexedDB unavailable
+  }
+}
+
+/** Get the local progress for a specific chapter+type. Falls back to queue if not found. */
+export async function getLocalProgress(
+  chapterId: string,
+  progressType: "read" | "listen",
+): Promise<LocalProgress | null> {
+  try {
+    const db = await openOfflineDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(LOCAL_STORE, "readonly");
+      const req = tx.objectStore(LOCAL_STORE).openCursor();
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor) { resolve(null); return; }
+        const val = cursor.value as LocalProgress;
+        if (val.chapter_id === chapterId && val.progress_type === progressType) {
+          resolve(val);
+          return;
+        }
+        cursor.continue();
+      };
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+}
+
+// ── My-books API response cache ───────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function setCachedMyBooks(data: any[]): Promise<void> {
+  try {
+    const db = await openOfflineDB();
+    const tx = db.transaction(MY_BOOKS_CACHE_STORE, "readwrite");
+    tx.objectStore(MY_BOOKS_CACHE_STORE).put(data, MY_BOOKS_CACHE_KEY);
+  } catch {}
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function getCachedMyBooks(): Promise<any[] | null> {
+  try {
+    const db = await openOfflineDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(MY_BOOKS_CACHE_STORE, "readonly");
+      const req = tx.objectStore(MY_BOOKS_CACHE_STORE).get(MY_BOOKS_CACHE_KEY);
+      req.onsuccess = () => resolve(req.result ?? null);
       req.onerror = () => resolve(null);
     });
   } catch {
