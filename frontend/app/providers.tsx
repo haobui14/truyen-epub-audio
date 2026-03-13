@@ -44,7 +44,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       // (Requires Supabase refresh token expiry ≥ 15552000 s / 180 days.)
       let tokenOk = isLoggedIn() && !getRefreshToken(); // no refresh token = rely on existing access token
       if (isLoggedIn() && getRefreshToken()) {
-        tokenOk = await tryRefreshToken();
+        tokenOk = (await tryRefreshToken()) === true;
       }
 
       // Sync role from server — best-effort only when we have a fresh token.
