@@ -72,7 +72,7 @@ async def _process_chapter(book_id: str, chapter_id: str) -> None:
         file_size = os.path.getsize(tmp_path)
 
         # Upload to Supabase Storage
-        storage_path = f"audio/{book_id}/{chapter_id}.mp3"
+        storage_path = f"{book_id}/{chapter_id}.mp3"
         public_url = await storage_service.upload_file(
             bucket="audio",
             path=storage_path,

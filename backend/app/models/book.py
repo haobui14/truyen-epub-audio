@@ -13,6 +13,7 @@ class BookResponse(BaseModel):
     id: str
     title: str
     author: Optional[str] = None
+    description: Optional[str] = None
     cover_url: Optional[str] = None
     voice: str
     status: str

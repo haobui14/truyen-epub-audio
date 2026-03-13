@@ -22,7 +22,7 @@ def _attach_genres(rows: list) -> list:
 
 
 _BOOK_SELECT = (
-    "id,title,author,cover_url,voice,status,total_chapters,created_at,"
+    "id,title,author,description,cover_url,voice,status,total_chapters,created_at,"
     "book_genres(genres(id,name,color))"
 )
 
@@ -105,6 +105,7 @@ async def update_book(
     book_id: str,
     title: Optional[str] = Form(None),
     author: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
     cover: Optional[UploadFile] = File(None),
     _admin: dict = Depends(get_admin_user),
 ):
@@ -122,6 +123,8 @@ async def update_book(
         updates["title"] = t
     if author is not None:
         updates["author"] = author.strip() or None
+    if description is not None:
+        updates["description"] = description.strip() or None
 
     if cover and cover.filename:
         content_type = cover.content_type or "image/jpeg"
@@ -131,7 +134,7 @@ async def update_book(
         if len(cover_data) > 5 * 1024 * 1024:
             raise HTTPException(status_code=400, detail="Cover image must be under 5MB")
         ext = content_type.split("/")[-1].replace("jpeg", "jpg")
-        cover_path = f"covers/{book_id}/cover.{ext}"
+        cover_path = f"{book_id}/cover.{ext}"
         try:
             cover_url = await storage_service.upload_bytes(
                 bucket="covers",
@@ -158,9 +161,9 @@ async def delete_book(book_id: str, _admin: dict = Depends(get_admin_user)):
         raise HTTPException(status_code=404, detail="Book not found")
 
     # Delete from storage (best effort)
-    await storage_service.delete_folder("audio", f"audio/{book_id}")
-    await storage_service.delete_folder("covers", f"covers/{book_id}")
-    await storage_service.delete_folder("epub-uploads", f"epub-uploads/{book_id}")
+    await storage_service.delete_folder("audio", book_id)
+    await storage_service.delete_folder("covers", book_id)
+    await storage_service.delete_folder("epub-uploads", book_id)
 
     # Delete from DB (cascades to chapters + audio_files)
     db.table("books").delete().eq("id", book_id).execute()
@@ -194,6 +197,22 @@ async def create_chapter(
 
     word_count = len(text_content.split()) if text_content else 0
 
+    # Check whether the requested index is already taken; if so, shift
+    # all chapters at that index and above up by one to make room.
+    existing = (
+        db.table("chapters")
+        .select("id")
+        .eq("book_id", book_id)
+        .eq("chapter_index", body.chapter_index)
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
+        db.rpc("shift_chapters_up", {
+            "p_book_id": book_id,
+            "p_insert_index": body.chapter_index,
+        }).execute()
+
     try:
         result = db.table("chapters").insert({
             "book_id": book_id,
@@ -204,11 +223,6 @@ async def create_chapter(
             "status": "pending",
         }).execute()
     except Exception as e:
-        if "unique" in str(e).lower():
-            raise HTTPException(
-                status_code=409,
-                detail=f"Chapter index {body.chapter_index} already exists for this book",
-            )
         raise HTTPException(status_code=500, detail="Failed to create chapter")
 
     # Recalculate total_chapters

@@ -49,7 +49,36 @@ input[type="range"].accent-emerald::-moz-range-thumb {
   border-color: #10b981;
 }
 
-/* Custom scrollbar */
+/* Global scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: #374151;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #4b5563;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #d1d5db transparent;
+}
+.dark * {
+  scrollbar-color: #374151 transparent;
+}
+
+/* Custom scrollbar (kept for explicit usage) */
 .scrollbar-thin::-webkit-scrollbar {
   width: 6px;
 }
@@ -58,7 +87,7 @@ input[type="range"].accent-emerald::-moz-range-thumb {
 }
 .scrollbar-thin::-webkit-scrollbar-thumb {
   background: #d1d5db;
-  border-radius: 3px;
+  border-radius: 9999px;
 }
 .dark .scrollbar-thin::-webkit-scrollbar-thumb {
   background: #4b5563;

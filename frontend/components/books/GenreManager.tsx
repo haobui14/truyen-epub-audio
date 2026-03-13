@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef, useEffect } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { Genre } from "@/types";
@@ -26,6 +26,22 @@ export function getColorClasses(color: string) {
   return COLOR_OPTIONS.find((c) => c.key === color) ?? COLOR_OPTIONS[0];
 }
 
+function ColorPicker({ value, onChange }: { value: ColorKey; onChange: (c: ColorKey) => void }) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {COLOR_OPTIONS.map((c) => (
+        <button
+          key={c.key}
+          type="button"
+          onClick={() => onChange(c.key)}
+          className={`w-7 h-7 rounded-full cursor-pointer ${c.dot} transition-transform ${value === c.key ? "ring-2 ring-offset-2 ring-gray-500 dark:ring-gray-300 scale-110" : "opacity-60 hover:opacity-100 active:scale-95"}`}
+          title={c.key}
+        />
+      ))}
+    </div>
+  );
+}
+
 /** Small pill tag for displaying a genre */
 export function GenreTag({ genre, onRemove }: { genre: Pick<Genre, "name" | "color">; onRemove?: () => void }) {
   const c = getColorClasses(genre.color);
@@ -35,7 +51,7 @@ export function GenreTag({ genre, onRemove }: { genre: Pick<Genre, "name" | "col
       {onRemove && (
         <button
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); onRemove(); }}
-          className="ml-0.5 hover:opacity-70 transition-opacity leading-none"
+          className="ml-0.5 cursor-pointer hover:opacity-70 active:opacity-50 transition-opacity leading-none p-0.5"
           aria-label={`Remove ${genre.name}`}
         >
           ×
@@ -47,12 +63,10 @@ export function GenreTag({ genre, onRemove }: { genre: Pick<Genre, "name" | "col
 
 interface GenreManagerProps {
   bookId: string;
-  assignedGenres: Genre[];
 }
 
-export function GenreManager({ bookId, assignedGenres }: GenreManagerProps) {
+export function GenreManager({ bookId }: GenreManagerProps) {
   const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
   const [newColor, setNewColor] = useState<ColorKey>("indigo");
@@ -60,52 +74,66 @@ export function GenreManager({ bookId, assignedGenres }: GenreManagerProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editColor, setEditColor] = useState<ColorKey>("indigo");
-  const panelRef = useRef<HTMLDivElement>(null);
+  const [isManaging, setIsManaging] = useState(false);
+
+  // Seed assigned IDs synchronously from the already-cached book data.
+  // The parent (EditBookClient) fetches the book before rendering this component,
+  // so the cache is always populated. Using a lazy initializer means this runs
+  // exactly once on mount and is never affected by background refetches.
+  const [assignedIds, setAssignedIds] = useState<Set<string>>(() => {
+    const cached = qc.getQueryData<{ genres?: Genre[] }>(["book", bookId]);
+    return new Set((cached?.genres ?? []).map((g) => g.id));
+  });
+
+  // Keep a local map of id→genre so we can render assigned tags even before
+  // allGenres loads, and for newly-created genres not yet in the server list.
+  const [localGenreMap, setLocalGenreMap] = useState<Record<string, Genre>>(() => {
+    const cached = qc.getQueryData<{ genres?: Genre[] }>(["book", bookId]);
+    return Object.fromEntries((cached?.genres ?? []).map((g) => [g.id, g]));
+  });
 
   const { data: allGenres = [], isLoading } = useQuery({
     queryKey: ["genres"],
     queryFn: api.listGenres,
-    enabled: open,
   });
 
-  // Close on outside click
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [open]);
-
-  const invalidate = () => {
+  const invalidateAll = () => {
     qc.invalidateQueries({ queryKey: ["book", bookId] });
     qc.invalidateQueries({ queryKey: ["books"] });
     qc.invalidateQueries({ queryKey: ["genres"] });
   };
 
-  const assignMutation = useMutation({
-    mutationFn: (genreId: string) => api.assignGenre(bookId, genreId),
-    onSuccess: invalidate,
-  });
+  function handleAssign(genreId: string) {
+    setAssignedIds((prev) => new Set([...prev, genreId]));
+    // Ensure we have the genre object for rendering
+    const genre = allGenres.find((g) => g.id === genreId);
+    if (genre) setLocalGenreMap((prev) => ({ ...prev, [genreId]: genre }));
+    api.assignGenre(bookId, genreId).catch(() => {
+      setAssignedIds((prev) => { const next = new Set(prev); next.delete(genreId); return next; });
+    });
+  }
 
-  const removeMutation = useMutation({
-    mutationFn: (genreId: string) => api.removeGenre(bookId, genreId),
-    onSuccess: invalidate,
-  });
+  function handleRemove(genreId: string) {
+    setAssignedIds((prev) => { const next = new Set(prev); next.delete(genreId); return next; });
+    api.removeGenre(bookId, genreId).catch(() => {
+      setAssignedIds((prev) => new Set([...prev, genreId]));
+    });
+  }
 
   const createMutation = useMutation({
     mutationFn: () => api.createGenre(newName.trim(), newColor),
     onSuccess: (genre) => {
-      invalidate();
       setNewName("");
       setNewColor("indigo");
       setCreateError("");
       setShowCreate(false);
-      // Immediately assign the new genre to this book
-      assignMutation.mutate(genre.id);
+      // Add new genre to allGenres cache and local map immediately
+      qc.setQueryData(["genres"], (old: Genre[] | undefined) =>
+        old ? [...old, genre] : [genre],
+      );
+      setLocalGenreMap((prev) => ({ ...prev, [genre.id]: genre }));
+      setAssignedIds((prev) => new Set([...prev, genre.id]));
+      api.assignGenre(bookId, genre.id).then(invalidateAll);
     },
     onError: (err: Error) => {
       setCreateError(err.message.includes("409") ? "Tên thể loại đã tồn tại" : "Không thể tạo thể loại");
@@ -115,189 +143,212 @@ export function GenreManager({ bookId, assignedGenres }: GenreManagerProps) {
   const updateMutation = useMutation({
     mutationFn: ({ id, name, color }: { id: string; name: string; color: string }) =>
       api.updateGenre(id, { name, color }),
-    onSuccess: () => { invalidate(); setEditingId(null); },
+    onSuccess: () => { invalidateAll(); setEditingId(null); },
   });
 
   const deleteGenreMutation = useMutation({
     mutationFn: (genreId: string) => api.deleteGenre(genreId),
-    onSuccess: invalidate,
+    onMutate: (genreId) => {
+      setAssignedIds((prev) => { const next = new Set(prev); next.delete(genreId); return next; });
+    },
+    onSuccess: invalidateAll,
   });
 
-  const assignedIds = new Set(assignedGenres.map((g) => g.id));
-  const unassigned = allGenres.filter((g) => !assignedIds.has(g.id));
+  // Render the assigned section from localGenreMap (always up-to-date, never affected by refetches)
+  const mergedGenreMap = { ...localGenreMap, ...Object.fromEntries(allGenres.map((g) => [g.id, g])) };
+  const assignedGenreObjects = [...assignedIds]
+    .map((id) => mergedGenreMap[id])
+    .filter(Boolean) as Genre[];
 
   return (
-    <div className="relative" ref={panelRef}>
-      {/* Trigger button */}
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors px-2 py-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
-      >
-        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-            d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
-        </svg>
-        Thể loại
-      </button>
+    <div className="space-y-4">
+      {/* Assigned genres */}
+      <div>
+        <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Đã gán cho truyện này</p>
+        {assignedIds.size === 0 ? (
+          <p className="text-xs text-gray-400 dark:text-gray-500 italic">Chưa gán thể loại nào</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {assignedGenreObjects.map((g) => (
+              <GenreTag key={g.id} genre={g} onRemove={() => handleRemove(g.id)} />
+            ))}
+          </div>
+        )}
+      </div>
 
-      {open && (
-        <div className="absolute left-0 top-full mt-1.5 w-72 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl z-50 overflow-hidden">
-          <div className="px-3 py-2.5 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between">
-            <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">Quản lý thể loại</span>
-            <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-0.5">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
+      {/* All genres — click to toggle assign; manage mode reveals edit/delete */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Tất cả thể loại</p>
+          {allGenres.length > 0 && !isLoading && (
+            <button
+              type="button"
+              onClick={() => { setIsManaging((v) => !v); setEditingId(null); }}
+              className={`inline-flex items-center gap-1 text-xs font-medium cursor-pointer transition-colors ${
+                isManaging
+                  ? "text-indigo-600 dark:text-indigo-400 hover:text-indigo-700"
+                  : "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
+              }`}
+            >
+              {isManaging ? (
+                <>
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  Xong
+                </>
+              ) : (
+                <>
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                  Quản lý
+                </>
+              )}
             </button>
-          </div>
-
-          {/* Assigned genres */}
-          {assignedGenres.length > 0 && (
-            <div className="px-3 py-2 border-b border-gray-100 dark:border-gray-700">
-              <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide mb-1.5">Đã gán</p>
-              <div className="flex flex-wrap gap-1.5">
-                {assignedGenres.map((g) => (
-                  <GenreTag
-                    key={g.id}
-                    genre={g}
-                    onRemove={() => removeMutation.mutate(g.id)}
-                  />
-                ))}
-              </div>
-            </div>
           )}
-
-          {/* Available (unassigned) genres */}
-          <div className="px-3 py-2 max-h-52 overflow-y-auto">
-            {isLoading ? (
-              <p className="text-xs text-gray-400 py-2 text-center">Đang tải...</p>
-            ) : unassigned.length === 0 && !showCreate ? (
-              <p className="text-xs text-gray-400 py-2 text-center">Chưa có thể loại nào</p>
-            ) : (
-              <div className="space-y-0.5">
-                {unassigned.map((g) => (
-                  <div key={g.id} className="group flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                    {editingId === g.id ? (
-                      <form
-                        className="flex-1 flex flex-col gap-1.5"
-                        onSubmit={(e) => {
-                          e.preventDefault();
-                          updateMutation.mutate({ id: g.id, name: editName, color: editColor });
-                        }}
-                      >
-                        <input
-                          autoFocus
-                          value={editName}
-                          onChange={(e) => setEditName(e.target.value)}
-                          className="w-full text-xs px-2 py-1 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 outline-none focus:ring-1 focus:ring-indigo-500"
-                        />
-                        <ColorPicker value={editColor} onChange={setEditColor} />
-                        <div className="flex gap-1 mt-0.5">
-                          <button type="submit" className="text-xs px-2 py-0.5 bg-indigo-600 text-white rounded-md hover:bg-indigo-700">Lưu</button>
-                          <button type="button" onClick={() => setEditingId(null)} className="text-xs px-2 py-0.5 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-md">Hủy</button>
-                        </div>
-                      </form>
-                    ) : (
-                      <>
-                        <button
-                          onClick={() => assignMutation.mutate(g.id)}
-                          className="flex-1 flex items-center gap-2 text-left"
-                        >
-                          <span className={`w-2 h-2 rounded-full shrink-0 ${getColorClasses(g.color).dot}`} />
-                          <span className="text-sm text-gray-700 dark:text-gray-300 truncate">{g.name}</span>
-                        </button>
-                        <div className="hidden group-hover:flex items-center gap-0.5">
-                          <button
-                            onClick={() => { setEditingId(g.id); setEditName(g.name); setEditColor(g.color as ColorKey); }}
-                            className="p-1 text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 rounded"
-                            title="Sửa"
-                          >
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                            </svg>
-                          </button>
-                          <button
-                            onClick={() => deleteGenreMutation.mutate(g.id)}
-                            className="p-1 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded"
-                            title="Xóa thể loại"
-                          >
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Create new genre form */}
-          <div className="px-3 pb-3 pt-1 border-t border-gray-100 dark:border-gray-700">
-            {showCreate ? (
-              <form
-                className="space-y-2"
-                onSubmit={(e) => { e.preventDefault(); createMutation.mutate(); }}
-              >
-                <input
-                  autoFocus
-                  value={newName}
-                  onChange={(e) => { setNewName(e.target.value); setCreateError(""); }}
-                  placeholder="Tên thể loại..."
-                  maxLength={50}
-                  className="w-full text-sm px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-                <ColorPicker value={newColor} onChange={setNewColor} />
-                {createError && <p className="text-xs text-red-500">{createError}</p>}
-                <div className="flex gap-2">
-                  <button
-                    type="submit"
-                    disabled={!newName.trim() || createMutation.isPending}
-                    className="flex-1 text-sm py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 font-medium"
+        </div>
+        {isLoading ? (
+          <p className="text-xs text-gray-400">Đang tải...</p>
+        ) : allGenres.length === 0 ? (
+          <p className="text-xs text-gray-400 dark:text-gray-500 italic">Chưa có thể loại nào</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {allGenres.map((g) => {
+              const isAssigned = assignedIds.has(g.id);
+              const c = getColorClasses(g.color);
+              if (editingId === g.id) {
+                return (
+                  <form
+                    key={g.id}
+                    className="flex flex-col gap-2 p-3 rounded-xl border border-indigo-300 dark:border-indigo-700 bg-gray-50 dark:bg-gray-900 w-full sm:w-72"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      updateMutation.mutate({ id: g.id, name: editName, color: editColor });
+                    }}
                   >
-                    {createMutation.isPending ? "Đang tạo..." : "Tạo & gán"}
-                  </button>
+                    <input
+                      autoFocus
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      className="text-sm px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <ColorPicker value={editColor} onChange={setEditColor} />
+                    <div className="flex gap-2">
+                      <button
+                        type="submit"
+                        disabled={updateMutation.isPending}
+                        className="text-xs px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer font-medium"
+                      >
+                        {updateMutation.isPending ? "Đang lưu..." : "Lưu"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingId(null)}
+                        className="text-xs px-3 py-1.5 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-lg cursor-pointer"
+                      >
+                        Hủy
+                      </button>
+                    </div>
+                  </form>
+                );
+              }
+              return (
+                <div key={g.id} className="inline-flex items-center gap-1">
                   <button
                     type="button"
-                    onClick={() => { setShowCreate(false); setNewName(""); setCreateError(""); }}
-                    className="text-sm px-3 py-1.5 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600"
+                    onClick={() => !isManaging && (isAssigned ? handleRemove(g.id) : handleAssign(g.id))}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-all ${
+                      isManaging
+                        ? "cursor-default"
+                        : "cursor-pointer"
+                    } ${
+                      isAssigned
+                        ? `${c.bg} ${c.text} border-transparent ring-2 ring-offset-1 ring-current`
+                        : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-gray-400 dark:hover:border-gray-500"
+                    }`}
                   >
-                    Hủy
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${c.dot}`} />
+                    {g.name}
+                    {isAssigned && !isManaging && <span className="ml-0.5 opacity-60">✓</span>}
                   </button>
+                  {isManaging && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => { setEditingId(g.id); setEditName(g.name); setEditColor(g.color as ColorKey); }}
+                        className="p-2 cursor-pointer text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 active:text-indigo-700 transition-colors rounded"
+                        title="Sửa"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { if (confirm(`Xóa thể loại "${g.name}"?`)) deleteGenreMutation.mutate(g.id); }}
+                        className="p-2 cursor-pointer text-gray-400 hover:text-red-600 dark:hover:text-red-400 active:text-red-700 transition-colors rounded"
+                        title="Xóa"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </>
+                  )}
                 </div>
-              </form>
-            ) : (
-              <button
-                onClick={() => setShowCreate(true)}
-                className="w-full flex items-center justify-center gap-1.5 text-sm text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 py-1.5 rounded-lg transition-colors font-medium"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-                Tạo thể loại mới
-              </button>
-            )}
+              );
+            })}
           </div>
-        </div>
-      )}
-    </div>
-  );
-}
+        )}
+      </div>
 
-function ColorPicker({ value, onChange }: { value: ColorKey; onChange: (c: ColorKey) => void }) {
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {COLOR_OPTIONS.map((c) => (
+      {/* Create new genre */}
+      {showCreate ? (
+        <form
+          className="flex flex-col gap-2.5 p-4 rounded-xl border border-dashed border-indigo-300 dark:border-indigo-700 bg-indigo-50/30 dark:bg-indigo-950/20"
+          onSubmit={(e) => { e.preventDefault(); createMutation.mutate(); }}
+        >
+          <p className="text-xs font-medium text-gray-700 dark:text-gray-300">Thể loại mới</p>
+          <input
+            autoFocus
+            value={newName}
+            onChange={(e) => { setNewName(e.target.value); setCreateError(""); }}
+            placeholder="Tên thể loại..."
+            maxLength={50}
+            className="text-sm px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+          <ColorPicker value={newColor} onChange={setNewColor} />
+          {createError && <p className="text-xs text-red-500">{createError}</p>}
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              disabled={!newName.trim() || createMutation.isPending}
+              className="text-sm px-4 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer font-medium"
+            >
+              {createMutation.isPending ? "Đang tạo..." : "Tạo & gán"}
+            </button>
+            <button
+              type="button"
+              onClick={() => { setShowCreate(false); setNewName(""); setCreateError(""); }}
+              className="text-sm px-3 py-1.5 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 cursor-pointer"
+            >
+              Hủy
+            </button>
+          </div>
+        </form>
+      ) : (
         <button
-          key={c.key}
           type="button"
-          onClick={() => onChange(c.key)}
-          className={`w-5 h-5 rounded-full ${c.dot} transition-transform ${value === c.key ? "ring-2 ring-offset-1 ring-gray-400 scale-110" : "hover:scale-110"}`}
-          title={c.key}
-        />
-      ))}
+          onClick={() => setShowCreate(true)}
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 transition-colors cursor-pointer"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+          Tạo thể loại mới
+        </button>
+      )}
     </div>
   );
 }

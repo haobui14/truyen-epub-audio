@@ -11,9 +11,11 @@ import type {
 } from "@/types";
 
 // Prevent multiple concurrent refresh attempts
-let refreshPromise: Promise<boolean> | null = null;
+// Returns: true = success, false = auth error (token invalid → should logout),
+//          null = network/server error (Railway cold start etc. → do NOT logout)
+let refreshPromise: Promise<boolean | null> | null = null;
 
-export async function tryRefreshToken(): Promise<boolean> {
+export async function tryRefreshToken(): Promise<boolean | null> {
   if (refreshPromise) return refreshPromise;
   refreshPromise = (async () => {
     const refreshToken = getRefreshToken();
@@ -24,6 +26,7 @@ export async function tryRefreshToken(): Promise<boolean> {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refresh_token: refreshToken }),
       });
+      // Server explicitly rejected the token — it is invalid, safe to logout.
       if (!res.ok) return false;
       const data = await res.json();
       const user = getUser();
@@ -37,7 +40,9 @@ export async function tryRefreshToken(): Promise<boolean> {
       }
       return false;
     } catch {
-      return false;
+      // Network/timeout error (e.g. Railway cold start, screen-off on Android).
+      // Return null so callers know NOT to clear auth — user can retry.
+      return null;
     } finally {
       refreshPromise = null;
     }
@@ -56,14 +61,18 @@ async function request<T>(path: string, init?: RequestInit, _retry = true): Prom
     if (res.status === 401 && token && _retry) {
       // Token expired — try to refresh once, then retry the original request.
       const refreshed = await tryRefreshToken();
-      if (refreshed) {
+      if (refreshed === true) {
         return request<T>(path, init, false); // retry with new token, no further refresh
       }
-      // Refresh also failed — clear auth and surface the error
-      clearAuth();
+      // refreshed === false: server confirmed token is invalid → clear auth.
+      // refreshed === null: network error (cold start etc.) → keep auth, surface error.
+      if (refreshed === false) clearAuth();
     }
     const err = await res.text();
     throw new Error(err || `HTTP ${res.status}`);
+  }
+  if (res.status === 204 || res.headers.get("content-length") === "0") {
+    return undefined as T;
   }
   return res.json();
 }
@@ -74,10 +83,11 @@ export const api = {
   getBook: (id: string) => request<Book>(`/api/books/${id}`),
   deleteBook: (id: string) =>
     request<{ message: string }>(`/api/books/${id}`, { method: "DELETE" }),
-  updateBook: (id: string, fields: { title?: string; author?: string; cover?: File | null }) => {
+  updateBook: (id: string, fields: { title?: string; author?: string; description?: string; cover?: File | null }) => {
     const form = new FormData();
     if (fields.title !== undefined) form.append("title", fields.title);
     if (fields.author !== undefined) form.append("author", fields.author);
+    if (fields.description !== undefined) form.append("description", fields.description);
     if (fields.cover) form.append("cover", fields.cover);
     return request<Book>(`/api/books/${id}`, { method: "PATCH", body: form });
   },
@@ -111,6 +121,28 @@ export const api = {
     request<{ id: string; text_content: string }>(
       `/api/chapters/${chapterId}/text`,
     ),
+  updateChapterText: (chapterId: string, text_content: string) =>
+    request<{ id: string; word_count: number }>(`/api/chapters/${chapterId}/text`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text_content }),
+    }),
+  deleteChapter: (chapterId: string) =>
+    request<{ deleted: string; total_chapters: number }>(`/api/chapters/${chapterId}`, {
+      method: "DELETE",
+    }),
+  updateChapter: (chapterId: string, fields: { title?: string; chapter_index?: number; text_content?: string }) =>
+    request<{ id: string; chapter_index: number; title: string; word_count: number }>(`/api/chapters/${chapterId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(fields),
+    }),
+  bulkDeleteChapters: (chapterIds: string[]) =>
+    request<{ deleted: number; book_totals: Record<string, number> }>(`/api/chapters/bulk-delete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chapter_ids: chapterIds }),
+    }),
 
   // TTS
   getTtsStatus: (bookId: string) =>

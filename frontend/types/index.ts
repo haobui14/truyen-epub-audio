@@ -9,6 +9,7 @@ export interface Book {
   id: string;
   title: string;
   author?: string;
+  description?: string;
   cover_url?: string;
   voice: string;
   status: "pending" | "parsing" | "parsed" | "converting" | "ready" | "error";

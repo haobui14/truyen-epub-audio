@@ -4,12 +4,16 @@ CREATE TABLE IF NOT EXISTS books (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     title           TEXT NOT NULL,
     author          TEXT,
+    description     TEXT,
     cover_url       TEXT,
     voice           TEXT NOT NULL DEFAULT 'vi-VN-HoaiMyNeural',
     status          TEXT NOT NULL DEFAULT 'pending',
     total_chapters  INTEGER DEFAULT 0,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Migration: add description column if upgrading from an older schema
+ALTER TABLE books ADD COLUMN IF NOT EXISTS description TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_books_created_at ON books(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_books_status ON books(status);
@@ -135,3 +139,82 @@ USING (bucket_id = 'covers');
 -- 1. "epub-uploads" → private
 -- 2. "audio"        → public
 -- 3. "covers"       → public
+
+-- ============================================================
+-- Helper function: bulk re-index chapters after a deletion
+-- Run this in Supabase SQL Editor
+-- ============================================================
+-- Shift all chapters with chapter_index >= p_insert_index up by 1
+-- to make room for a new chapter being inserted at that position.
+CREATE OR REPLACE FUNCTION shift_chapters_up(
+    p_book_id UUID,
+    p_insert_index INT
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+    -- Pass 1: shift affected indices to a large range to avoid unique conflicts
+    -- when incrementing (e.g. 2→3 would collide with existing 3).
+    UPDATE chapters
+    SET chapter_index = chapter_index + 1000000
+    WHERE book_id = p_book_id
+      AND chapter_index >= p_insert_index;
+
+    -- Pass 2: bring them back to their final values (+1 from original).
+    UPDATE chapters
+    SET chapter_index = chapter_index - 1000000 + 1
+    WHERE book_id = p_book_id
+      AND chapter_index >= 1000000;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION reindex_chapters_after_delete(
+    p_book_id UUID,
+    p_deleted_index INT
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+    -- Pass 1: shift affected indices to negative to avoid unique constraint
+    -- conflicts when decrementing (e.g. 4→3 would collide with existing 3).
+    UPDATE chapters
+    SET chapter_index = -(chapter_index - 1)
+    WHERE book_id = p_book_id
+      AND chapter_index > p_deleted_index;
+
+    -- Pass 2: flip negatives to their final positive values.
+    UPDATE chapters
+    SET chapter_index = -chapter_index
+    WHERE book_id = p_book_id
+      AND chapter_index < 0;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION reindex_all_chapters(p_book_id UUID)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+    -- Pass 1: shift all indices to a large range so pass 2 assignments
+    -- (0, 1, 2, ...) never collide with the shifted values.
+    UPDATE chapters
+    SET chapter_index = chapter_index + 1000000
+    WHERE book_id = p_book_id;
+
+    -- Pass 2: assign sequential indices starting from 0, preserving order.
+    UPDATE chapters
+    SET chapter_index = subq.new_index
+    FROM (
+        SELECT id,
+               (ROW_NUMBER() OVER (ORDER BY chapter_index ASC) - 1)::int AS new_index
+        FROM chapters
+        WHERE book_id = p_book_id
+    ) subq
+    WHERE chapters.id = subq.id;
+END;
+$$;

@@ -1,15 +1,14 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { useRouter, usePathname } from "next/navigation";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { usePathname } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { isLoggedIn, isAdmin } from "@/lib/auth";
 import { ChapterList } from "@/components/books/ChapterList";
-import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Spinner } from "@/components/ui/Spinner";
-import { GenreTag, GenreManager } from "@/components/books/GenreManager";
+import { GenreTag } from "@/components/books/GenreManager";
 import {
   cacheChapterText,
   isChapterTextCached,
@@ -18,17 +17,12 @@ import {
 export default function BookDetailPage() {
   const bookId = usePathname().split("/")[2];
   const [page, setPage] = useState(1);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [admin, setAdmin] = useState(false);
-  const [showAdminPanel, setShowAdminPanel] = useState(false);
-  const [adminTab, setAdminTab] = useState<"info" | "genres" | "chapter">("info");
   const [dlProgress, setDlProgress] = useState<{
     done: number;
     total: number;
   } | null>(null);
   const [dlDone, setDlDone] = useState(false);
-  const router = useRouter();
-  const queryClient = useQueryClient();
 
   useEffect(() => {
     const sync = () => setAdmin(isAdmin());
@@ -36,14 +30,6 @@ export default function BookDetailPage() {
     window.addEventListener("auth-change", sync);
     return () => window.removeEventListener("auth-change", sync);
   }, []);
-
-  const deleteMutation = useMutation({
-    mutationFn: () => api.deleteBook(bookId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["books"] });
-      router.push("/");
-    },
-  });
 
   const {
     data: book,
@@ -193,27 +179,15 @@ export default function BookDetailPage() {
           </span>
         </div>
         {admin && (
-        <div className="flex items-center gap-1.5 shrink-0 ml-3">
-          <button
-            onClick={() => setShowDeleteConfirm(true)}
-            className="p-2 rounded-lg text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
-            title="Xóa truyện"
+          <Link
+            href={`/admin/books/${bookId}/edit`}
+            className="shrink-0 ml-3 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 border border-indigo-300 dark:border-indigo-700 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors"
           >
-            <svg
-              className="w-5 h-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-              />
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
             </svg>
-          </button>
-        </div>
+            Chỉnh sửa
+          </Link>
         )}
       </nav>
 
@@ -257,7 +231,11 @@ export default function BookDetailPage() {
                   {book.author}
                 </p>
               )}
-              <div className="flex flex-wrap items-center gap-2 text-xs text-gray-400 dark:text-gray-500 mb-3">
+              {book.description && (
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-3 leading-relaxed line-clamp-3">
+                  {book.description}
+                </p>
+              )}              <div className="flex flex-wrap items-center gap-2 text-xs text-gray-400 dark:text-gray-500 mb-3">
                 {book.total_chapters > 0 && (
                   <span className="flex items-center gap-1">
                     <svg
@@ -287,61 +265,6 @@ export default function BookDetailPage() {
           </div>
         </div>
 
-        {/* Admin panel */}
-        {admin && (
-          <div className="border-t border-gray-100 dark:border-gray-700">
-            <button
-              onClick={() => setShowAdminPanel((v) => !v)}
-              className="w-full flex items-center justify-between px-5 sm:px-6 py-3 text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors"
-            >
-              <span className="flex items-center gap-1.5">
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-                Quản trị
-              </span>
-              <svg className={`w-4 h-4 transition-transform ${showAdminPanel ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
-
-            {showAdminPanel && (
-              <div className="px-5 sm:px-6 pb-5">
-                {/* Tabs */}
-                <div className="flex gap-1 mb-4 bg-gray-100 dark:bg-gray-700/50 p-1 rounded-lg">
-                  {(["info", "genres", "chapter"] as const).map((tab) => (
-                    <button
-                      key={tab}
-                      onClick={() => setAdminTab(tab)}
-                      className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                        adminTab === tab
-                          ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm"
-                          : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
-                      }`}
-                    >
-                      {tab === "info" ? "Thông tin" : tab === "genres" ? "Thể loại" : "Thêm chương"}
-                    </button>
-                  ))}
-                </div>
-
-                {adminTab === "info" && (
-                  <BookInfoEditor bookId={bookId} book={book} onSaved={() => queryClient.invalidateQueries({ queryKey: ["book", bookId] })} />
-                )}
-                {adminTab === "genres" && (
-                  <GenreManager bookId={bookId} assignedGenres={book.genres ?? []} />
-                )}
-                {adminTab === "chapter" && (
-                  <AddChapterForm bookId={bookId} onSaved={() => {
-                    queryClient.invalidateQueries({ queryKey: ["chapters", bookId] });
-                    queryClient.invalidateQueries({ queryKey: ["book", bookId] });
-                  }} />
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
         {/* Action buttons */}
         {isParsing ? (
           <div className="flex items-center gap-3 mx-5 sm:mx-6 mb-5 sm:mb-6 px-4 py-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50">
@@ -357,14 +280,14 @@ export default function BookDetailPage() {
           </div>
         ) : firstChapter ? (
           <div className="flex flex-col gap-3 mx-5 sm:mx-6 mb-5 sm:mb-6">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Link
                 href={
                   listenResumeId
                     ? `/books/${bookId}/listen?chapter=${listenResumeId}`
                     : "#"
                 }
-                className="flex items-center gap-3 px-4 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 transition-colors text-white group"
+                className="flex items-center gap-3 px-4 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 active:scale-[0.98] transition-all text-white group"
               >
                 <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center shrink-0 group-hover:bg-white/30 transition-colors">
                   <svg
@@ -392,7 +315,7 @@ export default function BookDetailPage() {
                     ? `/books/${bookId}/read?chapter=${readResumeId}`
                     : "#"
                 }
-                className="flex items-center gap-3 px-4 py-3.5 rounded-xl bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors text-gray-800 dark:text-gray-200 group"
+                className="flex items-center gap-3 px-4 py-3.5 rounded-xl bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 active:bg-gray-300 dark:active:bg-gray-500 active:scale-[0.98] transition-all text-gray-800 dark:text-gray-200 group"
               >
                 <div className="w-10 h-10 rounded-full bg-gray-200 dark:bg-gray-600 flex items-center justify-center shrink-0 group-hover:bg-gray-300 dark:group-hover:bg-gray-500 transition-colors">
                   <svg
@@ -508,180 +431,6 @@ export default function BookDetailPage() {
           />
         )}
       </div>
-
-      <ConfirmDialog
-        open={showDeleteConfirm}
-        title="Xóa truyện?"
-        message={`Bạn có chắc muốn xóa "${book.title}"? Tất cả dữ liệu bao gồm file EPUB, ảnh bìa và audio sẽ bị xóa vĩnh viễn.`}
-        confirmLabel={
-          deleteMutation.isPending ? "Đang xóa..." : "Xóa truyện"
-        }
-        onConfirm={() => {
-          deleteMutation.mutate();
-          setShowDeleteConfirm(false);
-        }}
-        onCancel={() => setShowDeleteConfirm(false)}
-      />
     </div>
-  );
-}
-
-// ---------- BookInfoEditor ----------
-function BookInfoEditor({
-  bookId,
-  book,
-  onSaved,
-}: {
-  bookId: string;
-  book: { title: string; author?: string | null; cover_url?: string | null };
-  onSaved: () => void;
-}) {
-  const [title, setTitle] = useState(book.title);
-  const [author, setAuthor] = useState(book.author ?? "");
-  const [cover, setCover] = useState<File | null>(null);
-  const [coverPreview, setCoverPreview] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  const handleCover = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0] ?? null;
-    setCover(f);
-    setCoverPreview(f ? URL.createObjectURL(f) : null);
-  };
-
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    setError(null);
-    setSuccess(false);
-    try {
-      await api.updateBook(bookId, { title, author: author || undefined, cover });
-      onSaved();
-      setSuccess(true);
-      setCover(null);
-      setCoverPreview(null);
-      if (fileRef.current) fileRef.current.value = "";
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Lưu thất bại");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <form onSubmit={handleSave} className="space-y-3">
-      <div>
-        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Tên truyện</label>
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          required
-          className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-        />
-      </div>
-      <div>
-        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Tác giả</label>
-        <input
-          value={author}
-          onChange={(e) => setAuthor(e.target.value)}
-          placeholder="Không rõ"
-          className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-        />
-      </div>
-      <div>
-        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Ảnh bìa</label>
-        <div className="flex items-center gap-3">
-          {(coverPreview ?? book.cover_url) && (
-            <img
-              src={coverPreview ?? book.cover_url!}
-              alt="cover"
-              className="w-12 h-16 object-cover rounded-lg border border-gray-200 dark:border-gray-700 shrink-0"
-            />
-          )}
-          <label className="flex-1 cursor-pointer">
-            <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 hover:border-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors text-xs text-gray-500 dark:text-gray-400">
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-              </svg>
-              {cover ? cover.name : "Thay ảnh bìa…"}
-            </div>
-            <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={handleCover} className="sr-only" />
-          </label>
-        </div>
-      </div>
-      {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
-      {success && <p className="text-xs text-emerald-600 dark:text-emerald-400">Đã lưu thành công!</p>}
-      <button
-        type="submit"
-        disabled={saving}
-        className="flex items-center gap-1.5 bg-indigo-600 text-white text-xs font-medium px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-60 transition-colors"
-      >
-        {saving && <Spinner className="w-3 h-3" />}
-        {saving ? "Đang lưu…" : "Lưu thay đổi"}
-      </button>
-    </form>
-  );
-}
-
-// ---------- AddChapterForm ----------
-function AddChapterForm({ bookId, onSaved }: { bookId: string; onSaved: () => void }) {
-  const [chapterIndex, setChapterIndex] = useState("");
-  const [title, setTitle] = useState("");
-  const [textContent, setTextContent] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const index = parseInt(chapterIndex, 10);
-    if (isNaN(index) || index < 1) { setError("Số chương phải là số nguyên dương."); return; }
-    setSaving(true);
-    setError(null);
-    setSuccess(false);
-    try {
-      await api.createChapter(bookId, { chapter_index: index, title: title.trim(), text_content: textContent.trim() });
-      onSaved();
-      setSuccess(true);
-      setChapterIndex("");
-      setTitle("");
-      setTextContent("");
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Lỗi không xác định";
-      setError(msg.includes("409") || msg.toLowerCase().includes("conflict") ? `Chương số ${chapterIndex} đã tồn tại.` : msg);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-3">
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Số chương</label>
-          <input type="number" min={1} value={chapterIndex} onChange={(e) => setChapterIndex(e.target.value)} required placeholder="1"
-            className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Tiêu đề</label>
-          <input value={title} onChange={(e) => setTitle(e.target.value)} required placeholder="Chương 1: …"
-            className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-        </div>
-      </div>
-      <div>
-        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Nội dung</label>
-        <textarea value={textContent} onChange={(e) => setTextContent(e.target.value)} required rows={8} placeholder="Nhập nội dung chương…"
-          className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-y font-mono leading-relaxed" />
-      </div>
-      {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
-      {success && <p className="text-xs text-emerald-600 dark:text-emerald-400">Đã thêm chương thành công!</p>}
-      <button type="submit" disabled={saving}
-        className="flex items-center gap-1.5 bg-indigo-600 text-white text-xs font-medium px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-60 transition-colors">
-        {saving && <Spinner className="w-3 h-3" />}
-        {saving ? "Đang lưu…" : "Thêm chương"}
-      </button>
-    </form>
   );
 }

@@ -71,7 +71,7 @@ async def upload_book(
     cover_url: Optional[str] = None
     if cover_content:
         cext = cover_content_type.split("/")[-1].replace("jpeg", "jpg")  # type: ignore[union-attr]
-        cover_path = f"covers/{book_id}/cover.{cext}"
+        cover_path = f"{book_id}/cover.{cext}"
         try:
             cover_url = await storage_service.upload_bytes(
                 bucket="covers",
@@ -93,7 +93,7 @@ async def upload_book(
     }).execute()
 
     # Store the original file
-    storage_path = f"epub-uploads/{book_id}/original{ext}"
+    storage_path = f"{book_id}/original{ext}"
     orig_content_type = {
         ".epub": "application/epub+zip",
         ".pdf": "application/pdf",

@@ -16,6 +16,7 @@ import {
 } from "@/lib/chapterTextCache";
 import { getLocalProgress, saveLocalBookProgress, syncBookProgressToServer } from "@/lib/progressQueue";
 import { useProgressSync } from "@/hooks/useProgressSync";
+import { getUser } from "@/lib/auth";
 import { prefetchNextChapterAudio } from "@/hooks/useSpeechPlayer";
 import { getTtsBridge } from "@/lib/backgroundLock";
 import { splitIntoChunks as splitChunks } from "@/lib/textChunks";
@@ -215,6 +216,11 @@ export default function ListenPage() {
   const [isCached, setIsCached] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [showText, setShowText] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editText, setEditText] = useState("");
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const isAdmin = getUser()?.role === "admin";
   const activeChunkRef = useRef<HTMLDivElement>(null);
   const activeChapterRef = useRef<HTMLButtonElement>(null);
   const chapterListScrolledRef = useRef(false);
@@ -419,6 +425,28 @@ export default function ListenPage() {
     await cacheChapterText(chapterId, chapterTextContent);
     setIsCached(true);
     setIsSaving(false);
+  }
+
+  function handleOpenEdit() {
+    setEditText(chapterTextContent ?? "");
+    setEditError(null);
+    setShowEditModal(true);
+  }
+
+  async function handleSaveEdit() {
+    if (!chapterId) return;
+    setIsSavingEdit(true);
+    setEditError(null);
+    try {
+      await api.updateChapterText(chapterId, editText);
+      // Update React Query cache so player uses new text immediately
+      queryClient.setQueryData(["chapterText", chapterId], { id: chapterId, text_content: editText });
+      setShowEditModal(false);
+    } catch (e) {
+      setEditError(e instanceof Error ? e.message : "Lỗi lưu văn bản");
+    } finally {
+      setIsSavingEdit(false);
+    }
   }
 
   const latestRef = useRef({
@@ -664,6 +692,18 @@ export default function ListenPage() {
             )}
             {isCached ? "Đã lưu offline" : "Lưu offline"}
           </button>
+
+          {isAdmin && (
+            <button
+              onClick={handleOpenEdit}
+              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-amber-400 hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+              Sửa văn bản
+            </button>
+          )}
         </div>
       )}
 
@@ -712,6 +752,52 @@ export default function ListenPage() {
                 {ch.title}
               </button>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Edit chapter text modal */}
+      {showEditModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-800">
+              <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-100">
+                Sửa văn bản — {currentChapter?.title}
+              </h2>
+              <button
+                onClick={() => setShowEditModal(false)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <textarea
+              className="flex-1 resize-none px-5 py-4 text-sm text-gray-800 dark:text-gray-100 bg-transparent focus:outline-none font-mono leading-relaxed overflow-y-auto"
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              spellCheck={false}
+            />
+            {editError && (
+              <p className="px-5 py-2 text-xs text-red-500">{editError}</p>
+            )}
+            <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-gray-100 dark:border-gray-800">
+              <button
+                onClick={() => setShowEditModal(false)}
+                className="text-sm px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handleSaveEdit}
+                disabled={isSavingEdit}
+                className="text-sm px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-medium transition-colors flex items-center gap-2"
+              >
+                {isSavingEdit && <Spinner className="w-3.5 h-3.5" />}
+                Lưu
+              </button>
+            </div>
           </div>
         </div>
       )}

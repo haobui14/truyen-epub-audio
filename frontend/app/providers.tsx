@@ -85,6 +85,20 @@ export function Providers({ children }: { children: React.ReactNode }) {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, [queryClient]);
 
+  // Proactively refresh the access token every 45 minutes while the app is
+  // open. Supabase access tokens expire after 1 hour; refreshing at 45 min
+  // ensures the token never actually expires during an active session, avoiding
+  // the reactive 401 → refresh path which can fail on cold Railway starts.
+  useEffect(() => {
+    const REFRESH_INTERVAL_MS = 45 * 60 * 1000; // 45 minutes
+    const id = setInterval(async () => {
+      if (isLoggedIn() && getRefreshToken()) {
+        await tryRefreshToken();
+      }
+    }, REFRESH_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, []);
+
   // Flush queued offline progress when connectivity is restored
   useEffect(() => {
     const handleOnline = () => {
