@@ -1,6 +1,5 @@
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useProgressSync } from "@/hooks/useProgressSync";
 import { isNativePlatform } from "@/lib/capacitor";
 import {
   acquireBackgroundLock,
@@ -77,11 +76,6 @@ export function useNativeTTSPlayer(
   // Prevents the reset effect from stopping the already-playing service.
   const chapterAdvancedRef = useRef(false);
 
-  const { reportProgress: reportListenProgress } = useProgressSync({
-    bookId,
-    chapterId,
-  });
-
   const chapterIdRef = useRef(chapterId);
   chapterIdRef.current = chapterId;
   const chapterTitleRef = useRef(chapterTitle);
@@ -148,7 +142,6 @@ export function useNativeTTSPlayer(
       setChunkIndex(idx);
       chunkRef.current = idx;
       setIsBuffering(false);
-      reportListenProgress(idx, chunksRef.current.length);
     };
 
     const onChapterAdvance = () => {
@@ -212,7 +205,7 @@ export function useNativeTTSPlayer(
       window.removeEventListener("native-tts-done", onDone);
       window.removeEventListener("native-tts-state", onState);
     };
-  }, [isActive, reportListenProgress]);
+  }, [isActive]);
 
   // Reset when chapter / text / active state changes
   useEffect(() => {
@@ -423,13 +416,12 @@ export function useNativeTTSPlayer(
 
       setChunkIndex(idx);
       chunkRef.current = idx;
-      reportListenProgress(idx, chunksRef.current.length);
 
       if (playingRef.current) {
         startNativePlayback(idx);
       }
     },
-    [reportListenProgress, startNativePlayback],
+    [startNativePlayback],
   );
 
   const progress =

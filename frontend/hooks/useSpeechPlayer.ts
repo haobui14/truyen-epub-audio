@@ -1,7 +1,6 @@
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { API_URL } from "@/lib/constants";
-import { useProgressSync } from "@/hooks/useProgressSync";
 import { getCachedAudioUrl } from "@/lib/audioFileCache";
 import { splitIntoChunks } from "@/lib/textChunks";
 
@@ -154,11 +153,6 @@ export function useSpeechPlayer(
     };
   }, []);
 
-  const { reportProgress: reportListenProgress } = useProgressSync({
-    bookId,
-    chapterId,
-  });
-
   // Create audio element once
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -200,7 +194,6 @@ export function useSpeechPlayer(
         if (!audio.duration) return;
         setChunkIndex(Math.floor(audio.currentTime));
         setTotalChunks(Math.floor(audio.duration));
-        reportListenProgress(audio.currentTime, audio.duration);
       };
       audio.ontimeupdate = updateProgress;
       audio.onloadedmetadata = () => {
@@ -235,7 +228,7 @@ export function useSpeechPlayer(
           });
       }
     },
-    [reportListenProgress],
+    [],
   );
 
   // playChunk defined via ref to avoid stale closures in recursive calls
@@ -273,7 +266,6 @@ export function useSpeechPlayer(
       setIsBuffering(false);
       setChunkIndex(index);
       chunkRef.current = index;
-      reportListenProgress(index, chunksRef.current.length);
 
       try {
         await audio.play();
@@ -469,7 +461,6 @@ export function useSpeechPlayer(
 
       setChunkIndex(idx);
       chunkRef.current = idx;
-      reportListenProgress(idx, chunksRef.current.length);
 
       prefetch(idx);
       prefetch(idx + 1);
@@ -481,7 +472,7 @@ export function useSpeechPlayer(
         playChunkRef.current!(idx);
       }
     },
-    [prefetch, reportListenProgress],
+    [prefetch],
   );
 
   // When initialChunkIndex arrives late (async progress load), apply it if player hasn't started.

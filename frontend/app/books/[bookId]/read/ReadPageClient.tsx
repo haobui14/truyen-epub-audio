@@ -83,12 +83,17 @@ export default function ReadPage() {
     enabled: !!chapterId,
   });
 
-  // Fetch saved reading progress — falls back to offline queue
+  // Fetch saved reading progress — falls back to offline queue.
+  // Use getBookProgress (one row per book) and only restore if it's for THIS chapter.
+  // getChapterProgress queries by chapter_id but the DB stores only the latest chapter
+  // per book, so it returns null for any chapter that isn't the most recently visited.
   const { data: savedProgress } = useQuery({
-    queryKey: ["progress", chapterId],
+    queryKey: ["progress", bookId, chapterId],
     queryFn: async () => {
       try {
-        return await api.getChapterProgress(chapterId!);
+        const progress = await api.getBookProgress(bookId);
+        if (progress?.chapter_id === chapterId) return progress;
+        return null;
       } catch {
         const queued = await getLocalProgress(chapterId!);
         if (queued) {

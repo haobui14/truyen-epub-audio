@@ -127,6 +127,17 @@ export async function saveLocalBookProgress(
     if (existing && existing.chapter_index > entry.chapter_index) {
       return; // Local already has a more recent chapter
     }
+    // Don't overwrite real progress with a zero-reset when the chapter is the same.
+    // This prevents chapter remounts (which call saveLocalBookProgress with progress_value: 0)
+    // from erasing the actual playback position before the debounced flush fires.
+    if (
+      existing &&
+      existing.chapter_index === entry.chapter_index &&
+      entry.progress_value === 0 &&
+      existing.progress_value > 0
+    ) {
+      return;
+    }
 
     const tx2 = db.transaction(LOCAL_STORE, "readwrite");
     tx2.objectStore(LOCAL_STORE).put({ ...entry, id, updated_at: Date.now() });

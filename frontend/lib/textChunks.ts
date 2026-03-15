@@ -2,14 +2,13 @@
  * Split text into approximately `targetCount` chunks at sentence boundaries.
  * `hardMaxLen` caps each chunk's character count (TTS engine stability limit).
  *
- * Fewer chunks = fewer TTS engine restart gaps.
- * Default: ~5 chunks per chapter with up to 4000 chars each.
- * Native TTS engines handle long text well; the chunking is mainly
+ * Default: 20 chunks per chapter so each chunk = 5% of progress.
+ * Native TTS engines handle long text well; chunking is mainly
  * for progress tracking and seek granularity.
  */
 export function splitIntoChunks(
   text: string,
-  targetCount = 5,
+  targetCount = 20,
   hardMaxLen = 4000,
 ): string[] {
   const sentences = text.match(/[^.!?\n]+[.!?\n]*/g) ?? [text];

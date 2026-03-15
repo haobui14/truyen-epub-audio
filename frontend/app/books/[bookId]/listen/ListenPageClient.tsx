@@ -64,12 +64,17 @@ export default function ListenPage() {
     staleTime: Infinity,
   });
 
-  // Fetch saved listening progress — falls back to offline queue
+  // Fetch saved listening progress — falls back to offline queue.
+  // Use getBookProgress (one row per book) and only restore if it's for THIS chapter.
+  // getChapterProgress queries by chapter_id but the DB stores only the latest chapter
+  // per book, so it returns null for any chapter that isn't the most recently visited.
   const { data: listenProgress } = useQuery({
-    queryKey: ["progress", chapterId],
+    queryKey: ["progress", bookId, chapterId],
     queryFn: async () => {
       try {
-        return await api.getChapterProgress(chapterId!);
+        const progress = await api.getBookProgress(bookId);
+        if (progress?.chapter_id === chapterId) return progress;
+        return null;
       } catch {
         const queued = await getLocalProgress(chapterId!);
         if (queued) {
@@ -216,6 +221,7 @@ export default function ListenPage() {
   const [isCached, setIsCached] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [showText, setShowText] = useState(false);
+  const [chapterSearch, setChapterSearch] = useState("");
   const [showEditModal, setShowEditModal] = useState(false);
   const [editText, setEditText] = useState("");
   const [isSavingEdit, setIsSavingEdit] = useState(false);
@@ -731,28 +737,79 @@ export default function ListenPage() {
       {/* Chapter list */}
       {allChapters.length > 1 && (
         <div className="mt-6">
-          <p className="text-[11px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-2 px-1">
-            Danh sách chương
-          </p>
-          <div className="max-h-60 overflow-y-auto rounded-xl border border-gray-100 dark:border-gray-800 divide-y divide-gray-100 dark:divide-gray-800">
-            {allChapters.map((ch) => (
-              <button
-                key={ch.id}
-                ref={ch.id === chapterId ? activeChapterRef : null}
-                onClick={() => navigateTo(ch)}
-                className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
-                  ch.id === chapterId
-                    ? "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-medium"
-                    : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60"
-                }`}
-              >
-                <span className="text-[11px] font-mono text-gray-300 dark:text-gray-600 mr-2 tabular-nums">
-                  {String(ch.chapter_index + 1).padStart(2, "0")}
-                </span>
-                {ch.title}
-              </button>
-            ))}
+          <div className="flex items-center justify-between mb-2 px-1">
+            <p className="text-[11px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">
+              Danh sách chương
+            </p>
+            <span className="text-[11px] text-gray-300 dark:text-gray-600 tabular-nums">
+              {allChapters.length} chương
+            </span>
           </div>
+          {/* Search box */}
+          <div className="relative mb-2">
+            <svg
+              className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-300 dark:text-gray-600 pointer-events-none"
+              fill="none" stroke="currentColor" viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" />
+            </svg>
+            <input
+              type="text"
+              value={chapterSearch}
+              onChange={(e) => setChapterSearch(e.target.value)}
+              placeholder="Tìm chương..."
+              className="w-full pl-8 pr-8 py-2 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 placeholder-gray-300 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-400 dark:focus:border-indigo-600 transition-colors"
+            />
+            {chapterSearch && (
+              <button
+                onClick={() => setChapterSearch("")}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 transition-colors"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+          {/* Chapter rows */}
+          {(() => {
+            const q = chapterSearch.trim().toLowerCase();
+            const filtered = q
+              ? allChapters.filter(
+                  (ch) =>
+                    ch.title.toLowerCase().includes(q) ||
+                    String(ch.chapter_index + 1).includes(q),
+                )
+              : allChapters;
+            return (
+              <div className="max-h-60 overflow-y-auto rounded-xl border border-gray-100 dark:border-gray-800 divide-y divide-gray-100 dark:divide-gray-800">
+                {filtered.length === 0 ? (
+                  <p className="px-4 py-4 text-xs text-gray-400 dark:text-gray-500 text-center">
+                    Không tìm thấy chương nào
+                  </p>
+                ) : (
+                  filtered.map((ch) => (
+                    <button
+                      key={ch.id}
+                      ref={ch.id === chapterId ? activeChapterRef : null}
+                      onClick={() => navigateTo(ch)}
+                      className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
+                        ch.id === chapterId
+                          ? "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-medium"
+                          : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60"
+                      }`}
+                    >
+                      <span className="text-[11px] font-mono text-gray-300 dark:text-gray-600 mr-2 tabular-nums">
+                        {String(ch.chapter_index + 1).padStart(2, "0")}
+                      </span>
+                      {ch.title}
+                    </button>
+                  ))
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
 
