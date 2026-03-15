@@ -1,8 +1,12 @@
 from typing import Optional
 
 from fastapi import Header, HTTPException
+from jose import JWTError, jwt
 
+from app.config import settings
 from app.database import get_client
+
+_ALGORITHM = "HS256"
 
 
 def _lookup_role(user_id: str) -> str:
@@ -23,17 +27,15 @@ async def get_current_user(authorization: str = Header(...)) -> dict:
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Invalid authorization header")
     token = authorization[7:]
-    db = get_client()
     try:
-        user_response = db.auth.get_user(token)
-        if not user_response or not user_response.user:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[_ALGORITHM])
+        user_id: str = payload.get("sub")
+        email: str = payload.get("email", "")
+        if not user_id:
             raise HTTPException(status_code=401, detail="Invalid token")
-        user_id = str(user_response.user.id)
         role = _lookup_role(user_id)
-        return {"id": user_id, "email": user_response.user.email, "role": role}
-    except HTTPException:
-        raise
-    except Exception:
+        return {"id": user_id, "email": email, "role": role}
+    except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 

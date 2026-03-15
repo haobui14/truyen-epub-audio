@@ -41,7 +41,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       // that path ends in: 401 → tryRefreshToken() fails → clearAuth() → logout.
       // Instead, leave auth as-is and let the user keep their session until
       // they perform a real authenticated action with network available.
-      // (Requires Supabase refresh token expiry ≥ 15552000 s / 180 days.)
+      // (Access tokens expire in 1 hour; refresh tokens last 90 days.)
       let tokenOk = isLoggedIn() && !getRefreshToken(); // no refresh token = rely on existing access token
       if (isLoggedIn() && getRefreshToken()) {
         tokenOk = (await tryRefreshToken()) === true;
@@ -86,9 +86,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
   }, [queryClient]);
 
   // Proactively refresh the access token every 45 minutes while the app is
-  // open. Supabase access tokens expire after 1 hour; refreshing at 45 min
-  // ensures the token never actually expires during an active session, avoiding
-  // the reactive 401 → refresh path which can fail on cold Railway starts.
+  // open. Access tokens expire after 1 hour; refreshing at 45 min ensures the
+  // token never actually expires during an active session, avoiding the
+  // reactive 401 → refresh path which can fail on cold Railway starts.
   useEffect(() => {
     const REFRESH_INTERVAL_MS = 45 * 60 * 1000; // 45 minutes
     const id = setInterval(async () => {
