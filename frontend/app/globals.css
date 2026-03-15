@@ -13,6 +13,7 @@
 body {
   font-family: var(--font-geist-sans), system-ui, sans-serif;
   padding-top: var(--sat);
+  padding-bottom: var(--sab);
   padding-left: var(--sal);
   padding-right: var(--sar);
 }
