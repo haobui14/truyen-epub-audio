@@ -66,89 +66,113 @@ def _revoke_refresh_token(token: str) -> None:
 @router.post("/signup", response_model=AuthResponse)
 async def signup(body: AuthRequest):
     db = get_client()
-    existing = db.table("users").select("id").eq("email", body.email).maybe_single().execute()
-    if existing.data:
-        raise HTTPException(status_code=400, detail="Email đã được đăng ký")
+    try:
+        existing = db.table("users").select("id").eq("email", body.email).maybe_single().execute()
+        if existing and existing.data:
+            raise HTTPException(status_code=400, detail="Email đã được đăng ký")
 
-    user_id = str(uuid.uuid4())
-    password_hash = _pwd_context.hash(body.password)
-    db.table("users").insert({
-        "id": user_id,
-        "email": body.email,
-        "password_hash": password_hash,
-    }).execute()
+        user_id = str(uuid.uuid4())
+        password_hash = _pwd_context.hash(body.password)
+        db.table("users").insert({
+            "id": user_id,
+            "email": body.email,
+            "password_hash": password_hash,
+        }).execute()
 
-    access_token = _create_access_token(user_id, body.email)
-    refresh_token = _create_refresh_token(user_id)
-    return AuthResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        user_id=user_id,
-        email=body.email,
-        role=_lookup_role(user_id),
-    )
+        access_token = _create_access_token(user_id, body.email)
+        refresh_token = _create_refresh_token(user_id)
+        return AuthResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            user_id=user_id,
+            email=body.email,
+            role=_lookup_role(user_id),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "not found" in error_msg or "does not exist" in error_msg:
+            raise HTTPException(status_code=500, detail="Database schema not initialized. Run the SQL migrations.")
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/login", response_model=AuthResponse)
 async def login(body: AuthRequest):
     db = get_client()
-    result = (
-        db.table("users")
-        .select("id, email, password_hash")
-        .eq("email", body.email)
-        .maybe_single()
-        .execute()
-    )
-    if not result.data or not _pwd_context.verify(body.password, result.data["password_hash"]):
-        raise HTTPException(status_code=401, detail="Email hoặc mật khẩu không đúng")
+    try:
+        result = (
+            db.table("users")
+            .select("id, email, password_hash")
+            .eq("email", body.email)
+            .maybe_single()
+            .execute()
+        )
+        if not result or not result.data or not _pwd_context.verify(body.password, result.data["password_hash"]):
+            raise HTTPException(status_code=401, detail="Email hoặc mật khẩu không đúng")
 
-    user_id = result.data["id"]
-    access_token = _create_access_token(user_id, result.data["email"])
-    refresh_token = _create_refresh_token(user_id)
-    return AuthResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        user_id=user_id,
-        email=result.data["email"],
-        role=_lookup_role(user_id),
-    )
+        user_id = result.data["id"]
+        access_token = _create_access_token(user_id, result.data["email"])
+        refresh_token = _create_refresh_token(user_id)
+        return AuthResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            user_id=user_id,
+            email=result.data["email"],
+            role=_lookup_role(user_id),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "not found" in error_msg or "does not exist" in error_msg:
+            raise HTTPException(status_code=500, detail="Database schema not initialized. Run the SQL migrations.")
+        raise HTTPException(status_code=401, detail="Lỗi đăng nhập")
 
 
 @router.post("/refresh", response_model=AuthResponse)
 async def refresh(body: RefreshRequest):
     db = get_client()
-    row = (
-        db.table("refresh_tokens")
-        .select("user_id, expires_at")
-        .eq("token", body.refresh_token)
-        .maybe_single()
-        .execute()
-    )
-    if not row.data:
-        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+    try:
+        row = (
+            db.table("refresh_tokens")
+            .select("user_id, expires_at")
+            .eq("token", body.refresh_token)
+            .maybe_single()
+            .execute()
+        )
+        if not row or not row.data:
+            raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
 
-    expires_at = datetime.fromisoformat(row.data["expires_at"].replace("Z", "+00:00"))
-    if datetime.now(timezone.utc) > expires_at:
+        expires_at = datetime.fromisoformat(row.data["expires_at"].replace("Z", "+00:00"))
+        if datetime.now(timezone.utc) > expires_at:
+            _revoke_refresh_token(body.refresh_token)
+            raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+
+        user_id = row.data["user_id"]
+        user_row = db.table("users").select("email").eq("id", user_id).maybe_single().execute()
+        if not user_row or not user_row.data:
+            raise HTTPException(status_code=401, detail="User not found")
+
+        email = user_row.data["email"]
+        # Rotate: revoke old token and issue a fresh one
         _revoke_refresh_token(body.refresh_token)
-        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
-
-    user_id = row.data["user_id"]
-    user_row = db.table("users").select("email").eq("id", user_id).maybe_single().execute()
-    if not user_row.data:
-        raise HTTPException(status_code=401, detail="User not found")
-
-    email = user_row.data["email"]
-    # Rotate: revoke old token and issue a fresh one
-    _revoke_refresh_token(body.refresh_token)
-    new_refresh_token = _create_refresh_token(user_id)
-    access_token = _create_access_token(user_id, email)
-    return AuthResponse(
-        access_token=access_token,
-        refresh_token=new_refresh_token,
-        user_id=user_id,
-        email=email,
-        role=_lookup_role(user_id),
-    )
+        new_refresh_token = _create_refresh_token(user_id)
+        access_token = _create_access_token(user_id, email)
+        return AuthResponse(
+            access_token=access_token,
+            refresh_token=new_refresh_token,
+            user_id=user_id,
+            email=email,
+            role=_lookup_role(user_id),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "not found" in error_msg or "does not exist" in error_msg:
+            raise HTTPException(status_code=500, detail="Database schema not initialized. Run the SQL migrations.")
+        raise HTTPException(status_code=401, detail="Token refresh failed")
 
 
 @router.get("/me")
