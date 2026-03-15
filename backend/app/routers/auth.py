@@ -108,17 +108,22 @@ async def login(body: AuthRequest):
             .maybe_single()
             .execute()
         )
-        if not result or not result.data or not _pwd_context.verify(body.password, result.data["password_hash"]):
+        if not result or not result.data:
+            raise HTTPException(status_code=401, detail="Email hoặc mật khẩu không đúng")
+        
+        user_data = result.data
+        password_hash = user_data.get("password_hash")
+        if not password_hash or not _pwd_context.verify(body.password, password_hash):
             raise HTTPException(status_code=401, detail="Email hoặc mật khẩu không đúng")
 
-        user_id = result.data["id"]
-        access_token = _create_access_token(user_id, result.data["email"])
+        user_id = user_data["id"]
+        access_token = _create_access_token(user_id, user_data["email"])
         refresh_token = _create_refresh_token(user_id)
         return AuthResponse(
             access_token=access_token,
             refresh_token=refresh_token,
             user_id=user_id,
-            email=result.data["email"],
+            email=user_data["email"],
             role=_lookup_role(user_id),
         )
     except HTTPException:

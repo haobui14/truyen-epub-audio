@@ -11,15 +11,20 @@ _ALGORITHM = "HS256"
 
 def _lookup_role(user_id: str) -> str:
     """Return 'admin' or 'user' for the given user_id."""
-    db = get_client()
-    result = (
-        db.table("user_roles")
-        .select("role")
-        .eq("user_id", user_id)
-        .maybe_single()
-        .execute()
-    )
-    return result.data["role"] if result.data else "user"
+    try:
+        db = get_client()
+        result = (
+            db.table("user_roles")
+            .select("role")
+            .eq("user_id", user_id)
+            .maybe_single()
+            .execute()
+        )
+        if result and result.data and "role" in result.data:
+            return result.data["role"]
+    except Exception:
+        pass  # Fall through to default
+    return "user"
 
 
 async def get_current_user(authorization: str = Header(...)) -> dict:
