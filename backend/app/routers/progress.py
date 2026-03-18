@@ -121,7 +121,7 @@ async def get_book_progress(
         .maybe_single()
         .execute()
     )
-    if not result.data:
+    if not result or not result.data:
         return None
     row = result.data
     ch = (

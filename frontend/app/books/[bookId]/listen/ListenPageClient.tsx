@@ -1,5 +1,12 @@
 "use client";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useMemo } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useMemo,
+} from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -14,7 +21,11 @@ import {
   isChapterTextCached,
   getCachedChapterText,
 } from "@/lib/chapterTextCache";
-import { getLocalProgress, saveLocalBookProgress, syncBookProgressToServer } from "@/lib/progressQueue";
+import {
+  getLocalProgress,
+  saveLocalBookProgress,
+  syncBookProgressToServer,
+} from "@/lib/progressQueue";
 import { useProgressSync } from "@/hooks/useProgressSync";
 import { getUser } from "@/lib/auth";
 import { prefetchNextChapterAudio } from "@/hooks/useSpeechPlayer";
@@ -304,7 +315,12 @@ export default function ListenPage() {
   // native-tts-done and JS navigates to the next chapter.
   const nextChapterText = nextChapterTextData?.text_content ?? null;
   useEffect(() => {
-    if (!voice.startsWith("native:") || allChapters.length === 0 || currentIndex < 0) return;
+    if (
+      !voice.startsWith("native:") ||
+      allChapters.length === 0 ||
+      currentIndex < 0
+    )
+      return;
     const bridge = getTtsBridge();
     if (!bridge) return;
 
@@ -320,29 +336,44 @@ export default function ListenPage() {
     // Clear old queue first (manual navigation or voice/rate/pitch change)
     bridge.clearNextChapter();
 
-    // Gather all chapters after the current one
+    // Gather the next chapters after the current one.
+    // Capped at 10 to prevent native from auto-playing hundreds of chapters
+    // in the background while the screen is off, which would cause large
+    // chapter jumps (e.g. 541 → 648) when the user resumes.
     const remainingChapters = allChapters
       .filter((c) => c.chapter_index > currentIndex)
-      .sort((a, b) => a.chapter_index - b.chapter_index);
+      .sort((a, b) => a.chapter_index - b.chapter_index)
+      .slice(0, 10);
 
     if (remainingChapters.length === 0) return;
 
     let cancelled = false;
 
     (async () => {
-      type QueueItem = { chunks: string[]; chapterId: string; title: string; rate: number; pitch: number };
+      type QueueItem = {
+        chunks: string[];
+        chapterId: string;
+        title: string;
+        rate: number;
+        pitch: number;
+      };
       const chunkMap = new Map<string, string[]>();
 
       // Collect chapters already in React Query cache or IndexedDB
       for (const ch of remainingChapters) {
         let text: string | null = null;
-        const cached = queryClient.getQueryData<{ text_content: string }>(["chapterText", ch.id]);
+        const cached = queryClient.getQueryData<{ text_content: string }>([
+          "chapterText",
+          ch.id,
+        ]);
         if (cached?.text_content) {
           text = cached.text_content;
         } else {
           try {
             text = await getCachedChapterText(ch.id);
-          } catch { /* not in IndexedDB */ }
+          } catch {
+            /* not in IndexedDB */
+          }
         }
         if (text) {
           const chunks = splitChunks(text);
@@ -355,8 +386,14 @@ export default function ListenPage() {
       // Helper: build an ordered queue from whatever is in chunkMap
       const buildQueue = (): QueueItem[] =>
         remainingChapters
-          .filter(ch => chunkMap.has(ch.id))
-          .map(ch => ({ chunks: chunkMap.get(ch.id)!, chapterId: ch.id, title: ch.title ?? "Đang phát...", rate, pitch }));
+          .filter((ch) => chunkMap.has(ch.id))
+          .map((ch) => ({
+            chunks: chunkMap.get(ch.id)!,
+            chapterId: ch.id,
+            title: ch.title ?? "Đang phát...",
+            rate,
+            pitch,
+          }));
 
       // Phase 1: send immediately available chapters so native can start
       // auto-advancing without waiting for the full fetch below.
@@ -370,7 +407,7 @@ export default function ListenPage() {
       // single "next chapter" slot on each call, so N calls leave only the
       // last chapter queued (causing ch45 → ch55 jumps).
       // Instead we collect everything and call queueAllChapters ONCE at the end.
-      const uncached = remainingChapters.filter(ch => !chunkMap.has(ch.id));
+      const uncached = remainingChapters.filter((ch) => !chunkMap.has(ch.id));
       for (const ch of uncached) {
         if (cancelled) break;
         try {
@@ -380,7 +417,9 @@ export default function ListenPage() {
             const chunks = splitChunks(data.text_content);
             if (chunks.length > 0) chunkMap.set(ch.id, chunks);
           }
-        } catch { /* offline or API error — skip */ }
+        } catch {
+          /* offline or API error — skip */
+        }
       }
 
       if (cancelled) return;
@@ -393,10 +432,12 @@ export default function ListenPage() {
       }
     })();
 
-    return () => { cancelled = true; };
-  // nextChapterText intentionally excluded: it changes async when adjacent chapter
-  // text loads, which would re-fire this effect and clear the native queue mid-play,
-  // causing premature "done" events and chapter cascade skips.
+    return () => {
+      cancelled = true;
+    };
+    // nextChapterText intentionally excluded: it changes async when adjacent chapter
+    // text loads, which would re-fire this effect and clear the native queue mid-play,
+    // causing premature "done" events and chapter cascade skips.
   }, [chapterId, voice, rate, pitch, allChapters, currentIndex, queryClient]);
 
   // ── Web streaming: prefetch first TTS audio chunks when near end ──
@@ -446,7 +487,10 @@ export default function ListenPage() {
     try {
       await api.updateChapterText(chapterId, editText);
       // Update React Query cache so player uses new text immediately
-      queryClient.setQueryData(["chapterText", chapterId], { id: chapterId, text_content: editText });
+      queryClient.setQueryData(["chapterText", chapterId], {
+        id: chapterId,
+        text_content: editText,
+      });
       setShowEditModal(false);
     } catch (e) {
       setEditError(e instanceof Error ? e.message : "Lỗi lưu văn bản");
@@ -522,13 +566,19 @@ export default function ListenPage() {
               // event — queue still has chapters). Set flag so the queue effect
               // skips clearing/rebuilding the existing native queue.
               wasAutoAdvanceRef.current = true;
-              router.push(`/books/${bookId}/listen?chapter=${nativeChapterId}&autoplay=1`);
+              router.push(
+                `/books/${bookId}/listen?chapter=${nativeChapterId}&autoplay=1`,
+              );
               return;
             }
             // native-tts-done path: queue is exhausted (or web TTS ended).
             // Do NOT set wasAutoAdvanceRef — the queue is empty and must be
             // rebuilt for the next chapter.
-            const { voice: v, queryClient: qc, nextChapter: latestNext } = latestRef.current;
+            const {
+              voice: v,
+              queryClient: qc,
+              nextChapter: latestNext,
+            } = latestRef.current;
             const target = latestNext ?? nextChapter;
             if (!target) return;
             if (target.id && v && !v.startsWith("native:")) {
@@ -704,8 +754,18 @@ export default function ListenPage() {
               onClick={handleOpenEdit}
               className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-amber-400 hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
             >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              <svg
+                className="w-3.5 h-3.5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                />
               </svg>
               Sửa văn bản
             </button>
@@ -749,10 +809,16 @@ export default function ListenPage() {
           <div className="relative mb-2">
             <svg
               className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-300 dark:text-gray-600 pointer-events-none"
-              fill="none" stroke="currentColor" viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
             >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z"
+              />
             </svg>
             <input
               type="text"
@@ -766,8 +832,18 @@ export default function ListenPage() {
                 onClick={() => setChapterSearch("")}
                 className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 transition-colors"
               >
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                <svg
+                  className="w-3.5 h-3.5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
                 </svg>
               </button>
             )}
@@ -825,8 +901,18 @@ export default function ListenPage() {
                 onClick={() => setShowEditModal(false)}
                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
                 </svg>
               </button>
             </div>

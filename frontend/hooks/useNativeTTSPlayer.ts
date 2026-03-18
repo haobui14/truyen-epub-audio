@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { isNativePlatform } from "@/lib/capacitor";
 import {
   acquireBackgroundLock,
@@ -13,28 +13,20 @@ import { splitIntoChunks } from "@/lib/textChunks";
  * On native platform we only expose a single "device default" voice.
  */
 export function useNativeTTSVoices(lang = "vi") {
-  const [voices, setVoices] = useState<
-    { index: number; name: string; lang: string }[]
-  >([]);
-
-  useEffect(() => {
-    if (!isNativePlatform()) return;
-    setVoices([{ index: 0, name: "Giọng thiết bị", lang: `${lang}-VN` }]);
-  }, [lang]);
-
-  return voices;
+  return useMemo(
+    () =>
+      isNativePlatform()
+        ? [{ index: 0, name: "Giọng thiết bị", lang: `${lang}-VN` }]
+        : [],
+    [lang],
+  );
 }
 
 /**
  * Whether native TTS is available on this device.
  */
 export function useNativeTTSAvailable() {
-  const [available, setAvailable] = useState(false);
-  useEffect(() => {
-    if (!isNativePlatform()) return;
-    setAvailable(true);
-  }, []);
-  return available;
+  return useState(() => isNativePlatform())[0];
 }
 
 /**
@@ -75,6 +67,12 @@ export function useNativeTTSPlayer(
   // Set when the native service auto-advances to the next chapter.
   // Prevents the reset effect from stopping the already-playing service.
   const chapterAdvancedRef = useRef(false);
+
+  // Tracks the chapter ID we last navigated to via onChapterAdvance.
+  // Used to deduplicate batched native-tts-chapter-advance events that all
+  // fire at once when the WebView resumes — without this, 10 queued events
+  // would each call onEnded, causing 10 redundant router.push calls.
+  const lastAdvancedChapterRef = useRef<string | undefined>(undefined);
 
   const chapterIdRef = useRef(chapterId);
   chapterIdRef.current = chapterId;
@@ -154,6 +152,11 @@ export function useNativeTTSPlayer(
       // This prevents cascade skips when native advances faster than React renders.
       const bridge = getTtsBridge();
       const nativeChId = bridge?.getCurrentChapterId?.() ?? undefined;
+      // Deduplicate: when the WebView resumes after being suspended, all queued
+      // native-tts-chapter-advance events fire in a single microtask batch and
+      // each reads the same current chapter ID. Only navigate once per chapter.
+      if (nativeChId && nativeChId === lastAdvancedChapterRef.current) return;
+      lastAdvancedChapterRef.current = nativeChId;
       onEndedRef.current?.(nativeChId);
     };
 
@@ -212,6 +215,10 @@ export function useNativeTTSPlayer(
     setTtsError(null);
 
     const wasAutoAdvanced = chapterAdvancedRef.current;
+
+    // Reset deduplication on every chapter change so the next chapter's
+    // advance events are not accidentally suppressed.
+    lastAdvancedChapterRef.current = undefined;
 
     // If the native service auto-advanced to this chapter, DON'T stop it.
     // It's already playing the right content.

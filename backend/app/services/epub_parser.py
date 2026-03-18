@@ -125,8 +125,10 @@ async def parse_epub_task(book_id: str, epub_bytes: bytes) -> None:
         if not chapters_data:
             raise ValueError("No readable chapters found in EPUB")
 
-        # Insert chapters into DB
-        db.table("chapters").insert(chapters_data).execute()
+        # Insert chapters in batches to avoid Supabase statement timeout on large books
+        BATCH_SIZE = 100
+        for i in range(0, len(chapters_data), BATCH_SIZE):
+            db.table("chapters").insert(chapters_data[i:i + BATCH_SIZE]).execute()
 
         # Update book metadata
         update_data: dict = {
