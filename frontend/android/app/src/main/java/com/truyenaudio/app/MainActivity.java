@@ -83,6 +83,51 @@ public class MainActivity extends BridgeActivity {
                     }
                 }
 
+                // Handle /admin/books/{bookId}/... routes (rewrite non-placeholder bookIds and chapterIds)
+                if (path != null
+                        && (url.startsWith("https://localhost") || url.startsWith("http://localhost"))
+                        && path.startsWith("/admin/books/")) {
+
+                    String adminSegment = path.substring("/admin/books/".length()); // "abc/edit" or "abc/chapters/xyz"
+                    int adminSlash = adminSegment.indexOf('/');
+                    if (adminSlash != -1) {
+                        String bookIdPart = adminSegment.substring(0, adminSlash);
+                        String subPath    = adminSegment.substring(adminSlash); // "/edit", "/chapters/xyz", etc.
+
+                        int dotIdx = bookIdPart.lastIndexOf('.');
+                        String bookId  = dotIdx == -1 ? bookIdPart : bookIdPart.substring(0, dotIdx);
+                        String bookExt = dotIdx == -1 ? "" : bookIdPart.substring(dotIdx);
+
+                        if (!"placeholder".equals(bookId) && !bookId.isEmpty()) {
+                            // Also rewrite chapterId if path contains /chapters/{chapterId}
+                            if (subPath.startsWith("/chapters/")) {
+                                String chapSegment = subPath.substring("/chapters/".length());
+                                int chapSlash = chapSegment.indexOf('/');
+                                String chapIdPart = chapSlash == -1 ? chapSegment : chapSegment.substring(0, chapSlash);
+                                String afterChap  = chapSlash == -1 ? "" : chapSegment.substring(chapSlash);
+
+                                int chapDot = chapIdPart.lastIndexOf('.');
+                                String chapId  = chapDot == -1 ? chapIdPart : chapIdPart.substring(0, chapDot);
+                                String chapExt = chapDot == -1 ? "" : chapIdPart.substring(chapDot);
+
+                                if (!"placeholder".equals(chapId) && !chapId.isEmpty()) {
+                                    subPath = "/chapters/placeholder" + chapExt + afterChap;
+                                }
+                            }
+
+                            String assetPath = "public/admin/books/placeholder" + bookExt + subPath;
+                            if (!assetPath.contains(".")) assetPath += "/index.html";
+
+                            try {
+                                InputStream is = getAssets().open(assetPath);
+                                return new WebResourceResponse(mimeFor(assetPath), "UTF-8", 200, "OK", null, is);
+                            } catch (IOException e) {
+                                // Asset not found in placeholder; fall through to super
+                            }
+                        }
+                    }
+                }
+
                 // Default: let Capacitor bridge handle the request normally
                 return super.shouldInterceptRequest(view, request);
             }

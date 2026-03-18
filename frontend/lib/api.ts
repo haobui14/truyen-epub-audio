@@ -182,6 +182,49 @@ export const api = {
     });
   },
 
+  uploadEpubWithProgress: (
+    file: File,
+    voice: string,
+    cover: File | null | undefined,
+    onProgress: (percent: number) => void,
+  ): Promise<{ book_id: string; status: string }> => {
+    return new Promise((resolve, reject) => {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("voice", voice);
+      if (cover) form.append("cover", cover);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${API_URL}/api/upload`);
+
+      const token = getToken();
+      if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+
+      xhr.upload.addEventListener("progress", (e) => {
+        if (e.lengthComputable) {
+          onProgress(Math.round((e.loaded / e.total) * 100));
+        }
+      });
+
+      xhr.addEventListener("load", () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            resolve(JSON.parse(xhr.responseText));
+          } catch {
+            reject(new Error("Invalid response"));
+          }
+        } else {
+          reject(new Error(xhr.responseText || `HTTP ${xhr.status}`));
+        }
+      });
+
+      xhr.addEventListener("error", () => reject(new Error("Network error")));
+      xhr.addEventListener("abort", () => reject(new Error("Upload cancelled")));
+
+      xhr.send(form);
+    });
+  },
+
   // Auth
   login: (email: string, password: string) =>
     request<{ access_token: string; refresh_token?: string; user_id: string; email: string; role: string }>(

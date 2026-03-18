@@ -12,7 +12,7 @@ const geist = Geist({ subsets: ["latin"], variable: "--font-geist-sans" });
 
 export const metadata: Metadata = {
   title: "Truyện Audio Việt Nam",
-  description: "Nghe và đọc truyện EPUB tiếng Việt với giọng đọc AI",
+  description: "Nghe và đọc truyện tiếng Việt",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",

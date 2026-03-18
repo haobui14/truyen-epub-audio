@@ -17,6 +17,7 @@ export default function UploadPage() {
   const [cover, setCover] = useState<File | null>(null);
   const [coverPreview, setCoverPreview] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   const handleCover = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -35,9 +36,15 @@ export default function UploadPage() {
     if (!file) return;
 
     setIsUploading(true);
+    setUploadProgress(0);
     setError(null);
     try {
-      const result = await api.uploadEpub(file, "vi-VN-HoaiMyNeural", cover);
+      const result = await api.uploadEpubWithProgress(
+        file,
+        "vi-VN-HoaiMyNeural",
+        cover,
+        setUploadProgress,
+      );
       router.push(`/books/${result.book_id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload thất bại");
@@ -153,6 +160,21 @@ export default function UploadPage() {
           </div>
         )}
 
+        {isUploading && (
+          <div className="space-y-1.5">
+            <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400">
+              <span>{uploadProgress < 100 ? "Đang tải lên..." : "Đang xử lý..."}</span>
+              <span>{uploadProgress}%</span>
+            </div>
+            <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-indigo-500 rounded-full transition-all duration-200"
+                style={{ width: `${uploadProgress}%` }}
+              />
+            </div>
+          </div>
+        )}
+
           <button
             type="submit"
             disabled={!file || isUploading}
@@ -161,7 +183,7 @@ export default function UploadPage() {
             {isUploading ? (
               <>
                 <Spinner className="w-4 h-4" />
-                Đang tải lên...
+                {uploadProgress < 100 ? `Đang tải lên... ${uploadProgress}%` : "Đang xử lý..."}
               </>
             ) : (
               <>

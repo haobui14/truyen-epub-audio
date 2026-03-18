@@ -416,8 +416,10 @@ public class TtsPlaybackService extends Service {
 
     public static void pausePlayback() {
         if (sInstance == null) return;
-        if (sInstance.ttsEngine != null) sInstance.ttsEngine.stop();
+        // Set currentlyPlaying=false before stop() so spurious onDone callbacks
+        // triggered by ttsEngine.stop() exit onChunkFinished() early.
         sInstance.currentlyPlaying = false;
+        if (sInstance.ttsEngine != null) sInstance.ttsEngine.stop();
         // Stop the periodic re-assertion loop
         if (sInstance.mainHandler != null) {
             sInstance.mainHandler.removeCallbacks(sInstance.reassertRunnable);
@@ -445,7 +447,9 @@ public class TtsPlaybackService extends Service {
             sInstance.mainHandler.removeCallbacks(sInstance.sleepExpireRunnable);
         }
         sInstance.sleepExpireAtMs = -1;
-        if (sInstance.ttsEngine != null) sInstance.ttsEngine.stop();
+        // Clear state BEFORE ttsEngine.stop() so that any spurious onDone/onError
+        // callbacks fired by stop() see currentlyPlaying=false and chunks=null,
+        // causing onChunkFinished() to return early without firing onPlaybackDone().
         sInstance.chunks = null;
         sInstance.currentChunkIdx = -1;
         sInstance.currentChapterId = null;
@@ -453,6 +457,7 @@ public class TtsPlaybackService extends Service {
         sInstance.hasPendingPlayback = false;
         sInstance.pendingChunks = null;
         sInstance.chapterQueue.clear();
+        if (sInstance.ttsEngine != null) sInstance.ttsEngine.stop();
         sInstance.updatePlaybackState(false);
         sInstance.updateNotification();
     }

@@ -247,6 +247,12 @@ export default function ListenPage() {
   // and rebuilding the native queue since it's already populated.
   const wasAutoAdvanceRef = useRef(false);
 
+  // Signals that the next chapter should auto-play. Set synchronously before
+  // navigation so the setTrack effect always sees autoPlay=true on chapter
+  // advance, regardless of whether searchParams updates before the effect fires
+  // (can be unreliable on Capacitor static-export builds).
+  const autoPlayNextRef = useRef(false);
+
   const chapterTextContent = chapterText?.text_content ?? null;
   const chunks = useMemo(
     () => (chapterTextContent ? splitIntoChunks(chapterTextContent) : []),
@@ -550,6 +556,11 @@ export default function ListenPage() {
       navigateTo,
     } = latestRef.current;
     if (!currentChapter || !book) return;
+    // autoPlayNextRef is set synchronously in onEnded before navigation so it
+    // is always true when this effect fires after a chapter-advance, even if
+    // searchParams hasn't updated yet (can lag on Capacitor static builds).
+    const effectiveAutoPlay = autoPlay || autoPlayNextRef.current;
+    autoPlayNextRef.current = false;
     setTrack({
       bookId,
       chapterId: chapterId!,
@@ -566,6 +577,7 @@ export default function ListenPage() {
               // event — queue still has chapters). Set flag so the queue effect
               // skips clearing/rebuilding the existing native queue.
               wasAutoAdvanceRef.current = true;
+              autoPlayNextRef.current = true;
               router.push(
                 `/books/${bookId}/listen?chapter=${nativeChapterId}&autoplay=1`,
               );
@@ -589,6 +601,7 @@ export default function ListenPage() {
               if (td?.text_content)
                 prefetchNextChapterAudio(target.id, td.text_content, v);
             }
+            autoPlayNextRef.current = true;
             navigateTo(target, true);
           }
         : undefined,
@@ -597,7 +610,7 @@ export default function ListenPage() {
         listenProgress?.progress_value != null
           ? Math.floor(listenProgress.progress_value)
           : undefined,
-      autoPlay,
+      autoPlay: effectiveAutoPlay,
     });
   }, [
     bookId,
