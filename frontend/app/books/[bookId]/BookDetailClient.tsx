@@ -273,7 +273,7 @@ export default function BookDetailPage() {
         </div>
         {admin && (
           <Link
-            href={`/admin/books/${bookId}/edit`}
+            href={`/admin/edit-book?id=${bookId}`}
             className="shrink-0 ml-3 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 border border-indigo-300 dark:border-indigo-700 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors"
           >
             <svg

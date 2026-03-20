@@ -134,6 +134,14 @@ export function SpeechPlayer() {
             {chapter.title}
           </h2>
         </div>
+        {isPlaying && !isBuffering && (
+          <div className="flex items-end gap-0.5 text-indigo-400 shrink-0 h-5">
+            <span className="sound-bar" />
+            <span className="sound-bar" />
+            <span className="sound-bar" />
+            <span className="sound-bar" />
+          </div>
+        )}
       </div>
 
       {/* ── PLAYER ── */}
@@ -141,7 +149,7 @@ export function SpeechPlayer() {
         {/* Progress bar */}
         <div>
           <div
-            className="h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden cursor-pointer"
+            className="h-2 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden cursor-pointer"
             title={`${progressPct}%`}
             onClick={handleProgressClick}
           >

@@ -15,9 +15,9 @@ export function MiniPlayer() {
   const listenUrl = `/listen?id=${track.bookId}&chapter=${track.chapterId}`;
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md border-t border-gray-200 dark:border-gray-800 shadow-lg" style={{ paddingBottom: "var(--sab)" }}>
-      {/* Thin progress bar along the very top edge */}
-      <div className="h-0.5 bg-gray-100 dark:bg-gray-800">
+    <div className="fixed bottom-0 left-0 right-0 z-50 bg-white/90 dark:bg-gray-900/90 backdrop-blur-lg border-t border-gray-200/70 dark:border-gray-800/70 shadow-xl" style={{ paddingBottom: "var(--sab)" }}>
+      {/* Progress bar along the very top edge */}
+      <div className="h-1 bg-gray-100 dark:bg-gray-800">
         <div
           className="h-full bg-indigo-500 transition-all duration-300"
           style={{ width: `${progressPct}%` }}
@@ -51,13 +51,22 @@ export function MiniPlayer() {
         </Link>
 
         {/* Track info → tap to go to listen page */}
-        <Link href={listenUrl} className="min-w-0 flex-1">
-          <p className="text-xs text-indigo-500 dark:text-indigo-400 truncate leading-tight">
-            {book.title}
-          </p>
-          <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate leading-tight">
-            {chapter.title}
-          </p>
+        <Link href={listenUrl} className="min-w-0 flex-1 flex items-center gap-2">
+          <div className="min-w-0 flex-1">
+            <p className="text-xs text-indigo-500 dark:text-indigo-400 truncate leading-tight">
+              {book.title}
+            </p>
+            <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate leading-tight">
+              {chapter.title}
+            </p>
+          </div>
+          {isPlaying && !isBuffering && (
+            <span className="flex items-end gap-0.5 text-indigo-500 shrink-0 h-4">
+              <span className="sound-bar" />
+              <span className="sound-bar" />
+              <span className="sound-bar" />
+            </span>
+          )}
         </Link>
 
         {/* Prev chapter */}

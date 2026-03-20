@@ -74,7 +74,7 @@ export default function HomePage() {
       {/* Empty-state hero */}
       {!hasBooks && !isLoading && !error && (
         <div className="text-center py-20 sm:py-28">
-          <div className="inline-flex items-center justify-center w-20 h-20 bg-linear-to-br from-indigo-100 to-purple-100 dark:from-indigo-950 dark:to-purple-950 rounded-2xl mb-6 shadow-inner">
+          <div className="inline-flex items-center justify-center w-20 h-20 bg-linear-to-br from-indigo-100 to-purple-100 dark:from-indigo-950 dark:to-purple-950 rounded-2xl mb-6 shadow-inner animate-float">
             <svg
               className="w-10 h-10 text-indigo-500"
               fill="none"

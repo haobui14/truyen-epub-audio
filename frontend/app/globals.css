@@ -109,6 +109,33 @@ input[type="range"].accent-emerald::-moz-range-thumb {
   }
 }
 
+/* Sound wave bars (used in player) */
+@keyframes wave-bounce {
+  0%, 100% { transform: scaleY(0.35); }
+  50% { transform: scaleY(1); }
+}
+.sound-bar {
+  display: inline-block;
+  width: 3px;
+  height: 14px;
+  border-radius: 9999px;
+  background: currentColor;
+  transform-origin: bottom;
+  animation: wave-bounce 0.9s ease-in-out infinite;
+}
+.sound-bar:nth-child(2) { animation-delay: 0.15s; }
+.sound-bar:nth-child(3) { animation-delay: 0.3s; }
+.sound-bar:nth-child(4) { animation-delay: 0.45s; }
+
+/* Floating icon animation (empty states) */
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-8px); }
+}
+.animate-float {
+  animation: float 4s ease-in-out infinite;
+}
+
 /* Reader content styles */
 .reader-content {
   font-family: Georgia, "Times New Roman", serif;
@@ -123,5 +150,9 @@ input[type="range"].accent-emerald::-moz-range-thumb {
     box-shadow 0.2s ease;
 }
 .card-hover:hover {
-  transform: translateY(-2px);
+  transform: translateY(-3px);
+  box-shadow: 0 12px 28px -4px rgba(0, 0, 0, 0.1), 0 4px 8px -2px rgba(0, 0, 0, 0.04);
+}
+.dark .card-hover:hover {
+  box-shadow: 0 12px 28px -4px rgba(0, 0, 0, 0.4), 0 4px 8px -2px rgba(0, 0, 0, 0.2);
 }

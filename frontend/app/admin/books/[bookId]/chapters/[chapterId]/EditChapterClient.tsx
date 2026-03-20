@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { useRouter, useParams } from "next/navigation";
+import { useRouter, useParams, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { isAdmin } from "@/lib/auth";
@@ -11,8 +11,9 @@ const SIDEBAR_PAGE_SIZE = 50;
 
 export default function EditChapterClient() {
   const params = useParams();
-  const bookId = params.bookId as string;
-  const chapterId = params.chapterId as string;
+  const searchParams = useSearchParams();
+  const bookId = (searchParams.get("bookId") || params?.bookId || "") as string;
+  const chapterId = (searchParams.get("id") || params?.chapterId || "") as string;
   const isNew = chapterId === "new";
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -92,6 +93,13 @@ export default function EditChapterClient() {
     setSaveSuccess(false);
   }, [chapterId]);
 
+  // Jump sidebar to the page that contains the currently-edited chapter
+  useEffect(() => {
+    if (!chapterMeta || isNew || chapterMeta.id !== chapterId) return;
+    const targetPage = Math.ceil((chapterMeta.chapter_index + 1) / SIDEBAR_PAGE_SIZE);
+    setSidebarPage(targetPage);
+  }, [chapterMeta, chapterId, isNew]);
+
   const isLoading = !isNew && (metaLoading || textLoading);
 
   async function handleSave(e: React.FormEvent) {
@@ -113,7 +121,7 @@ export default function EditChapterClient() {
         });
         queryClient.invalidateQueries({ queryKey: ["chapters", bookId] });
         queryClient.invalidateQueries({ queryKey: ["book", bookId] });
-        router.replace(`/admin/books/${bookId}/chapters/${created.id}`);
+        router.replace(`/admin/edit-chapter?bookId=${bookId}&id=${created.id}`);
       } else {
         await api.updateChapter(chapterId, {
           title: title.trim(),
@@ -150,9 +158,9 @@ export default function EditChapterClient() {
       const idx = chapters.findIndex((c) => c.id === chapterId);
       const next = chapters[idx + 1] ?? chapters[idx - 1];
       if (next) {
-        router.replace(`/admin/books/${bookId}/chapters/${next.id}`);
+        router.replace(`/admin/edit-chapter?bookId=${bookId}&id=${next.id}`);
       } else {
-        router.replace(`/admin/books/${bookId}/edit`);
+        router.replace(`/admin/edit-book?id=${bookId}`);
       }
     } catch (err) {
       alert(err instanceof Error ? err.message : "Xoá thất bại");
@@ -162,7 +170,7 @@ export default function EditChapterClient() {
 
   const sidebarChapters = sidebarData?.items ?? [];
   const sidebarTotalPages = sidebarData?.total_pages ?? 1;
-  const editBasePath = `/admin/books/${bookId}/chapters`;
+  const editBasePath = `/admin/edit-chapter?bookId=${bookId}&id=`;
 
   return (
     <div className="flex -mt-6 -mx-4 sm:-mx-6">
@@ -186,7 +194,7 @@ export default function EditChapterClient() {
         <div className="px-3 py-3 border-b border-gray-200 dark:border-gray-700 space-y-2">
           <div className="flex items-center justify-between">
             <Link
-              href={`/admin/books/${bookId}/edit`}
+              href={`/admin/edit-book?id=${bookId}`}
               className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors min-w-0"
             >
               <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -205,7 +213,7 @@ export default function EditChapterClient() {
             </button>
           </div>
           <Link
-            href={`/admin/books/${bookId}/chapters/new`}
+            href={`/admin/edit-chapter?bookId=${bookId}&id=new`}
             className="flex items-center justify-center gap-1.5 w-full px-2 py-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 border border-indigo-300 dark:border-indigo-700 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors"
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -400,7 +408,7 @@ export default function EditChapterClient() {
                 {saving ? "Đang lưu…" : isNew ? "Thêm chương" : "Lưu thay đổi"}
               </button>
               <Link
-                href={`/admin/books/${bookId}/edit`}
+                href={`/admin/edit-book?id=${bookId}`}
                 className="px-4 py-2.5 text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
               >
                 Huỷ

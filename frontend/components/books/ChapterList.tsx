@@ -46,7 +46,7 @@ function ChapterRow({
       </span>
       <div className="flex-1 min-w-0">
         {editBasePath ? (
-          <Link href={`${editBasePath}/${chapter.id}`} className="group block">
+          <Link href={`${editBasePath}${chapter.id}`} className="group block">
             <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
               {chapter.title}
             </p>

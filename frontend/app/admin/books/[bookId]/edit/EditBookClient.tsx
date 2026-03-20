@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { isAdmin } from "@/lib/auth";
@@ -13,7 +13,8 @@ import { Spinner } from "@/components/ui/Spinner";
 
 export default function EditBookClient() {
   const pathname = usePathname();
-  const bookId = pathname.split("/")[3]; // /admin/books/[bookId]/edit
+  const searchParams = useSearchParams();
+  const bookId = searchParams.get("id") || pathname.split("/")[3] || "";
   const router = useRouter();
   const queryClient = useQueryClient();
 
@@ -185,7 +186,7 @@ export default function EditBookClient() {
                 totalPages={chaptersData?.total_pages ?? 1}
                 total={chaptersData?.total ?? 0}
                 onPageChange={setChapterPage}
-                editBasePath={`/admin/books/${bookId}/chapters`}
+                editBasePath={`/admin/edit-chapter?bookId=${bookId}&id=`}
               />
             )}
           </div>

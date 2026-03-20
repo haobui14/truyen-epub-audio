@@ -1,10 +1,6 @@
 import { Suspense } from "react";
-import EditChapterClient from "./EditChapterClient";
+import EditChapterClient from "../books/[bookId]/chapters/[chapterId]/EditChapterClient";
 import { Spinner } from "@/components/ui/Spinner";
-
-export function generateStaticParams() {
-  return [{ bookId: "placeholder", chapterId: "placeholder" }];
-}
 
 export default function Page() {
   return (

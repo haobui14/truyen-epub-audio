@@ -49,7 +49,7 @@ export default function RootLayout({
             style={{ height: "var(--sat)" }}
           />
           <header
-            className="bg-white dark:bg-gray-900 border-b border-gray-200/60 dark:border-gray-800/60 sticky z-40"
+            className="bg-white/85 dark:bg-gray-900/85 backdrop-blur-md border-b border-gray-200/60 dark:border-gray-800/60 sticky z-40"
             style={{ top: "var(--sat)" }}
           >
             <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
