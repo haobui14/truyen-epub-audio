@@ -39,7 +39,7 @@ function ProgressBar({ value, total }: { value: number; total?: number }) {
 
 function BookRow({ entry }: { entry: MyBookEntry }) {
   const { book, chapter, progress_value, total_value, updated_at } = entry;
-  const href = `/books/${book.id}/listen?chapter=${chapter.id}`;
+  const href = `/listen?id=${book.id}&chapter=${chapter.id}`;
   const pct = total_value && total_value > 0 ? Math.round((progress_value / total_value) * 100) : null;
 
   return (

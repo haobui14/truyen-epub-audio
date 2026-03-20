@@ -63,7 +63,7 @@ function ChapterRow({
         {!editBasePath && (
           <>
             <Link
-              href={`/books/${bookId}/read?chapter=${chapter.id}`}
+              href={`/read?id=${bookId}&chapter=${chapter.id}`}
               className="p-2 text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 bg-gray-100 dark:bg-gray-700 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 active:bg-indigo-100 dark:active:bg-indigo-950 rounded-lg transition-colors"
               title="Đọc"
             >
@@ -73,7 +73,7 @@ function ChapterRow({
               </svg>
             </Link>
             <Link
-              href={`/books/${bookId}/listen?chapter=${chapter.id}`}
+              href={`/listen?id=${bookId}&chapter=${chapter.id}`}
               className="p-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 active:bg-indigo-800 transition-colors"
               title="Nghe"
             >

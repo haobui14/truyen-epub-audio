@@ -1,8 +1,9 @@
 "use client";
 import Link from "next/link";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { getCachedBooks, cacheBooks } from "@/lib/bookCache";
 import { isLoggedIn, isAdmin } from "@/lib/auth";
 import { BookGrid } from "@/components/books/BookGrid";
 import { Spinner } from "@/components/ui/Spinner";
@@ -10,17 +11,29 @@ import type { Genre } from "@/types";
 
 export default function HomePage() {
   const [activeGenre, setActiveGenre] = useState<string | null>(null);
-  const [admin, setAdmin] = useState(() => isAdmin());
-
-  useEffect(() => {
-    const handler = () => setAdmin(isAdmin());
-    window.addEventListener("auth-change", handler);
-    return () => window.removeEventListener("auth-change", handler);
-  }, []);
+  const [search, setSearch] = useState("");
+  const admin = useSyncExternalStore(
+    (cb) => {
+      window.addEventListener("auth-change", cb);
+      return () => window.removeEventListener("auth-change", cb);
+    },
+    isAdmin,
+    () => false,
+  );
 
   const { data: books, isLoading, error } = useQuery({
     queryKey: ["books"],
-    queryFn: api.listBooks,
+    queryFn: async () => {
+      try {
+        const data = await api.listBooks();
+        cacheBooks(data).catch(() => {});
+        return data;
+      } catch {
+        const cached = await getCachedBooks();
+        if (cached) return cached;
+        throw new Error("offline");
+      }
+    },
     refetchInterval: 10_000,
   });
 
@@ -30,28 +43,41 @@ export default function HomePage() {
     enabled: isLoggedIn(),
   });
 
-  // Collect only genres that are actually used in the current book list
   const usedGenres = useMemo<Genre[]>(() => {
     if (!books || !genres) return [];
     const usedIds = new Set(books.flatMap((b) => (b.genres ?? []).map((g) => g.id)));
     return genres.filter((g) => usedIds.has(g.id));
   }, [books, genres]);
 
+  const filteredBooks = useMemo(() => {
+    if (!books) return [];
+    const q = search.trim().toLowerCase();
+    return q
+      ? books.filter(
+          (b) =>
+            b.title.toLowerCase().includes(q) ||
+            (b.author ?? "").toLowerCase().includes(q)
+        )
+      : books;
+  }, [books, search]);
+
   const hasBooks = books && books.length > 0;
 
   return (
     <div>
-      {/* Hero / welcome section */}
+      {/* Empty-state hero */}
       {!hasBooks && !isLoading && !error && (
-        <div className="text-center py-16 sm:py-24">
-          <div className="inline-flex items-center justify-center w-20 h-20 bg-linear-to-br from-indigo-100 to-purple-100 dark:from-indigo-950 dark:to-purple-950 rounded-2xl mb-6">
+        <div className="text-center py-20 sm:py-28">
+          <div className="inline-flex items-center justify-center w-20 h-20 bg-linear-to-br from-indigo-100 to-purple-100 dark:from-indigo-950 dark:to-purple-950 rounded-2xl mb-6 shadow-inner">
             <svg className="w-10 h-10 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
                 d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
             </svg>
           </div>
-          <h1 className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-gray-100 mb-3">Chào mừng đến TruyệnAudio</h1>
-          <p className="text-gray-500 dark:text-gray-400 max-w-md mx-auto mb-8">
+          <h1 className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-gray-100 mb-3">
+            Chào mừng đến TruyệnAudio
+          </h1>
+          <p className="text-gray-500 dark:text-gray-400 max-w-md mx-auto mb-8 text-base leading-relaxed">
             Tải lên file EPUB để nghe hoặc đọc truyện tiếng Việt với giọng đọc AI tự nhiên.
           </p>
           {admin && (
@@ -68,50 +94,89 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Library header */}
+      {/* Library section */}
       {(hasBooks || isLoading) && (
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Thư viện truyện</h1>
-            <p className="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Nghe hoặc đọc truyện của bạn</p>
+        <>
+          {/* Header row */}
+          <div className="flex items-center justify-between mb-5">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 leading-tight">
+                Thư viện truyện
+              </h1>
+              <p className="text-sm text-gray-400 dark:text-gray-500 mt-0.5">
+                Nghe hoặc đọc truyện của bạn
+              </p>
+            </div>
+            {books && (
+              <span className="text-xs font-medium text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-3 py-1.5 rounded-full tabular-nums">
+                {books.length} truyện
+              </span>
+            )}
           </div>
-          {books && (
-            <span className="text-xs font-medium text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-3 py-1.5 rounded-full">
-              {books.length} truyện
-            </span>
+
+          {/* Search bar */}
+          {hasBooks && (
+            <div className="relative mb-4">
+              <svg
+                className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-gray-500 pointer-events-none"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                type="search"
+                placeholder="Tìm theo tên truyện hoặc tác giả…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full pl-9 pr-4 py-2.5 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500 transition"
+              />
+              {search && (
+                <button
+                  onClick={() => setSearch("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
+            </div>
           )}
-        </div>
+
+          {/* Genre filter chips — horizontal scroll on mobile */}
+          {hasBooks && usedGenres.length > 0 && (
+            <div className="flex gap-2 mb-5 overflow-x-auto pb-1 scrollbar-none -mx-4 sm:mx-0 px-4 sm:px-0">
+              <button
+                onClick={() => setActiveGenre(null)}
+                className={`flex-none px-3.5 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap ${
+                  activeGenre === null
+                    ? "bg-indigo-600 text-white shadow-sm"
+                    : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700"
+                }`}
+              >
+                Tất cả
+              </button>
+              {usedGenres.map((g) => (
+                <button
+                  key={g.id}
+                  onClick={() => setActiveGenre(activeGenre === g.id ? null : g.id)}
+                  className={`flex-none px-3.5 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap ${
+                    activeGenre === g.id
+                      ? "bg-indigo-600 text-white shadow-sm"
+                      : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700"
+                  }`}
+                >
+                  {g.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
       )}
 
-      {/* Genre filter chips */}
-      {hasBooks && usedGenres.length > 0 && (
-        <div className="flex flex-wrap gap-2 mb-5">
-          <button
-            onClick={() => setActiveGenre(null)}
-            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-              activeGenre === null
-                ? "bg-indigo-600 text-white"
-                : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700"
-            }`}
-          >
-            Tất cả
-          </button>
-          {usedGenres.map((g) => (
-            <button
-              key={g.id}
-              onClick={() => setActiveGenre(activeGenre === g.id ? null : g.id)}
-              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                activeGenre === g.id
-                  ? "bg-indigo-600 text-white"
-                  : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700"
-              }`}
-            >
-              {g.name}
-            </button>
-          ))}
-        </div>
-      )}
-
+      {/* Loading */}
       {isLoading && (
         <div className="flex flex-col items-center gap-3 py-24">
           <Spinner className="w-8 h-8 text-indigo-600" />
@@ -119,6 +184,7 @@ export default function HomePage() {
         </div>
       )}
 
+      {/* Error */}
       {error && (
         <div className="text-center py-24">
           <svg className="w-12 h-12 mx-auto mb-3 text-red-300 dark:text-red-800" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -129,7 +195,18 @@ export default function HomePage() {
         </div>
       )}
 
-      {hasBooks && <BookGrid books={books} activeGenre={activeGenre} />}
+      {/* Book grid */}
+      {hasBooks && (
+        <BookGrid
+          books={filteredBooks}
+          activeGenre={search ? null : activeGenre}
+          emptyMessage={
+            search
+              ? `Không tìm thấy truyện nào cho "${search}"`
+              : undefined
+          }
+        />
+      )}
     </div>
   );
 }

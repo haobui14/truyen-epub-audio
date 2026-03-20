@@ -4,8 +4,8 @@
  */
 
 const DB_NAME = "truyen-audio-offline";
-// v3: added "progress-store" (persistent local progress) and "my-books-cache"
-const DB_VERSION = 3;
+// v4: added "books-list", "book-detail", "book-chapters" for offline browsing
+const DB_VERSION = 4;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -34,6 +34,16 @@ export function openOfflineDB(): Promise<IDBDatabase> {
       // Cache for the last successful /api/progress/my-books response
       if (!db.objectStoreNames.contains("my-books-cache")) {
         db.createObjectStore("my-books-cache");
+      }
+      // Offline browsing caches
+      if (!db.objectStoreNames.contains("books-list")) {
+        db.createObjectStore("books-list"); // key = "all"
+      }
+      if (!db.objectStoreNames.contains("book-detail")) {
+        db.createObjectStore("book-detail", { keyPath: "id" }); // key = book.id
+      }
+      if (!db.objectStoreNames.contains("book-chapters")) {
+        db.createObjectStore("book-chapters"); // key = "${bookId}:${page}"
       }
     };
     req.onsuccess = () => resolve(req.result);

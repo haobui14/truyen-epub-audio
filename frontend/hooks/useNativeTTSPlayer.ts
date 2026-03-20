@@ -84,6 +84,9 @@ export function useNativeTTSPlayer(
     const bridge = getTtsBridge();
     if (!bridge || chunksRef.current.length === 0) return;
 
+    // Clamp to valid range — guards against stale progress saved in a
+    // different unit (e.g. seconds from web-audio mode vs chunk index).
+    const safeIdx = Math.max(0, Math.min(startIdx, chunksRef.current.length - 1));
     const chunksJson = JSON.stringify(chunksRef.current);
     const notifTitle = chapterTitleRef.current ?? "Đang phát...";
     try {
@@ -94,7 +97,7 @@ export function useNativeTTSPlayer(
           chunksJson,
           rateRef.current,
           pitchRef.current,
-          startIdx,
+          safeIdx,
           notifTitle,
           chapterIdRef.current,
         );
@@ -103,7 +106,7 @@ export function useNativeTTSPlayer(
           chunksJson,
           rateRef.current,
           pitchRef.current,
-          startIdx,
+          safeIdx,
           notifTitle,
         );
       }
@@ -114,8 +117,8 @@ export function useNativeTTSPlayer(
       playingRef.current = true;
       setIsPlaying(true);
       setIsBuffering(false);
-      setChunkIndex(startIdx);
-      chunkRef.current = startIdx;
+      setChunkIndex(safeIdx);
+      chunkRef.current = safeIdx;
     } catch {
       // Bridge call failed — clear buffering so UI isn't stuck
       playingRef.current = false;
@@ -194,10 +197,19 @@ export function useNativeTTSPlayer(
       }
     };
 
+    const onNativeError = (e: Event) => {
+      const msg = (e as CustomEvent).detail?.message ?? "Lỗi giọng đọc";
+      setTtsError(msg);
+      playingRef.current = false;
+      setIsPlaying(false);
+      setIsBuffering(false);
+    };
+
     window.addEventListener("native-tts-chunk", onChunk);
     window.addEventListener("native-tts-chapter-advance", onChapterAdvance);
     window.addEventListener("native-tts-done", onDone);
     window.addEventListener("native-tts-state", onState);
+    window.addEventListener("native-tts-error", onNativeError);
 
     return () => {
       window.removeEventListener("native-tts-chunk", onChunk);
@@ -207,6 +219,7 @@ export function useNativeTTSPlayer(
       );
       window.removeEventListener("native-tts-done", onDone);
       window.removeEventListener("native-tts-state", onState);
+      window.removeEventListener("native-tts-error", onNativeError);
     };
   }, [isActive]);
 
@@ -276,13 +289,12 @@ export function useNativeTTSPlayer(
     }
 
     // Normal path: fresh start for this chapter
-    const startIdx = initialChunkIndex ?? 0;
-    setChunkIndex(0);
-    chunkRef.current = 0;
-    if (startIdx > 0) {
-      setChunkIndex(startIdx);
-      chunkRef.current = startIdx;
-    }
+    // Clamp initialChunkIndex to valid range — guards against stale progress
+    // saved in a different unit (e.g. seconds from web-audio mode vs chunk index).
+    const maxIdx = chunksRef.current.length - 1;
+    const startIdx = maxIdx >= 0 ? Math.min(initialChunkIndex ?? 0, maxIdx) : 0;
+    setChunkIndex(startIdx);
+    chunkRef.current = startIdx;
 
     if (autoPlay && chunksRef.current.length > 0) {
       setIsBuffering(true);
@@ -359,6 +371,16 @@ export function useNativeTTSPlayer(
     setTtsError(null);
     const bridge = getTtsBridge();
     if (!bridge) return;
+
+    // Sync JS state with native before acting — if JS thinks we are playing
+    // but the native service isn't (e.g. playChunksWithId was silently dropped
+    // because the service wasn't bound yet), treat as "not playing" so the
+    // user's first tap starts audio rather than incorrectly pausing.
+    if (playingRef.current && !bridge.isPlaying()) {
+      playingRef.current = false;
+      setIsPlaying(false);
+      setIsBuffering(false);
+    }
 
     if (playingRef.current) {
       bridge.pausePlayback();

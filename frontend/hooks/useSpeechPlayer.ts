@@ -511,11 +511,39 @@ export function useSpeechPlayer(
     [],
   );
 
+  // Resume playback when the screen turns back on.
+  // With screen off the browser may suspend JS mid-chunk-fetch; the audio
+  // element ends up paused while stoppedRef is still false (we think we're
+  // playing). Re-start the current chunk so playback continues seamlessly.
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState !== "visible") return;
+      const audio = audioRef.current;
+      if (!audio || stoppedRef.current) return; // not playing, nothing to do
+      if (!audio.paused) return; // still running, nothing to do
+
+      if (modeRef.current === "full") {
+        audio.play().catch(() => {});
+      } else {
+        // Re-enter the chunk loop at the current position
+        playChunkRef.current!(chunkRef.current);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () =>
+      document.removeEventListener("visibilitychange", handleVisibility);
+  }, []);
+
   const toggle = useCallback(() => {
     const audio = audioRef.current!;
+    // Use the ref (not state) to determine current play state.
+    // State values captured in a useCallback closure can be stale when toggle
+    // is called from outside React (e.g. sleep timer setInterval, mediaSession),
+    // causing the wrong branch to execute. stoppedRef is always up-to-date.
+    const playing = !stoppedRef.current;
     if (modeRef.current === "full") {
       if (!fullBlobUrlRef.current) return;
-      if (isPlaying || isBuffering) {
+      if (playing) {
         audio.pause();
         stoppedRef.current = true;
         setIsPlaying(false);
@@ -530,7 +558,7 @@ export function useSpeechPlayer(
       }
     } else {
       if (!chunksRef.current.length) return;
-      if (isPlaying || isBuffering) {
+      if (playing) {
         audio.pause();
         stoppedRef.current = true;
         setIsPlaying(false);
@@ -541,7 +569,7 @@ export function useSpeechPlayer(
         playChunkRef.current!(chunkRef.current);
       }
     }
-  }, [isPlaying, isBuffering]);
+  }, []);
 
   const changeRate = useCallback((newRate: number) => {
     rateRef.current = newRate;

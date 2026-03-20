@@ -53,7 +53,7 @@ export default function AddChapterClient() {
         title: title.trim(),
         text_content: textContent.trim(),
       });
-      router.push(`/books/${bookId}`);
+      router.push(`/book?id=${bookId}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Lỗi không xác định";
       if (message.includes("409") || message.toLowerCase().includes("conflict")) {
@@ -76,7 +76,7 @@ export default function AddChapterClient() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
         </svg>
         {book ? (
-          <Link href={`/books/${bookId}`} className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors truncate max-w-40">
+          <Link href={`/book?id=${bookId}`} className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors truncate max-w-40">
             {book.title}
           </Link>
         ) : (
@@ -128,7 +128,7 @@ export default function AddChapterClient() {
             {isSubmitting ? <><Spinner className="w-4 h-4" />Đang lưu...</> : "Lưu chương"}
           </button>
           <Link
-            href={`/books/${bookId}`}
+            href={`/book?id=${bookId}`}
             className="px-5 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 font-medium hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors text-sm"
           >
             Hủy

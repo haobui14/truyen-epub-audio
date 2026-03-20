@@ -32,7 +32,7 @@ export function BookCard({ book }: { book: Book }) {
     <>
       <div className="relative group">
         <Link
-          href={`/books/${book.id}`}
+          href={`/book?id=${book.id}`}
           className="block bg-white dark:bg-gray-800 rounded-xl shadow-sm hover:shadow-lg card-hover overflow-hidden border border-gray-100 dark:border-gray-700/80"
         >
           <div className="aspect-2/3 bg-linear-to-br from-indigo-50 to-purple-50 dark:from-indigo-950 dark:to-purple-950 relative overflow-hidden">

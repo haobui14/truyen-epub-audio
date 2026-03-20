@@ -1,13 +1,14 @@
 "use client";
 import { useState, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams, usePathname } from "next/navigation";
+import { useRouter, useSearchParams, useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { isLoggedIn } from "@/lib/auth";
 import { useProgressSync } from "@/hooks/useProgressSync";
 import { Spinner } from "@/components/ui/Spinner";
 import { getLocalProgress, saveLocalBookProgress } from "@/lib/progressQueue";
+import type { Chapter } from "@/types";
 
 const FONT_SIZES = [14, 16, 18, 20, 22, 24] as const;
 const FONT_KEY = "reader-font-size";
@@ -40,8 +41,9 @@ const FONT_FAMILIES = [
 ];
 
 export default function ReadPage() {
-  const bookId = usePathname().split("/")[2];
+  const params = useParams();
   const searchParams = useSearchParams();
+  const bookId = (searchParams.get("id") || (params?.bookId as string) || "") as string;
   const chapterId = searchParams.get("chapter");
   const router = useRouter();
   const contentRef = useRef<HTMLDivElement>(null);
@@ -137,9 +139,9 @@ export default function ReadPage() {
   }, [bookId, chapterId, currentIndex]);
 
   const navigateTo = useCallback(
-    (chapter: typeof currentChapter) => {
+    (chapter: Chapter | null) => {
       if (chapter) {
-        router.push(`/books/${bookId}/read?chapter=${chapter.id}`);
+        router.push(`/read?id=${bookId}&chapter=${chapter.id}`);
       }
     },
     [bookId, router]
@@ -210,7 +212,7 @@ export default function ReadPage() {
     return (
       <div className="text-center py-24 text-gray-500">
         Không có chương nào được chọn.{" "}
-        <Link href={`/books/${bookId}`} className="text-indigo-600 underline">
+        <Link href={`/book?id=${bookId}`} className="text-indigo-600 underline">
           Quay lại
         </Link>
       </div>
@@ -232,7 +234,7 @@ export default function ReadPage() {
       {/* Top bar */}
       <div className="flex items-center justify-between mb-4 gap-3">
         <Link
-          href={`/books/${bookId}`}
+          href={`/book?id=${bookId}`}
           className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -245,7 +247,7 @@ export default function ReadPage() {
         <div className="flex items-center gap-2">
           {/* Listen link */}
           <Link
-            href={`/books/${bookId}/listen?chapter=${chapterId}`}
+            href={`/listen?id=${bookId}&chapter=${chapterId}`}
             className="flex items-center gap-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 px-3 py-1.5 rounded-lg hover:bg-indigo-100 dark:hover:bg-indigo-950 transition-colors"
           >
             <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">

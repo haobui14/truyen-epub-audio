@@ -12,7 +12,7 @@ export function MiniPlayer() {
 
   const { book, chapter } = track;
   const progressPct = Math.round(progress * 100);
-  const listenUrl = `/books/${track.bookId}/listen?chapter=${track.chapterId}`;
+  const listenUrl = `/listen?id=${track.bookId}&chapter=${track.chapterId}`;
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-50 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md border-t border-gray-200 dark:border-gray-800 shadow-lg" style={{ paddingBottom: "var(--sab)" }}>

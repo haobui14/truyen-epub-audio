@@ -1,8 +1,8 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { usePathname } from "next/navigation";
+import { useSearchParams, useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { isLoggedIn, isAdmin } from "@/lib/auth";
@@ -13,9 +13,18 @@ import {
   cacheChapterText,
   isChapterTextCached,
 } from "@/lib/chapterTextCache";
+import { getLocalBookProgress } from "@/lib/progressQueue";
+import {
+  getCachedBook,
+  cacheBook,
+  getCachedChapters,
+  cacheChapters,
+} from "@/lib/bookCache";
 
 export default function BookDetailPage() {
-  const bookId = usePathname().split("/")[2];
+  const params = useParams();
+  const searchParams = useSearchParams();
+  const bookId = (searchParams.get("id") || (params?.bookId as string) || "") as string;
   const [page, setPage] = useState(1);
   const [admin, setAdmin] = useState(false);
   const [dlProgress, setDlProgress] = useState<{
@@ -36,7 +45,17 @@ export default function BookDetailPage() {
     isLoading: bookLoading,
   } = useQuery({
     queryKey: ["book", bookId],
-    queryFn: () => api.getBook(bookId),
+    queryFn: async () => {
+      try {
+        const data = await api.getBook(bookId);
+        cacheBook(data).catch(() => {});
+        return data;
+      } catch {
+        const cached = await getCachedBook(bookId);
+        if (cached) return cached;
+        throw new Error("offline");
+      }
+    },
     refetchInterval: (query) => {
       const status = query.state.data?.status;
       return status === "pending" || status === "parsing" ? 2000 : false;
@@ -48,29 +67,58 @@ export default function BookDetailPage() {
 
   const { data: chaptersData, isLoading: chaptersLoading } = useQuery({
     queryKey: ["chapters", bookId, page],
-    queryFn: () => api.getBookChapters(bookId, page),
+    queryFn: async () => {
+      try {
+        const data = await api.getBookChapters(bookId, page);
+        cacheChapters(bookId, page, data).catch(() => {});
+        return data;
+      } catch {
+        const cached = await getCachedChapters(bookId, page);
+        if (cached) return cached;
+        throw new Error("offline");
+      }
+    },
     enabled: !!book && !isParsing,
   });
 
-  // Fetch last-accessed chapter so buttons resume where user left off
+  // Fetch last-accessed chapter so buttons resume where user left off.
+  // Falls back to local IndexedDB progress when offline.
   const { data: bookProgress } = useQuery({
     queryKey: ["bookProgress", bookId],
-    queryFn: () => api.getBookProgress(bookId),
+    queryFn: async () => {
+      try {
+        return await api.getBookProgress(bookId);
+      } catch {
+        const local = await getLocalBookProgress(bookId);
+        if (!local) return null;
+        return {
+          id: "",
+          user_id: "",
+          book_id: local.book_id,
+          chapter_id: local.chapter_id,
+          progress_value: local.progress_value,
+          total_value: local.total_value,
+          updated_at: new Date(local.updated_at).toISOString(),
+        };
+      }
+    },
     enabled: !!book && isLoggedIn(),
   });
 
   // Read + listen share one DB progress row (progress_type was removed).
   // The listen page saves its own last-chapter to localStorage so "Continue
   // Listening" resumes at the correct audio chapter even when reading got ahead.
-  const [lastListenChapterId, setLastListenChapterId] = useState<string | null>(null);
-  useEffect(() => {
-    const stored = localStorage.getItem(`listen-chapter:${bookId}`);
-    setLastListenChapterId(stored);
-  }, [bookId]);
+  const lastListenChapterId = useMemo(
+    () => localStorage.getItem(`listen-chapter:${bookId}`),
+    [bookId],
+  );
 
   async function handleDownloadBook() {
     if (dlProgress) return;
     setDlDone(false);
+
+    // Cache book metadata so it's available offline
+    if (book) cacheBook(book).catch(() => {});
 
     // Paginate through all chapters (Supabase caps at 1000 per query)
     const PAGE_SIZE = 1000;
@@ -78,6 +126,8 @@ export default function BookDetailPage() {
     let pg = 1;
     while (true) {
       const res = await api.getBookChapters(bookId, pg, PAGE_SIZE);
+      // Cache each page of chapters for offline browsing
+      cacheChapters(bookId, pg, res).catch(() => {});
       allChapters.push(...res.items);
       if (pg >= res.total_pages) break;
       pg++;
@@ -284,7 +334,7 @@ export default function BookDetailPage() {
               <Link
                 href={
                   listenResumeId
-                    ? `/books/${bookId}/listen?chapter=${listenResumeId}`
+                    ? `/listen?id=${bookId}&chapter=${listenResumeId}`
                     : "#"
                 }
                 className="flex items-center gap-3 px-4 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 active:scale-[0.98] transition-all text-white group"
@@ -312,7 +362,7 @@ export default function BookDetailPage() {
               <Link
                 href={
                   readResumeId
-                    ? `/books/${bookId}/read?chapter=${readResumeId}`
+                    ? `/read?id=${bookId}&chapter=${readResumeId}`
                     : "#"
                 }
                 className="flex items-center gap-3 px-4 py-3.5 rounded-xl bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 active:bg-gray-300 dark:active:bg-gray-500 active:scale-[0.98] transition-all text-gray-800 dark:text-gray-200 group"

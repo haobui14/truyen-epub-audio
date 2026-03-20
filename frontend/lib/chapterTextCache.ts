@@ -47,3 +47,29 @@ export async function isChapterTextCached(
   const text = await getCachedChapterText(chapterId);
   return text !== null;
 }
+
+/** Return all chapter IDs that have text cached in IndexedDB. */
+export async function getAllCachedChapterIds(): Promise<string[]> {
+  try {
+    const db = await openOfflineDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, "readonly");
+      const req = tx.objectStore(STORE_NAME).getAllKeys();
+      req.onsuccess = () => resolve(req.result as string[]);
+      req.onerror = () => resolve([]);
+    });
+  } catch {
+    return [];
+  }
+}
+
+/** Delete a single chapter's cached text (e.g. to free space). */
+export async function evictChapterText(chapterId: string): Promise<void> {
+  try {
+    const db = await openOfflineDB();
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    tx.objectStore(STORE_NAME).delete(chapterId);
+  } catch {
+    // ignore
+  }
+}

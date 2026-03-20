@@ -1,10 +1,6 @@
 import { Suspense } from "react";
-import BookDetailClient from "./BookDetailClient";
+import BookDetailClient from "../books/[bookId]/BookDetailClient";
 import { Spinner } from "@/components/ui/Spinner";
-
-export function generateStaticParams() {
-  return [{ bookId: "placeholder" }];
-}
 
 export default function Page() {
   return (

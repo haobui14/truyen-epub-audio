@@ -71,7 +71,7 @@ export default function EditBookClient() {
         <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
         </svg>
-        <Link href={`/books/${bookId}`} className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors truncate max-w-xs">{book.title}</Link>
+        <Link href={`/book?id=${bookId}`} className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors truncate max-w-xs">{book.title}</Link>
         <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
         </svg>

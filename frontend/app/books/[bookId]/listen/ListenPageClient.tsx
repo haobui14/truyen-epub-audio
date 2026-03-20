@@ -8,7 +8,7 @@ import {
   useMemo,
 } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams, usePathname } from "next/navigation";
+import { useRouter, useSearchParams, useParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { isLoggedIn } from "@/lib/auth";
@@ -20,7 +20,9 @@ import {
   cacheChapterText,
   isChapterTextCached,
   getCachedChapterText,
+  getAllCachedChapterIds,
 } from "@/lib/chapterTextCache";
+import { isNativePlatform } from "@/lib/capacitor";
 import {
   getLocalProgress,
   saveLocalBookProgress,
@@ -33,8 +35,9 @@ import { getTtsBridge } from "@/lib/backgroundLock";
 import { splitIntoChunks as splitChunks } from "@/lib/textChunks";
 
 export default function ListenPage() {
-  const bookId = usePathname().split("/")[2];
+  const params = useParams();
   const searchParams = useSearchParams();
+  const bookId = (searchParams.get("id") || (params?.bookId as string) || "") as string;
   const chapterId = searchParams.get("chapter");
   const autoPlay = searchParams.get("autoplay") === "1";
   const router = useRouter();
@@ -58,10 +61,15 @@ export default function ListenPage() {
     queryFn: () => api.getAllBookChapters(bookId),
   });
 
-  // Fetch text for the current chapter — falls back to IndexedDB cache when offline
+  // Fetch text for the current chapter — on native checks IndexedDB first,
+  // then falls back to IndexedDB again if the API call fails.
   const { data: chapterText, isLoading: isLoadingText } = useQuery({
     queryKey: ["chapterText", chapterId],
     queryFn: async () => {
+      if (isNativePlatform()) {
+        const cached = await getCachedChapterText(chapterId!);
+        if (cached) return { id: chapterId!, text_content: cached };
+      }
       try {
         return await api.getChapterText(chapterId!);
       } catch {
@@ -161,7 +169,7 @@ export default function ListenPage() {
   const navigateTo = useCallback(
     (chapter: typeof currentChapter, autoplay = false) => {
       if (chapter) {
-        const url = `/books/${bookId}/listen?chapter=${chapter.id}${autoplay ? "&autoplay=1" : ""}`;
+        const url = `/listen?id=${bookId}&chapter=${chapter.id}${autoplay ? "&autoplay=1" : ""}`;
         router.push(url);
       }
     },
@@ -231,6 +239,7 @@ export default function ListenPage() {
 
   const [isCached, setIsCached] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [cachedIds, setCachedIds] = useState<Set<string>>(new Set());
   const [showText, setShowText] = useState(false);
   const [chapterSearch, setChapterSearch] = useState("");
   const [showEditModal, setShowEditModal] = useState(false);
@@ -264,6 +273,12 @@ export default function ListenPage() {
     if (!chapterId) return;
     isChapterTextCached(chapterId).then(setIsCached);
   }, [chapterId]);
+
+  // Load all cached chapter IDs for per-chapter offline badges (native only)
+  useEffect(() => {
+    if (!isNativePlatform()) return;
+    getAllCachedChapterIds().then((ids) => setCachedIds(new Set(ids)));
+  }, []);
 
   // ── Sync JS with native service on app resume (screen on / tab visible) ──
   // When the WebView is suspended (screen off), native auto-advances chapters
@@ -300,7 +315,7 @@ export default function ListenPage() {
           syncBookProgressToServer(bookId).catch(() => {});
 
           const nativePlaying = bridge.isPlaying();
-          const url = `/books/${bookId}/listen?chapter=${nativeChapterId}${nativePlaying ? "&autoplay=1" : ""}`;
+          const url = `/listen?id=${bookId}&chapter=${nativeChapterId}${nativePlaying ? "&autoplay=1" : ""}`;
           router.replace(url);
         }
       } else {
@@ -339,8 +354,10 @@ export default function ListenPage() {
       return;
     }
 
-    // Clear old queue first (manual navigation or voice/rate/pitch change)
-    bridge.clearNextChapter();
+    // Do NOT call clearNextChapter() here. queueAllChapters() replaces the
+    // queue atomically, so a prior explicit clear creates a race window where
+    // the queue is empty. If native finishes the last queued chapter during
+    // that window it fires native-tts-done and the player stops.
 
     // Gather the next chapters after the current one.
     // Capped at 10 to prevent native from auto-playing hundreds of chapters
@@ -409,10 +426,12 @@ export default function ListenPage() {
       }
 
       // Phase 2: fetch uncached chapters from API and accumulate.
+      // Skip entirely when offline — no point hitting a dead network.
       // We intentionally do NOT call queueNextChapter here — it replaces the
       // single "next chapter" slot on each call, so N calls leave only the
       // last chapter queued (causing ch45 → ch55 jumps).
       // Instead we collect everything and call queueAllChapters ONCE at the end.
+      if (!navigator.onLine) return;
       const uncached = remainingChapters.filter((ch) => !chunkMap.has(ch.id));
       for (const ch of uncached) {
         if (cancelled) break;
@@ -477,6 +496,7 @@ export default function ListenPage() {
     setIsSaving(true);
     await cacheChapterText(chapterId, chapterTextContent);
     setIsCached(true);
+    setCachedIds((prev) => new Set([...prev, chapterId!]));
     setIsSaving(false);
   }
 
@@ -579,7 +599,7 @@ export default function ListenPage() {
               wasAutoAdvanceRef.current = true;
               autoPlayNextRef.current = true;
               router.push(
-                `/books/${bookId}/listen?chapter=${nativeChapterId}&autoplay=1`,
+                `/listen?id=${bookId}&chapter=${nativeChapterId}&autoplay=1`,
               );
               return;
             }
@@ -627,7 +647,7 @@ export default function ListenPage() {
     return (
       <div className="text-center py-24 text-gray-500">
         Không có chương nào được chọn.{" "}
-        <Link href={`/books/${bookId}`} className="text-indigo-600 underline">
+        <Link href={`/book?id=${bookId}`} className="text-indigo-600 underline">
           Quay lại
         </Link>
       </div>
@@ -647,7 +667,7 @@ export default function ListenPage() {
       {/* Top bar */}
       <div className="flex items-center justify-between mb-4">
         <Link
-          href={`/books/${bookId}`}
+          href={`/book?id=${bookId}`}
           className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
         >
           <svg
@@ -669,7 +689,7 @@ export default function ListenPage() {
           <span className="sm:hidden">Quay lại</span>
         </Link>
         <Link
-          href={`/books/${bookId}/read?chapter=${chapterId}`}
+          href={`/read?id=${bookId}&chapter=${chapterId}`}
           className="text-xs text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors flex items-center gap-1"
         >
           <svg
@@ -883,16 +903,33 @@ export default function ListenPage() {
                       key={ch.id}
                       ref={ch.id === chapterId ? activeChapterRef : null}
                       onClick={() => navigateTo(ch)}
-                      className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
+                      className={`w-full text-left px-4 py-2.5 text-sm transition-colors flex items-center justify-between gap-2 ${
                         ch.id === chapterId
                           ? "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-medium"
                           : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60"
                       }`}
                     >
-                      <span className="text-[11px] font-mono text-gray-300 dark:text-gray-600 mr-2 tabular-nums">
-                        {String(ch.chapter_index + 1).padStart(2, "0")}
+                      <span>
+                        <span className="text-[11px] font-mono text-gray-300 dark:text-gray-600 mr-2 tabular-nums">
+                          {String(ch.chapter_index + 1).padStart(2, "0")}
+                        </span>
+                        {ch.title}
                       </span>
-                      {ch.title}
+                      {isNativePlatform() && cachedIds.has(ch.id) && (
+                        <svg
+                          className="w-3 h-3 shrink-0 text-emerald-400 dark:text-emerald-500"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M5 13l4 4L19 7"
+                          />
+                        </svg>
+                      )}
                     </button>
                   ))
                 )}

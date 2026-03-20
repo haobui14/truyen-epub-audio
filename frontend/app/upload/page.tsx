@@ -45,7 +45,7 @@ export default function UploadPage() {
         cover,
         setUploadProgress,
       );
-      router.push(`/books/${result.book_id}`);
+      router.push(`/book?id=${result.book_id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload thất bại");
       setIsUploading(false);

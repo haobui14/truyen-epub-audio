@@ -177,7 +177,11 @@ export function SpeechPlayer() {
               )
             ) : (
               <span className="text-[11px] text-gray-300 dark:text-gray-600 italic">
-                {isLoadingText ? "Đang tải..." : "Sẵn sàng"}
+                {isLoadingText
+                  ? "Đang tải..."
+                  : !track.text && mode !== "full"
+                  ? "Không có nội dung"
+                  : "Sẵn sàng"}
               </span>
             )}
           </div>
