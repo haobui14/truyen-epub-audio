@@ -1,3 +1,4 @@
+from typing import Optional
 from pydantic_settings import BaseSettings
 
 
@@ -8,6 +9,8 @@ class Settings(BaseSettings):
     allowed_origins: str = "http://localhost:3000"
     max_upload_size_mb: int = 50
     tts_voice_default: str = "vi-VN-HoaiMyNeural"
+    openai_api_key: Optional[str] = None
+    openai_model: str = "gpt-4.5"
 
     @property
     def cors_origins(self) -> list[str]:

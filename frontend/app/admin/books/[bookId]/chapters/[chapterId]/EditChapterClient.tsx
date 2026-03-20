@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter, useParams, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -29,6 +29,9 @@ export default function EditChapterClient() {
   const [deleting, setDeleting] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [aiFixing, setAiFixing] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const aiAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!isAdmin()) router.replace("/");
@@ -47,6 +50,7 @@ export default function EditChapterClient() {
     queryKey: ["chapters", bookId, sidebarPage, SIDEBAR_PAGE_SIZE],
     queryFn: () => api.getBookChapters(bookId, sidebarPage, SIDEBAR_PAGE_SIZE),
     enabled: !!bookId,
+    refetchOnWindowFocus: false,
   });
 
   // Current chapter metadata (not new)
@@ -54,6 +58,7 @@ export default function EditChapterClient() {
     queryKey: ["chapter", chapterId],
     queryFn: () => api.getChapter(chapterId),
     enabled: !isNew && !!chapterId,
+    refetchOnWindowFocus: false,
   });
 
   // Current chapter text (not new)
@@ -61,6 +66,7 @@ export default function EditChapterClient() {
     queryKey: ["chapterText", chapterId],
     queryFn: () => api.getChapterText(chapterId),
     enabled: !isNew && !!chapterId,
+    refetchOnWindowFocus: false,
   });
 
   // Populate form when data loads (or when chapterId changes)
@@ -168,6 +174,34 @@ export default function EditChapterClient() {
     }
   }
 
+  async function handleAiFix() {
+    if (!textContent.trim() || isNew) return;
+    aiAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    aiAbortRef.current = ctrl;
+    setAiFixing(true);
+    setAiError(null);
+    const original = textContent;
+    setTextContent("");
+    try {
+      await api.aiFixChapter(
+        chapterId,
+        original,
+        (_delta, accumulated) => setTextContent(accumulated),
+        ctrl.signal,
+      );
+    } catch (err) {
+      if ((err as Error).name === "AbortError") {
+        setTextContent(original); // restore on cancel
+      } else {
+        setAiError(err instanceof Error ? err.message : "Lỗi AI");
+        setTextContent(original);
+      }
+    } finally {
+      setAiFixing(false);
+    }
+  }
+
   const sidebarChapters = sidebarData?.items ?? [];
   const sidebarTotalPages = sidebarData?.total_pages ?? 1;
   const editBasePath = `/admin/edit-chapter?bookId=${bookId}&id=`;
@@ -246,7 +280,7 @@ export default function EditChapterClient() {
                 return (
                   <li key={ch.id}>
                     <Link
-                      href={`${editBasePath}/${ch.id}`}
+                      href={`${editBasePath}${ch.id}`}
                       className={`flex items-center gap-2 px-3 py-2.5 text-xs transition-colors ${
                         isActive
                           ? "bg-indigo-600 text-white"
@@ -371,20 +405,60 @@ export default function EditChapterClient() {
                 <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
                   Nội dung *
                 </label>
-                {textContent && (
-                  <span className="text-xs text-gray-400 dark:text-gray-500">
-                    {textContent.split(/\s+/).filter(Boolean).length.toLocaleString()} từ
-                  </span>
-                )}
+                <div className="flex items-center gap-2">
+                  {textContent && (
+                    <span className="text-xs text-gray-400 dark:text-gray-500">
+                      {textContent.split(/\s+/).filter(Boolean).length.toLocaleString()} từ
+                    </span>
+                  )}
+                  {!isNew && (
+                    <button
+                      type="button"
+                      onClick={aiFixing ? () => aiAbortRef.current?.abort() : handleAiFix}
+                      disabled={!textContent.trim()}
+                      className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors disabled:opacity-40 ${
+                        aiFixing
+                          ? "bg-purple-50 dark:bg-purple-950/30 border-purple-300 dark:border-purple-700 text-purple-600 dark:text-purple-400 hover:bg-purple-100 dark:hover:bg-purple-950/50"
+                          : "border-purple-200 dark:border-purple-800 text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950/30"
+                      }`}
+                    >
+                      {aiFixing ? (
+                        <>
+                          <Spinner className="w-3 h-3" />
+                          Huỷ
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3l14 9-14 9V3z" />
+                          </svg>
+                          Sửa AI
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
               </div>
+              {aiError && (
+                <div className="mb-2 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+                  {aiError}
+                </div>
+              )}
               <textarea
                 value={textContent}
                 onChange={(e) => setTextContent(e.target.value)}
                 required
                 rows={16}
                 placeholder="Nhập nội dung chương..."
-                className="w-full px-3 py-2.5 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-y font-mono leading-relaxed"
+                disabled={aiFixing}
+                className="w-full px-3 py-2.5 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-y font-mono leading-relaxed disabled:opacity-60"
               />
+              {aiFixing && (
+                <p className="mt-1.5 text-xs text-purple-500 dark:text-purple-400 flex items-center gap-1.5">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
+                  GPT đang xử lý...
+                </p>
+              )}
             </div>
 
             {saveError && (

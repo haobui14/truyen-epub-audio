@@ -376,4 +376,48 @@ export const api = {
     request<void>(`/api/genres/assign/${bookId}/${genreId}`, {
       method: "DELETE",
     }),
+
+  // AI fix — streams SSE chunks, calls onChunk with each text delta, returns full text
+  aiFixChapter: async (
+    chapterId: string,
+    text: string,
+    onChunk: (delta: string, accumulated: string) => void,
+    signal?: AbortSignal,
+  ): Promise<string> => {
+    const { getToken } = await import("./auth");
+    const { API_URL } = await import("./constants");
+    const token = getToken();
+    const res = await fetch(`${API_URL}/api/chapters/${chapterId}/ai-fix`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ text }),
+      signal,
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(err || `HTTP ${res.status}`);
+    }
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let accumulated = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const raw = decoder.decode(value, { stream: true });
+      for (const line of raw.split("\n")) {
+        if (!line.startsWith("data: ")) continue;
+        const payload = line.slice(6).trim();
+        if (payload === "[DONE]") break;
+        try {
+          const { text: delta } = JSON.parse(payload) as { text: string };
+          accumulated += delta;
+          onChunk(delta, accumulated);
+        } catch { /* ignore malformed chunks */ }
+      }
+    }
+    return accumulated;
+  },
 };

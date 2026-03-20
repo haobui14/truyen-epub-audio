@@ -1,10 +1,12 @@
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import StreamingResponse
 from typing import Optional
 from pydantic import BaseModel
 from app.database import get_client
 from app.dependencies import get_admin_user
 from app.models.chapter import ChapterResponse, AudioSummary
 from app.models.audio import AudioFileResponse
+from app.config import settings
 
 router = APIRouter(prefix="/api", tags=["chapters"])
 
@@ -145,6 +147,32 @@ async def delete_chapter(
     db.table("books").update({"total_chapters": new_total}).eq("id", book_id).execute()
 
     return {"deleted": chapter_id, "total_chapters": new_total}
+
+
+class AiFixRequest(BaseModel):
+    text: str
+
+
+@router.post("/chapters/{chapter_id}/ai-fix")
+async def ai_fix_chapter(
+    chapter_id: str,
+    body: AiFixRequest,
+    _admin: dict = Depends(get_admin_user),
+):
+    if not settings.openai_api_key:
+        raise HTTPException(status_code=503, detail="OPENAI_API_KEY not configured")
+    if not body.text.strip():
+        raise HTTPException(status_code=400, detail="Text is empty")
+
+    from app.services.ai_service import stream_ai_fix
+    return StreamingResponse(
+        stream_ai_fix(body.text),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 class BulkDeleteRequest(BaseModel):
