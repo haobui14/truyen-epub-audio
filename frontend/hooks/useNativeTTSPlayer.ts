@@ -234,9 +234,19 @@ export function useNativeTTSPlayer(
     lastAdvancedChapterRef.current = undefined;
 
     // If the native service auto-advanced to this chapter, DON'T stop it.
-    // It's already playing the right content.
+    // Also skip the stop if native is already playing this chapter — this
+    // guards against the visibility-change router.replace racing ahead of
+    // the queued native-tts-chapter-advance event (which would otherwise
+    // cause wasAutoAdvanced=false → stopPlayback → startNativePlayback(0)
+    // → replay from chunk 0 on lockscreen resume).
     if (isActive && !wasAutoAdvanced) {
-      getTtsBridge()?.stopPlayback();
+      const bridge = getTtsBridge();
+      const nativeChId = bridge?.getCurrentChapterId?.() ?? "";
+      const nativeAlreadyPlaying =
+        nativeChId === chapterId && (bridge?.isPlaying?.() ?? false);
+      if (!nativeAlreadyPlaying) {
+        bridge?.stopPlayback();
+      }
     }
 
     if (!isActive || !text) {
@@ -297,10 +307,25 @@ export function useNativeTTSPlayer(
     chunkRef.current = startIdx;
 
     if (autoPlay && chunksRef.current.length > 0) {
-      setIsBuffering(true);
-      acquireBackgroundLock();
-      // Start native playback immediately — no microtask defer
-      startNativePlayback(startIdx);
+      // Guard: if native is already playing this chapter (e.g., the
+      // visibility-change navigation fired before the native-tts-chapter-advance
+      // event), sync JS state instead of restarting from startIdx.
+      const bridge = getTtsBridge();
+      const nativeChId = bridge?.getCurrentChapterId?.() ?? "";
+      if (nativeChId === chapterId && (bridge?.isPlaying?.() ?? false)) {
+        const idx = bridge!.getCurrentChunk();
+        const safeIdx = idx >= 0 ? idx : 0;
+        setChunkIndex(safeIdx);
+        chunkRef.current = safeIdx;
+        playingRef.current = true;
+        setIsPlaying(true);
+        setIsBuffering(false);
+      } else {
+        setIsBuffering(true);
+        acquireBackgroundLock();
+        // Start native playback immediately — no microtask defer
+        startNativePlayback(startIdx);
+      }
     } else {
       playingRef.current = false;
       setIsPlaying(false);

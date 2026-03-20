@@ -4,6 +4,8 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.net.ConnectivityManager;
+import android.net.NetworkCapabilities;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -293,5 +295,31 @@ public class TtsBridge {
         mainHandler.post(() -> {
             if (service != null) service.cancelSleepTimer();
         });
+    }
+
+    /**
+     * Returns true when Android reports the device has an active network with
+     * internet capability. More reliable than {@code navigator.onLine} in a
+     * WebView — that flag can stay {@code true} while the network adapter is
+     * connected to a router with no internet, or lag behind on Wi-Fi handover.
+     */
+    @JavascriptInterface
+    public boolean isOnline() {
+        ConnectivityManager cm =
+                (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (cm == null) return true; // assume online if we can't check
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            android.net.Network net = cm.getActiveNetwork();
+            if (net == null) return false;
+            NetworkCapabilities caps = cm.getNetworkCapabilities(net);
+            return caps != null
+                    && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+        } else {
+            // Pre-M: fall back to deprecated activeNetworkInfo
+            @SuppressWarnings("deprecation")
+            android.net.NetworkInfo info = cm.getActiveNetworkInfo();
+            return info != null && info.isConnected();
+        }
     }
 }

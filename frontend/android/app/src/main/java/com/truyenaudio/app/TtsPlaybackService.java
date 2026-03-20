@@ -11,6 +11,7 @@ import android.content.pm.ServiceInfo;
 import android.media.AudioAttributes;
 import android.media.AudioFocusRequest;
 import android.media.AudioManager;
+import android.media.MediaPlayer;
 import android.os.Binder;
 import android.os.Build;
 import android.os.Bundle;
@@ -19,9 +20,14 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
+import android.view.KeyEvent;
+import android.support.v4.media.MediaMetadataCompat;
+import android.support.v4.media.session.MediaSessionCompat;
+import android.support.v4.media.session.PlaybackStateCompat;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 import androidx.media.app.NotificationCompat.MediaStyle;
+import androidx.media.session.MediaButtonReceiver;
 
 import java.util.ArrayList;
 import java.util.LinkedList;
@@ -100,6 +106,27 @@ public class TtsPlaybackService extends Service {
 
     private final IBinder binder      = new LocalBinder();
     private Handler       mainHandler;
+    private MediaSessionCompat mediaSession;
+
+    // Silent MediaPlayer — plays R.raw.silence at volume 0 before each TTS chunk.
+    // Android's TTS engine has its own internal MediaSession that steals earbud/
+    // BT button routing from our session. Playing "real" audio (even silence)
+    // via MediaPlayer makes Android consider our session as the active media
+    // player and stops the TTS engine's session from hijacking button events.
+    private MediaPlayer silentPlayer;
+
+    // Periodic re-assertion: TTS engine keeps re-activating its session while
+    // speaking. We fight back by re-asserting our session every 3 seconds.
+    private static final long REASSERT_INTERVAL_MS = 3_000;
+    private final Runnable reassertRunnable = new Runnable() {
+        @Override public void run() {
+            if (mediaSession != null && isPlaying) {
+                mediaSession.setActive(true);
+                updatePlaybackState(true);
+                mainHandler.postDelayed(this, REASSERT_INTERVAL_MS);
+            }
+        }
+    };
 
     // TTS engine
     private TextToSpeech  tts;
@@ -160,6 +187,7 @@ public class TtsPlaybackService extends Service {
         mainHandler   = new Handler(Looper.getMainLooper());
         audioManager  = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         createNotificationChannel();
+        setupMediaSession();
         initTts();
     }
 
@@ -169,6 +197,11 @@ public class TtsPlaybackService extends Service {
         // was used. Do it unconditionally here so we never hit the 5-second ANR
         // window, even when the service is started before playback begins.
         startForegroundNow();
+
+        // Route media button intents (earbuds / BT) to the MediaSession
+        if (mediaSession != null && intent != null) {
+            MediaButtonReceiver.handleIntent(mediaSession, intent);
+        }
 
         if (intent != null) {
             String action = intent.getAction();
@@ -201,10 +234,19 @@ public class TtsPlaybackService extends Service {
     public void onDestroy() {
         mainHandler.removeCallbacksAndMessages(null);
         abandonAudioFocus();
+        if (silentPlayer != null) {
+            silentPlayer.release();
+            silentPlayer = null;
+        }
         if (tts != null) {
             tts.stop();
             tts.shutdown();
             tts = null;
+        }
+        if (mediaSession != null) {
+            mediaSession.setActive(false);
+            mediaSession.release();
+            mediaSession = null;
         }
         stopForeground(true);
         super.onDestroy();
@@ -331,9 +373,74 @@ public class TtsPlaybackService extends Service {
         tts.setSpeechRate(currentRate);
         tts.setPitch(currentPitch);
 
+        // Play silent audio BEFORE tts.speak() so Android treats our
+        // MediaSession as the active media player. Without this, the TTS
+        // engine's internal session steals earbud/BT button routing.
+        playFakeSilence();
+        // Re-assert our session immediately + with delays to beat TTS engine's
+        // async session activation, and kick off the periodic loop.
+        reassertMediaSession();
+
         Bundle params = new Bundle();
         // Use utterance id "chunk_N" so the progress listener can echo index back
         tts.speak(currentChunks.get(idx), TextToSpeech.QUEUE_FLUSH, params, "chunk_" + idx);
+    }
+
+    /**
+     * Play R.raw.silence at volume 0 via MediaPlayer so Android treats our
+     * MediaSession as the active media-playing session. TTS alone does not
+     * register as real playback — the TTS engine activates its own internal
+     * MediaSession which would otherwise steal earbud button routing.
+     */
+    private void playFakeSilence() {
+        try {
+            if (silentPlayer != null) {
+                silentPlayer.release();
+                silentPlayer = null;
+            }
+            silentPlayer = MediaPlayer.create(this, R.raw.silence);
+            if (silentPlayer != null) {
+                silentPlayer.setAudioAttributes(new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build());
+                silentPlayer.setVolume(0f, 0f);
+                silentPlayer.setOnCompletionListener(mp -> {
+                    // Use `mp` (the specific completed instance), not the field,
+                    // to avoid releasing a newer player created for the next chunk.
+                    try { mp.release(); } catch (Exception ignored) {}
+                    if (silentPlayer == mp) silentPlayer = null;
+                });
+                silentPlayer.start();
+            }
+        } catch (Exception ignored) {
+            // Best-effort: don't crash if the resource is unavailable
+        }
+    }
+
+    /**
+     * Force our MediaSession to be the active one.
+     * Called after tts.speak() and tts.stop() because the TTS engine's
+     * internal MediaSession competes with ours asynchronously.
+     * We assert immediately and with short delays to cover the race window.
+     */
+    private void reassertMediaSession() {
+        if (mediaSession == null) return;
+        mainHandler.removeCallbacks(reassertRunnable);
+        // Immediate + staggered re-assertions to win the race against TTS engine
+        mediaSession.setActive(true);
+        updatePlaybackState(isPlaying);
+        mainHandler.postDelayed(() -> {
+            if (mediaSession != null) { mediaSession.setActive(true); updatePlaybackState(isPlaying); }
+        }, 300);
+        mainHandler.postDelayed(() -> {
+            if (mediaSession != null) { mediaSession.setActive(true); updatePlaybackState(isPlaying); }
+        }, 1_000);
+        mainHandler.postDelayed(() -> {
+            if (mediaSession != null) { mediaSession.setActive(true); updatePlaybackState(isPlaying); }
+        }, 2_500);
+        // Start the periodic loop to keep re-asserting while playing
+        if (isPlaying) mainHandler.postDelayed(reassertRunnable, REASSERT_INTERVAL_MS);
     }
 
     // ── Public API (called by TtsBridge, always on main thread via mainHandler.post) ──
@@ -351,18 +458,23 @@ public class TtsPlaybackService extends Service {
         currentChapterId = (chapterId != null) ? chapterId : "";
         chapterQueue.clear();
 
+        setMetadata(currentTitle);
+        if (mediaSession != null) mediaSession.setActive(true);
+
         if (!ttsReady) {
             // Buffer; startForeground was already called in onStartCommand
             ChapterItem item = new ChapterItem(chunks, chapterId, title, rate, pitch);
             pendingItem     = item;
             pendingStartIdx = startIdx;
             isPlaying       = true;
+            updatePlaybackState(true);
             updateNotification();
             return;
         }
 
         isPlaying = true;
         requestAudioFocus();
+        updatePlaybackState(true);
         updateNotification();
         speakChunk(startIdx);
     }
@@ -374,7 +486,9 @@ public class TtsPlaybackService extends Service {
     public void resumePlayback() {
         if (currentChunks == null || currentChunkIdx < 0) return;
         isPlaying = true;
+        if (mediaSession != null) mediaSession.setActive(true);
         requestAudioFocus();
+        updatePlaybackState(true);
         updateNotification();
         speakChunk(currentChunkIdx);
         dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-state'," +
@@ -383,6 +497,7 @@ public class TtsPlaybackService extends Service {
 
     public void stopPlayback() {
         mainHandler.removeCallbacks(sleepRunnable);
+        mainHandler.removeCallbacks(reassertRunnable);
         isPlaying        = false;
         currentChunks    = null;
         currentChunkIdx  = -1;
@@ -390,6 +505,8 @@ public class TtsPlaybackService extends Service {
         pendingItem      = null;
         chapterQueue.clear();
         if (tts != null) tts.stop();
+        updatePlaybackState(false);
+        if (mediaSession != null) mediaSession.setActive(false);
         abandonAudioFocus();
         dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-state'," +
                 "{detail:{playing:false,index:-1}}))");
@@ -409,6 +526,7 @@ public class TtsPlaybackService extends Service {
     public void updateTitle(String title) {
         if (title != null && !title.isEmpty()) {
             currentTitle = title;
+            setMetadata(title);
             updateNotification();
         }
     }
@@ -441,7 +559,12 @@ public class TtsPlaybackService extends Service {
     private void pauseInternal() {
         if (!isPlaying) return;
         isPlaying = false;
+        mainHandler.removeCallbacks(reassertRunnable);
         if (tts != null) tts.stop();
+        // Re-assert after tts.stop() because stopping TTS may activate its
+        // internal session, which would steal earbud resume button routing.
+        reassertMediaSession();
+        updatePlaybackState(false);
         updateNotification();
         dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-state'," +
                 "{detail:{playing:false,index:" + currentChunkIdx + "}}))");
@@ -454,6 +577,9 @@ public class TtsPlaybackService extends Service {
         currentChapterId = (item.chapterId != null) ? item.chapterId : "";
         if (item.title != null && !item.title.isEmpty()) currentTitle = item.title;
 
+        setMetadata(currentTitle);
+        if (mediaSession != null) mediaSession.setActive(true);
+        updatePlaybackState(true);
         updateNotification();
         speakChunk(startIdx);
     }
@@ -565,6 +691,7 @@ public class TtsPlaybackService extends Service {
                 .addAction(android.R.drawable.ic_media_next, "Tiếp", nextPi)
                 .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Dừng", stopPi)
                 .setStyle(new MediaStyle()
+                        .setMediaSession(mediaSession != null ? mediaSession.getSessionToken() : null)
                         .setShowActionsInCompactView(0, 1, 2));
 
         return builder.build();
@@ -581,5 +708,110 @@ public class TtsPlaybackService extends Service {
     private void updateNotification() {
         NotificationManager nm = getSystemService(NotificationManager.class);
         if (nm != null) nm.notify(NOTIFICATION_ID, buildNotification());
+    }
+
+    // ── MediaSession ──────────────────────────────────────────────────────────
+
+    @SuppressWarnings("deprecation")
+    private void setupMediaSession() {
+        mediaSession = new MediaSessionCompat(this, "TruyenAudioTTS");
+        mediaSession.setFlags(
+                MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS |
+                MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS);
+
+        Intent launchIntent = new Intent(this, MainActivity.class);
+        launchIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        PendingIntent sessionActivity = PendingIntent.getActivity(
+                this, 0, launchIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        mediaSession.setSessionActivity(sessionActivity);
+
+        // Route media button intents from earbuds/BT to this MediaSession
+        android.content.ComponentName mbr =
+                new android.content.ComponentName(this, TtsPlaybackService.class);
+        Intent mediaButtonIntent = new Intent(Intent.ACTION_MEDIA_BUTTON);
+        mediaButtonIntent.setComponent(mbr);
+        PendingIntent mbrPending = PendingIntent.getService(
+                this, 0, mediaButtonIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        mediaSession.setMediaButtonReceiver(mbrPending);
+
+        mediaSession.setCallback(new MediaSessionCompat.Callback() {
+            @Override
+            public boolean onMediaButtonEvent(Intent mediaButtonEvent) {
+                KeyEvent event = mediaButtonEvent.getParcelableExtra(Intent.EXTRA_KEY_EVENT);
+                if (event != null && event.getAction() == KeyEvent.ACTION_DOWN) {
+                    int keyCode = event.getKeyCode();
+                    if (keyCode == KeyEvent.KEYCODE_HEADSETHOOK
+                            || keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) {
+                        mainHandler.post(() -> { if (isPlaying) pausePlayback(); else resumePlayback(); });
+                        return true;
+                    }
+                    if (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY) {
+                        mainHandler.post(TtsPlaybackService.this::resumePlayback);
+                        return true;
+                    }
+                    if (keyCode == KeyEvent.KEYCODE_MEDIA_PAUSE) {
+                        mainHandler.post(TtsPlaybackService.this::pausePlayback);
+                        return true;
+                    }
+                    if (keyCode == KeyEvent.KEYCODE_MEDIA_STOP) {
+                        mainHandler.post(TtsPlaybackService.this::stopPlayback);
+                        return true;
+                    }
+                    if (keyCode == KeyEvent.KEYCODE_MEDIA_NEXT) {
+                        mainHandler.post(() -> dispatchJs(
+                                "window.dispatchEvent(new Event('native-media-next'))"));
+                        return true;
+                    }
+                    if (keyCode == KeyEvent.KEYCODE_MEDIA_PREVIOUS) {
+                        mainHandler.post(() -> dispatchJs(
+                                "window.dispatchEvent(new Event('native-media-prev'))"));
+                        return true;
+                    }
+                }
+                return super.onMediaButtonEvent(mediaButtonEvent);
+            }
+
+            @Override public void onPlay()  { mainHandler.post(TtsPlaybackService.this::resumePlayback); }
+            @Override public void onPause() { mainHandler.post(TtsPlaybackService.this::pausePlayback); }
+            @Override public void onStop()  { mainHandler.post(TtsPlaybackService.this::stopPlayback); }
+            @Override public void onSkipToPrevious() {
+                mainHandler.post(() -> dispatchJs(
+                        "window.dispatchEvent(new Event('native-media-prev'))"));
+            }
+            @Override public void onSkipToNext() {
+                mainHandler.post(() -> dispatchJs(
+                        "window.dispatchEvent(new Event('native-media-next'))"));
+            }
+        });
+
+        setMetadata(currentTitle);
+        updatePlaybackState(false);
+    }
+
+    private void updatePlaybackState(boolean playing) {
+        if (mediaSession == null) return;
+        long actions = PlaybackStateCompat.ACTION_PLAY
+                | PlaybackStateCompat.ACTION_PAUSE
+                | PlaybackStateCompat.ACTION_PLAY_PAUSE
+                | PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
+                | PlaybackStateCompat.ACTION_SKIP_TO_NEXT
+                | PlaybackStateCompat.ACTION_STOP;
+        int state = playing ? PlaybackStateCompat.STATE_PLAYING
+                            : PlaybackStateCompat.STATE_PAUSED;
+        mediaSession.setPlaybackState(new PlaybackStateCompat.Builder()
+                .setActions(actions)
+                .setState(state, PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, 1f)
+                .build());
+    }
+
+    private void setMetadata(String title) {
+        if (mediaSession == null) return;
+        mediaSession.setMetadata(new MediaMetadataCompat.Builder()
+                .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
+                .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Truy\u1ec7nAudio")
+                .putString(MediaMetadataCompat.METADATA_KEY_ALBUM,  "Truy\u1ec7nAudio")
+                .build());
     }
 }

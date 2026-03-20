@@ -1,7 +1,6 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
-import Image from "next/image";
 import { useSearchParams, useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
@@ -11,12 +10,17 @@ import { Spinner } from "@/components/ui/Spinner";
 import { GenreTag } from "@/components/books/GenreManager";
 import { cacheChapterText, isChapterTextCached } from "@/lib/chapterTextCache";
 import { getLocalBookProgress } from "@/lib/progressQueue";
+import { isNativePlatform } from "@/lib/capacitor";
 import {
   getCachedBook,
   cacheBook,
   getCachedChapters,
   cacheChapters,
+  cacheAllChapters,
+  getCachedCover,
+  cacheCover,
 } from "@/lib/bookCache";
+import type { Chapter } from "@/types";
 
 export default function BookDetailPage() {
   const params = useParams();
@@ -26,6 +30,7 @@ export default function BookDetailPage() {
     "") as string;
   const [page, setPage] = useState(1);
   const [admin, setAdmin] = useState(false);
+  const [coverSrc, setCoverSrc] = useState<string | undefined>(undefined);
   const [dlProgress, setDlProgress] = useState<{
     done: number;
     total: number;
@@ -38,6 +43,17 @@ export default function BookDetailPage() {
     window.addEventListener("auth-change", sync);
     return () => window.removeEventListener("auth-change", sync);
   }, []);
+
+  // On native, prefer the locally-cached data URL (works offline).
+  // On web, fall back to the remote cover_url directly.
+  useEffect(() => {
+    if (!bookId) return;
+    if (isNativePlatform()) {
+      getCachedCover(bookId)
+        .then((cached) => setCoverSrc(cached ?? undefined))
+        .catch(() => {});
+    }
+  }, [bookId]);
 
   const { data: book, isLoading: bookLoading } = useQuery({
     queryKey: ["book", bookId],
@@ -115,17 +131,48 @@ export default function BookDetailPage() {
     // Cache book metadata so it's available offline
     if (book) cacheBook(book).catch(() => {});
 
+    // Fetch and cache cover image as a base64 data URL for offline display
+    if (book?.cover_url) {
+      try {
+        const resp = await fetch(book.cover_url);
+        const blob = await resp.blob();
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+        await cacheCover(bookId, dataUrl);
+        setCoverSrc(dataUrl);
+      } catch {
+        // Cover caching is best-effort — skip on network error
+      }
+    }
+
     // Paginate through all chapters (Supabase caps at 1000 per query)
     const PAGE_SIZE = 1000;
-    const allChapters: { id: string }[] = [];
+    const allChapters: Chapter[] = [];
+    let lastRes: Awaited<ReturnType<typeof api.getBookChapters>> | null = null;
     let pg = 1;
     while (true) {
       const res = await api.getBookChapters(bookId, pg, PAGE_SIZE);
       // Cache each page of chapters for offline browsing
       cacheChapters(bookId, pg, res).catch(() => {});
       allChapters.push(...res.items);
+      lastRes = res;
       if (pg >= res.total_pages) break;
       pg++;
+    }
+    // Write a flat all-chapters snapshot so the listen page can load offline
+    // without stitching pages together.
+    if (lastRes && allChapters.length > 0) {
+      cacheAllChapters(bookId, {
+        ...lastRes,
+        items: allChapters,
+        total: allChapters.length,
+        page: 1,
+        total_pages: 1,
+      }).catch(() => {});
     }
 
     if (allChapters.length === 0) return;
@@ -251,13 +298,20 @@ export default function BookDetailPage() {
       <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden mb-6">
         <div className="flex gap-5 sm:gap-6 p-5 sm:p-6">
           <div className="w-28 sm:w-32 h-40 sm:h-44 rounded-xl overflow-hidden bg-linear-to-br from-indigo-50 to-purple-50 dark:from-indigo-950 dark:to-purple-950 shrink-0 shadow-md">
-            {book.cover_url ? (
-              <Image
-                src={book.cover_url}
+            {coverSrc ?? book.cover_url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={coverSrc ?? book.cover_url!}
                 alt={book.title}
-                width={128}
-                height={176}
                 className="object-cover w-full h-full"
+                onError={() => {
+                  // If remote URL fails (offline), try the cached data URL
+                  if (!coverSrc && book.cover_url) {
+                    getCachedCover(bookId)
+                      .then((c) => { if (c) setCoverSrc(c); })
+                      .catch(() => {});
+                  }
+                }}
               />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-indigo-200 dark:text-indigo-800">

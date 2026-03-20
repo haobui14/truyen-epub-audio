@@ -136,6 +136,8 @@ function Pagination({
   totalPages: number;
   onPageChange: (p: number) => void;
 }) {
+  const [inputVal, setInputVal] = useState("");
+
   if (totalPages <= 1) return null;
 
   // Build page numbers to show: always show first, last, current, and neighbors
@@ -158,65 +160,99 @@ function Pagination({
   if (page < totalPages - 2) pages.push("ellipsis");
   addPage(totalPages);
 
+  function handleGo(e: React.FormEvent) {
+    e.preventDefault();
+    const p = parseInt(inputVal, 10);
+    if (p >= 1 && p <= totalPages) {
+      onPageChange(p);
+      setInputVal("");
+    }
+  }
+
   return (
-    <div className="flex items-center justify-center gap-1 mt-4 pt-4 border-t border-gray-100 dark:border-gray-700">
-      <button
-        onClick={() => onPageChange(page - 1)}
-        disabled={page <= 1}
-        className="h-10 px-3 text-sm font-medium rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 active:bg-gray-200 dark:active:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-      >
-        <svg
-          className="w-4 h-4"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
+    <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700 space-y-2">
+      <div className="flex items-center justify-center gap-1">
+        <button
+          onClick={() => onPageChange(page - 1)}
+          disabled={page <= 1}
+          className="h-10 px-3 text-sm font-medium rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 active:bg-gray-200 dark:active:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
         >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M15 19l-7-7 7-7"
-          />
-        </svg>
-      </button>
-
-      {pages.map((p, i) =>
-        p === "ellipsis" ? (
-          <span
-            key={`ellipsis-${i}`}
-            className="px-1 text-gray-400 dark:text-gray-500 text-sm"
+          <svg
+            className="w-4 h-4"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
           >
-            …
-          </span>
-        ) : (
-          <PaginationButton
-            key={p}
-            page={p}
-            currentPage={page}
-            onClick={onPageChange}
-          />
-        ),
-      )}
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M15 19l-7-7 7-7"
+            />
+          </svg>
+        </button>
 
-      <button
-        onClick={() => onPageChange(page + 1)}
-        disabled={page >= totalPages}
-        className="h-10 px-3 text-sm font-medium rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 active:bg-gray-200 dark:active:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-      >
-        <svg
-          className="w-4 h-4"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
+        {pages.map((p, i) =>
+          p === "ellipsis" ? (
+            <span
+              key={`ellipsis-${i}`}
+              className="px-1 text-gray-400 dark:text-gray-500 text-sm"
+            >
+              …
+            </span>
+          ) : (
+            <PaginationButton
+              key={p}
+              page={p}
+              currentPage={page}
+              onClick={onPageChange}
+            />
+          ),
+        )}
+
+        <button
+          onClick={() => onPageChange(page + 1)}
+          disabled={page >= totalPages}
+          className="h-10 px-3 text-sm font-medium rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 active:bg-gray-200 dark:active:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
         >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M9 5l7 7-7 7"
-          />
-        </svg>
-      </button>
+          <svg
+            className="w-4 h-4"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M9 5l7 7-7 7"
+            />
+          </svg>
+        </button>
+      </div>
+
+      <form
+        onSubmit={handleGo}
+        className="flex items-center justify-center gap-2"
+      >
+        <span className="text-xs text-gray-400 dark:text-gray-500">Đến trang</span>
+        <input
+          type="number"
+          min={1}
+          max={totalPages}
+          value={inputVal}
+          onChange={(e) => setInputVal(e.target.value)}
+          placeholder={String(page)}
+          className="w-14 h-8 text-sm text-center border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
+        />
+        <span className="text-xs text-gray-400 dark:text-gray-500">/ {totalPages}</span>
+        <button
+          type="submit"
+          className="h-8 px-3 text-xs font-medium text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-700 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-colors"
+        >
+          Đến
+        </button>
+      </form>
     </div>
   );
 }

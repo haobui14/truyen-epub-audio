@@ -4,8 +4,8 @@
  */
 
 const DB_NAME = "truyen-audio-offline";
-// v4: added "books-list", "book-detail", "book-chapters" for offline browsing
-const DB_VERSION = 4;
+// v5: added "book-covers" for offline cover image cache
+const DB_VERSION = 5;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -44,6 +44,9 @@ export function openOfflineDB(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains("book-chapters")) {
         db.createObjectStore("book-chapters"); // key = "${bookId}:${page}"
+      }
+      if (!db.objectStoreNames.contains("book-covers")) {
+        db.createObjectStore("book-covers"); // key = bookId, value = data URL
       }
     };
     req.onsuccess = () => resolve(req.result);

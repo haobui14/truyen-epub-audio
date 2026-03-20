@@ -33,6 +33,13 @@ import { getUser } from "@/lib/auth";
 import { prefetchNextChapterAudio } from "@/hooks/useSpeechPlayer";
 import { getTtsBridge } from "@/lib/backgroundLock";
 import { splitIntoChunks as splitChunks } from "@/lib/textChunks";
+import {
+  getCachedBook,
+  cacheBook,
+  getCachedChapters,
+  getCachedAllChapters,
+  cacheAllChapters,
+} from "@/lib/bookCache";
 
 export default function ListenPage() {
   const params = useParams();
@@ -53,14 +60,53 @@ export default function ListenPage() {
     }
   }, [bookId, chapterId]);
 
-  const { data: book } = useQuery({
+  const { data: book, isPending: bookPending } = useQuery({
     queryKey: ["book", bookId],
-    queryFn: () => api.getBook(bookId),
+    queryFn: async () => {
+      try {
+        const data = await api.getBook(bookId);
+        cacheBook(data).catch(() => {});
+        return data;
+      } catch {
+        const cached = await getCachedBook(bookId);
+        if (cached) return cached;
+        throw new Error("offline");
+      }
+    },
+    retry: false,
+    staleTime: 60_000,
   });
 
-  const { data: chaptersData } = useQuery({
+  const { data: chaptersData, isPending: chaptersPending } = useQuery({
     queryKey: ["chapters", bookId, "all"],
-    queryFn: () => api.getAllBookChapters(bookId),
+    queryFn: async () => {
+      try {
+        const data = await api.getAllBookChapters(bookId);
+        // Cache the full flat list so offline fallback always has ALL chapters.
+        cacheAllChapters(bookId, data).catch(() => {});
+        return data;
+      } catch {
+        // Offline — try the dedicated all-chapters snapshot first (written
+        // whenever the listen page loads online; also written by handleDownloadBook).
+        const allCached = await getCachedAllChapters(bookId);
+        if (allCached) return allCached;
+        // Fall back to stitching together paginated caches (written by BookDetailClient).
+        const page1 = await getCachedChapters(bookId, 1);
+        if (!page1) throw new Error("offline");
+        if (page1.total_pages <= 1) return page1;
+        const rest = await Promise.all(
+          Array.from({ length: page1.total_pages - 1 }, (_, i) =>
+            getCachedChapters(bookId, i + 2),
+          ),
+        );
+        const allItems = [page1, ...rest.filter(Boolean)].flatMap(
+          (p) => p!.items,
+        );
+        return { ...page1, items: allItems };
+      }
+    },
+    retry: false,
+    staleTime: 60_000,
   });
 
   // Fetch text for the current chapter — on native checks IndexedDB first,
@@ -179,7 +225,7 @@ export default function ListenPage() {
   );
 
   const queryClient = useQueryClient();
-  const { setTrack, chunkIndex, totalChunks, voice, rate, pitch } =
+  const { setTrack, chunkIndex, totalChunks, voice, rate, pitch, isPlaying } =
     usePlayerContext();
 
   const { reportProgress } = useProgressSync({
@@ -264,6 +310,11 @@ export default function ListenPage() {
   // (can be unreliable on Capacitor static-export builds).
   const autoPlayNextRef = useRef(false);
 
+  // Always-current chapter ID ref — used by the visibility-change handler
+  // inside a setTimeout closure where the stale closure value would be wrong.
+  const chapterIdRef = useRef(chapterId);
+  chapterIdRef.current = chapterId;
+
   const chapterTextContent = chapterText?.text_content ?? null;
   const chunks = useMemo(
     () => (chapterTextContent ? splitIntoChunks(chapterTextContent) : []),
@@ -299,9 +350,6 @@ export default function ListenPage() {
         // Native advanced to a different chapter — save it to local DB first
         const targetChapter = allChapters.find((c) => c.id === nativeChapterId);
         if (targetChapter) {
-          // Save book-level progress for the native chapter BEFORE navigating.
-          // This ensures the local DB reflects the actual playback position
-          // even if the navigation or server sync fails.
           const nativeChunk = bridge.getCurrentChunk();
           saveLocalBookProgress({
             book_id: bookId,
@@ -310,10 +358,7 @@ export default function ListenPage() {
             progress_value: nativeChunk >= 0 ? nativeChunk : 0,
           });
 
-          // Update localStorage listen-chapter to match native
           localStorage.setItem(`listen-chapter:${bookId}`, nativeChapterId);
-
-          // Sync book progress to server (async, fire-and-forget)
           syncBookProgressToServer(bookId).catch(() => {});
 
           const nativePlaying = bridge.isPlaying();
@@ -427,14 +472,15 @@ export default function ListenPage() {
         bridge.queueAllChapters(JSON.stringify(initialQueue));
       }
 
-      // Phase 2: fetch uncached chapters from API and accumulate.
-      // Skip entirely when offline — no point hitting a dead network.
-      // We intentionally do NOT call queueNextChapter here — it replaces the
-      // single "next chapter" slot on each call, so N calls leave only the
-      // last chapter queued (causing ch45 → ch55 jumps).
-      // Instead we collect everything and call queueAllChapters ONCE at the end.
-      if (!navigator.onLine) return;
+      // Phase 2: fetch uncached chapters from API and queue each one as soon
+      // as its text arrives. This ensures the native service always has the
+      // next chapter ready before the current one finishes, so it can
+      // auto-advance in the background without needing a JS round-trip.
+      // Do NOT gate on navigator.onLine — it is unreliable in Capacitor's
+      // WebView (returns false even when connected). Let each fetch fail
+      // naturally; the catch block already handles network errors gracefully.
       const uncached = remainingChapters.filter((ch) => !chunkMap.has(ch.id));
+      let queuedLen = initialQueue.length;
       for (const ch of uncached) {
         if (cancelled) break;
         try {
@@ -442,7 +488,15 @@ export default function ListenPage() {
           if (data?.text_content) {
             queryClient.setQueryData(["chapterText", ch.id], data);
             const chunks = splitChunks(data.text_content);
-            if (chunks.length > 0) chunkMap.set(ch.id, chunks);
+            if (chunks.length > 0) {
+              chunkMap.set(ch.id, chunks);
+              // Queue immediately — don't wait for all chapters to be fetched.
+              const q = buildQueue();
+              if (!cancelled && q.length > queuedLen) {
+                bridge.queueAllChapters(JSON.stringify(q));
+                queuedLen = q.length;
+              }
+            }
           }
         } catch {
           /* offline or API error — skip */
@@ -451,10 +505,10 @@ export default function ListenPage() {
 
       if (cancelled) return;
 
-      // Send the complete ordered queue (replaces Phase 1's partial queue).
-      // Only called if Phase 2 actually added new chapters.
+      // Safety net: ensure the final queue state is registered in case the
+      // last incremental update was skipped due to ordering.
       const finalQueue = buildQueue();
-      if (finalQueue.length > initialQueue.length) {
+      if (finalQueue.length > queuedLen) {
         bridge.queueAllChapters(JSON.stringify(finalQueue));
       }
     })();
@@ -465,7 +519,7 @@ export default function ListenPage() {
     // nextChapterText intentionally excluded: it changes async when adjacent chapter
     // text loads, which would re-fire this effect and clear the native queue mid-play,
     // causing premature "done" events and chapter cascade skips.
-  }, [chapterId, voice, rate, pitch, allChapters, currentIndex, queryClient]);
+  }, [chapterId, voice, rate, pitch, allChapters, currentIndex, queryClient, isPlaying]);
 
   // ── Web streaming: prefetch first TTS audio chunks when near end ──
   useEffect(() => {
@@ -656,10 +710,31 @@ export default function ListenPage() {
     );
   }
 
-  if (!currentChapter || !book) {
+  if (bookPending || chaptersPending) {
     return (
       <div className="flex justify-center py-24">
         <Spinner className="w-8 h-8 text-indigo-600" />
+      </div>
+    );
+  }
+
+  if (!book || !currentChapter) {
+    return (
+      <div className="text-center py-24 text-gray-500">
+        <p className="mb-2">
+          {!book
+            ? "Không thể tải thông tin sách."
+            : "Không tìm thấy chương này."}
+        </p>
+        <p className="text-sm mb-4">
+          Vui lòng kết nối mạng hoặc tải sách offline trước khi nghe.
+        </p>
+        <Link
+          href={`/book?id=${bookId}`}
+          className="text-indigo-600 underline text-sm"
+        >
+          Quay lại
+        </Link>
       </div>
     );
   }
