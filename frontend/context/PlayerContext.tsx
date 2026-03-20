@@ -140,9 +140,18 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
   );
 
   // Destructure ttsError and pitch out so they are handled explicitly
-  const { ttsError: nativeTtsErr, pitch: nativePitch, changePitch: nativeChangePitch, ...nativePlayerRest } = nativePlayer;
+  const {
+    ttsError: nativeTtsErr,
+    pitch: nativePitch,
+    changePitch: nativeChangePitch,
+    ...nativePlayerRest
+  } = nativePlayer;
   const playerState = isNativeVoice
-    ? { ...nativePlayerRest, pitch: nativePitch, changePitch: nativeChangePitch }
+    ? {
+        ...nativePlayerRest,
+        pitch: nativePitch,
+        changePitch: nativeChangePitch,
+      }
     : { ...backendPlayer, pitch: 1, changePitch: () => {} };
 
   const { cacheStatuses } = useChapterAudioPreload(
@@ -163,7 +172,8 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
     const storedRate = localStorage.getItem(RATE_STORAGE_KEY);
     const storedPitch = localStorage.getItem(PITCH_STORAGE_KEY);
     if (storedRate) playerStateRef.current.changeRate(parseFloat(storedRate));
-    if (storedPitch) playerStateRef.current.changePitch(parseFloat(storedPitch));
+    if (storedPitch)
+      playerStateRef.current.changePitch(parseFloat(storedPitch));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 2. Fetch settings from backend when logged in
@@ -195,27 +205,38 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
     settingsSaveTimer.current = setTimeout(() => {
       const rate = parseFloat(localStorage.getItem(RATE_STORAGE_KEY) ?? "1");
       const pitch = parseFloat(localStorage.getItem(PITCH_STORAGE_KEY) ?? "1");
-      api.saveSettings({ playback_rate: rate, playback_pitch: pitch }).catch(() => {});
+      api
+        .saveSettings({ playback_rate: rate, playback_pitch: pitch })
+        .catch(() => {});
     }, 2000);
   }, []);
 
   // Clean up save timer on unmount
-  useEffect(() => () => {
-    if (settingsSaveTimer.current) clearTimeout(settingsSaveTimer.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (settingsSaveTimer.current) clearTimeout(settingsSaveTimer.current);
+    },
+    [],
+  );
 
   // 5. Wrapped changeRate / changePitch that also persist
-  const wrappedChangeRate = useCallback((r: number) => {
-    playerStateRef.current.changeRate(r);
-    localStorage.setItem(RATE_STORAGE_KEY, String(r));
-    debounceSaveSettings();
-  }, [debounceSaveSettings]);
+  const wrappedChangeRate = useCallback(
+    (r: number) => {
+      playerStateRef.current.changeRate(r);
+      localStorage.setItem(RATE_STORAGE_KEY, String(r));
+      debounceSaveSettings();
+    },
+    [debounceSaveSettings],
+  );
 
-  const wrappedChangePitch = useCallback((p: number) => {
-    playerStateRef.current.changePitch(p);
-    localStorage.setItem(PITCH_STORAGE_KEY, String(p));
-    debounceSaveSettings();
-  }, [debounceSaveSettings]);
+  const wrappedChangePitch = useCallback(
+    (p: number) => {
+      playerStateRef.current.changePitch(p);
+      localStorage.setItem(PITCH_STORAGE_KEY, String(p));
+      debounceSaveSettings();
+    },
+    [debounceSaveSettings],
+  );
 
   const handleSleepExpire = useCallback(() => {
     if (playerStateRef.current.isPlaying) playerStateRef.current.toggle();
@@ -231,8 +252,12 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
   // so we only listen for skip events that need chapter navigation logic.
   useEffect(() => {
     if (!isNativePlatform()) return;
-    const onPrev = () => { playerStateRef.current.seekChunk(-1); };
-    const onNext = () => { playerStateRef.current.seekChunk(1); };
+    const onPrev = () => {
+      playerStateRef.current.seekChunk(-1);
+    };
+    const onNext = () => {
+      playerStateRef.current.seekChunk(1);
+    };
     window.addEventListener("native-media-prev", onPrev);
     window.addEventListener("native-media-next", onNext);
     return () => {

@@ -9,7 +9,13 @@ import { Spinner } from "@/components/ui/Spinner";
 import { getCachedMyBooks, setCachedMyBooks } from "@/lib/progressQueue";
 
 type MyBookEntry = {
-  book: { id: string; title: string; author?: string; cover_url?: string; total_chapters: number };
+  book: {
+    id: string;
+    title: string;
+    author?: string;
+    cover_url?: string;
+    total_chapters: number;
+  };
   chapter: { id: string; chapter_index: number; title: string };
   progress_value: number;
   total_value?: number;
@@ -32,7 +38,10 @@ function ProgressBar({ value, total }: { value: number; total?: number }) {
   const pct = total && total > 0 ? Math.min(100, (value / total) * 100) : 0;
   return (
     <div className="h-1 w-full bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
-      <div className="h-full bg-indigo-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
+      <div
+        className="h-full bg-indigo-500 rounded-full transition-all"
+        style={{ width: `${pct}%` }}
+      />
     </div>
   );
 }
@@ -40,7 +49,10 @@ function ProgressBar({ value, total }: { value: number; total?: number }) {
 function BookRow({ entry }: { entry: MyBookEntry }) {
   const { book, chapter, progress_value, total_value, updated_at } = entry;
   const href = `/listen?id=${book.id}&chapter=${chapter.id}`;
-  const pct = total_value && total_value > 0 ? Math.round((progress_value / total_value) * 100) : null;
+  const pct =
+    total_value && total_value > 0
+      ? Math.round((progress_value / total_value) * 100)
+      : null;
 
   return (
     <Link
@@ -50,12 +62,26 @@ function BookRow({ entry }: { entry: MyBookEntry }) {
       {/* Cover */}
       <div className="w-14 h-[4.67rem] shrink-0 rounded-lg overflow-hidden bg-linear-to-br from-indigo-50 to-purple-50 dark:from-indigo-950 dark:to-purple-950 relative">
         {book.cover_url ? (
-          <Image src={book.cover_url} alt={book.title} fill className="object-cover" />
+          <Image
+            src={book.cover_url}
+            alt={book.title}
+            fill
+            className="object-cover"
+          />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
-            <svg className="w-6 h-6 text-indigo-300 dark:text-indigo-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+            <svg
+              className="w-6 h-6 text-indigo-300 dark:text-indigo-700"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.5}
+                d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
+              />
             </svg>
           </div>
         )}
@@ -68,7 +94,9 @@ function BookRow({ entry }: { entry: MyBookEntry }) {
             {book.title}
           </h3>
           {book.author && (
-            <p className="text-xs text-gray-400 dark:text-gray-500 truncate mt-0.5">{book.author}</p>
+            <p className="text-xs text-gray-400 dark:text-gray-500 truncate mt-0.5">
+              {book.author}
+            </p>
           )}
         </div>
 
@@ -92,8 +120,18 @@ function BookRow({ entry }: { entry: MyBookEntry }) {
       </div>
 
       <div className="flex items-center self-center shrink-0 text-gray-300 dark:text-gray-600 group-hover:text-indigo-500 transition-colors">
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        <svg
+          className="w-4 h-4"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M9 5l7 7-7 7"
+          />
         </svg>
       </div>
     </Link>
@@ -128,10 +166,22 @@ export default function MyBooksPage() {
   if (!loggedIn) {
     return (
       <div className="flex flex-col items-center justify-center py-24 text-center">
-        <svg className="w-14 h-14 text-gray-300 dark:text-gray-700 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+        <svg
+          className="w-14 h-14 text-gray-300 dark:text-gray-700 mb-4"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={1.5}
+            d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+          />
         </svg>
-        <p className="text-gray-500 dark:text-gray-400 mb-4">Đăng nhập để xem lịch sử đọc/nghe</p>
+        <p className="text-gray-500 dark:text-gray-400 mb-4">
+          Đăng nhập để xem lịch sử đọc/nghe
+        </p>
         <Link
           href="/login"
           className="px-5 py-2.5 bg-indigo-600 text-white text-sm font-medium rounded-xl hover:bg-indigo-700 transition-colors"
@@ -149,7 +199,9 @@ export default function MyBooksPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-5">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Truyện của tôi</h1>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+            Truyện của tôi
+          </h1>
           <p className="text-sm text-gray-400 dark:text-gray-500 mt-0.5">
             Tiếp tục đọc hoặc nghe từ nơi bạn dừng lại
           </p>
@@ -170,18 +222,34 @@ export default function MyBooksPage() {
 
       {error && entries.length === 0 && (
         <div className="text-center py-16">
-          <p className="text-red-500 text-sm">Không thể tải danh sách. Vui lòng thử lại.</p>
+          <p className="text-red-500 text-sm">
+            Không thể tải danh sách. Vui lòng thử lại.
+          </p>
         </div>
       )}
 
       {!isLoading && entries.length === 0 && !error && (
         <div className="flex flex-col items-center justify-center py-24 text-center">
-          <svg className="w-14 h-14 text-gray-200 dark:text-gray-800 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-              d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+          <svg
+            className="w-14 h-14 text-gray-200 dark:text-gray-800 mb-4"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={1.5}
+              d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
+            />
           </svg>
-          <p className="text-gray-400 dark:text-gray-500 mb-2">Bạn chưa đọc hoặc nghe truyện nào</p>
-          <Link href="/" className="text-sm text-indigo-600 dark:text-indigo-400 hover:underline">
+          <p className="text-gray-400 dark:text-gray-500 mb-2">
+            Bạn chưa đọc hoặc nghe truyện nào
+          </p>
+          <Link
+            href="/"
+            className="text-sm text-indigo-600 dark:text-indigo-400 hover:underline"
+          >
             Khám phá thư viện →
           </Link>
         </div>

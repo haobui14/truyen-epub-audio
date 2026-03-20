@@ -43,7 +43,9 @@ const FONT_FAMILIES = [
 export default function ReadPage() {
   const params = useParams();
   const searchParams = useSearchParams();
-  const bookId = (searchParams.get("id") || (params?.bookId as string) || "") as string;
+  const bookId = (searchParams.get("id") ||
+    (params?.bookId as string) ||
+    "") as string;
   const chapterId = searchParams.get("chapter");
   const router = useRouter();
   const contentRef = useRef<HTMLDivElement>(null);
@@ -61,7 +63,11 @@ export default function ReadPage() {
     if (typeof window === "undefined") return READER_THEMES[0];
     const saved = localStorage.getItem(THEME_KEY);
     if (saved) {
-      try { return JSON.parse(saved); } catch { /* ignore */ }
+      try {
+        return JSON.parse(saved);
+      } catch {
+        /* ignore */
+      }
     }
     return READER_THEMES[0];
   });
@@ -118,8 +124,10 @@ export default function ReadPage() {
   const allChapters = chaptersData?.items ?? [];
   const currentChapter = allChapters.find((c) => c.id === chapterId) ?? null;
   const currentIndex = currentChapter?.chapter_index ?? -1;
-  const prevChapter = allChapters.find((c) => c.chapter_index === currentIndex - 1) ?? null;
-  const nextChapter = allChapters.find((c) => c.chapter_index === currentIndex + 1) ?? null;
+  const prevChapter =
+    allChapters.find((c) => c.chapter_index === currentIndex - 1) ?? null;
+  const nextChapter =
+    allChapters.find((c) => c.chapter_index === currentIndex + 1) ?? null;
 
   const { reportProgress } = useProgressSync({
     bookId,
@@ -144,7 +152,7 @@ export default function ReadPage() {
         router.push(`/read?id=${bookId}&chapter=${chapter.id}`);
       }
     },
-    [bookId, router]
+    [bookId, router],
   );
 
   // Scroll to top on chapter change (or restore saved position)
@@ -156,11 +164,13 @@ export default function ReadPage() {
 
   // Restore saved scroll position after text loads
   useEffect(() => {
-    if (restoredRef.current || !savedProgress?.progress_value || !chapterText) return;
+    if (restoredRef.current || !savedProgress?.progress_value || !chapterText)
+      return;
     restoredRef.current = true;
     // Wait for content to render
     requestAnimationFrame(() => {
-      const scrollMax = document.documentElement.scrollHeight - window.innerHeight;
+      const scrollMax =
+        document.documentElement.scrollHeight - window.innerHeight;
       const target = (savedProgress.progress_value / 100) * scrollMax;
       window.scrollTo({ top: target, behavior: "smooth" });
     });
@@ -170,7 +180,8 @@ export default function ReadPage() {
   useEffect(() => {
     if (!chapterId || !chapterText) return;
     const handleScroll = () => {
-      const scrollMax = document.documentElement.scrollHeight - window.innerHeight;
+      const scrollMax =
+        document.documentElement.scrollHeight - window.innerHeight;
       if (scrollMax <= 0) return;
       const pct = Math.round((window.scrollY / scrollMax) * 100);
       reportProgress(Math.min(pct, 100), 100);
@@ -203,7 +214,8 @@ export default function ReadPage() {
       label: "Tùy chọn",
       ...(type === "text" ? { text: color } : { bg: color }),
     };
-    if (type === "text") setCustomText(color); else setCustomBg(color);
+    if (type === "text") setCustomText(color);
+    else setCustomBg(color);
     setTheme(updated);
     localStorage.setItem(THEME_KEY, JSON.stringify(updated));
   }
@@ -237,8 +249,18 @@ export default function ReadPage() {
           href={`/book?id=${bookId}`}
           className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          <svg
+            className="w-4 h-4"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M15 19l-7-7 7-7"
+            />
           </svg>
           <span className="hidden sm:inline">{book.title}</span>
           <span className="sm:hidden">Quay lại</span>
@@ -250,7 +272,11 @@ export default function ReadPage() {
             href={`/listen?id=${bookId}&chapter=${chapterId}`}
             className="flex items-center gap-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 px-3 py-1.5 rounded-lg hover:bg-indigo-100 dark:hover:bg-indigo-950 transition-colors"
           >
-            <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+            <svg
+              className="w-3.5 h-3.5"
+              fill="currentColor"
+              viewBox="0 0 24 24"
+            >
               <path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z" />
             </svg>
             Nghe
@@ -266,9 +292,24 @@ export default function ReadPage() {
             }`}
             title="Cài đặt đọc"
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            <svg
+              className="w-5 h-5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+              />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+              />
             </svg>
           </button>
         </div>
@@ -279,7 +320,9 @@ export default function ReadPage() {
         <div className="mb-4 p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm animate-in space-y-4">
           {/* Font size */}
           <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Cỡ chữ</span>
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              Cỡ chữ
+            </span>
             <div className="flex items-center gap-1.5">
               {FONT_SIZES.map((size) => (
                 <button
@@ -299,7 +342,9 @@ export default function ReadPage() {
 
           {/* Font family */}
           <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Phông chữ</span>
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              Phông chữ
+            </span>
             <div className="flex items-center gap-1.5 flex-wrap justify-end">
               {FONT_FAMILIES.map((ff) => (
                 <button
@@ -320,7 +365,9 @@ export default function ReadPage() {
 
           {/* Theme presets */}
           <div>
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 block">Giao diện đọc</span>
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 block">
+              Giao diện đọc
+            </span>
             <div className="grid grid-cols-6 gap-2">
               {READER_THEMES.map((t) => (
                 <button
@@ -338,7 +385,9 @@ export default function ReadPage() {
                   >
                     Aa
                   </div>
-                  <span className="text-[10px] font-medium text-gray-500 dark:text-gray-400">{t.label}</span>
+                  <span className="text-[10px] font-medium text-gray-500 dark:text-gray-400">
+                    {t.label}
+                  </span>
                 </button>
               ))}
             </div>
@@ -347,7 +396,9 @@ export default function ReadPage() {
           {/* Custom color pickers */}
           <div className="flex items-center gap-4 pt-2 border-t border-gray-100 dark:border-gray-700">
             <div className="flex items-center gap-2">
-              <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Màu chữ</label>
+              <label className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                Màu chữ
+              </label>
               <input
                 type="color"
                 value={customText}
@@ -356,7 +407,9 @@ export default function ReadPage() {
               />
             </div>
             <div className="flex items-center gap-2">
-              <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Màu nền</label>
+              <label className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                Màu nền
+              </label>
               <input
                 type="color"
                 value={customBg}
@@ -368,7 +421,12 @@ export default function ReadPage() {
               className="ml-auto flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700"
               style={{ backgroundColor: theme.bg }}
             >
-              <span className="text-xs font-medium" style={{ color: theme.text }}>Xem trước</span>
+              <span
+                className="text-xs font-medium"
+                style={{ color: theme.text }}
+              >
+                Xem trước
+              </span>
             </div>
           </div>
         </div>
@@ -394,7 +452,10 @@ export default function ReadPage() {
         style={{ backgroundColor: theme.bg }}
       >
         {isLoadingText ? (
-          <div className="flex flex-col items-center gap-3 py-20" style={{ color: theme.text, opacity: 0.5 }}>
+          <div
+            className="flex flex-col items-center gap-3 py-20"
+            style={{ color: theme.text, opacity: 0.5 }}
+          >
             <Spinner className="w-7 h-7" />
             <p className="text-sm">Đang tải nội dung...</p>
           </div>
@@ -412,14 +473,26 @@ export default function ReadPage() {
                 >
                   {para.trim()}
                 </p>
-              ) : null
+              ) : null,
             )}
           </article>
         ) : (
-          <div className="flex flex-col items-center gap-3 py-20" style={{ color: theme.text, opacity: 0.4 }}>
-            <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          <div
+            className="flex flex-col items-center gap-3 py-20"
+            style={{ color: theme.text, opacity: 0.4 }}
+          >
+            <svg
+              className="w-12 h-12"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.5}
+                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+              />
             </svg>
             <p className="text-sm">Không có nội dung cho chương này.</p>
           </div>
@@ -434,8 +507,18 @@ export default function ReadPage() {
             disabled={!prevChapter}
             className="flex items-center gap-1.5 text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            <svg
+              className="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M15 19l-7-7 7-7"
+              />
             </svg>
             Chương trước
           </button>
@@ -462,8 +545,18 @@ export default function ReadPage() {
             className="flex items-center gap-1.5 text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             Chương tiếp
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            <svg
+              className="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M9 5l7 7-7 7"
+              />
             </svg>
           </button>
         </div>

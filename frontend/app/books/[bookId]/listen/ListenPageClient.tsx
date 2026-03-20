@@ -37,7 +37,9 @@ import { splitIntoChunks as splitChunks } from "@/lib/textChunks";
 export default function ListenPage() {
   const params = useParams();
   const searchParams = useSearchParams();
-  const bookId = (searchParams.get("id") || (params?.bookId as string) || "") as string;
+  const bookId = (searchParams.get("id") ||
+    (params?.bookId as string) ||
+    "") as string;
   const chapterId = searchParams.get("chapter");
   const autoPlay = searchParams.get("autoplay") === "1";
   const router = useRouter();

@@ -34,14 +34,28 @@ export function BookGrid({ books, activeGenre, emptyMessage }: BookGridProps) {
         <p className="text-lg font-medium text-gray-500 dark:text-gray-400 mb-2">
           {emptyMessage ?? "Chưa có truyện nào"}
         </p>
-        {!emptyMessage && <p className="text-sm mb-4">Tải lên file EPUB để bắt đầu nghe và đọc truyện</p>}
+        {!emptyMessage && (
+          <p className="text-sm mb-4">
+            Tải lên file EPUB để bắt đầu nghe và đọc truyện
+          </p>
+        )}
         {!emptyMessage && (
           <Link
             href="/upload"
             className="inline-flex items-center gap-1.5 text-sm font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            <svg
+              className="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 4v16m8-8H4"
+              />
             </svg>
             Tải lên ngay
           </Link>

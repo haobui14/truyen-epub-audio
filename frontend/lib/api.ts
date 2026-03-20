@@ -31,11 +31,15 @@ export async function tryRefreshToken(): Promise<boolean | null> {
       const data = await res.json();
       const user = getUser();
       if (data.access_token && user) {
-        await setAuth(data.access_token, {
-          user_id: data.user_id ?? user.user_id,
-          email: data.email ?? user.email,
-          role: data.role ?? user.role,
-        }, data.refresh_token ?? refreshToken);
+        await setAuth(
+          data.access_token,
+          {
+            user_id: data.user_id ?? user.user_id,
+            email: data.email ?? user.email,
+            role: data.role ?? user.role,
+          },
+          data.refresh_token ?? refreshToken,
+        );
         return true;
       }
       return false;
@@ -50,7 +54,11 @@ export async function tryRefreshToken(): Promise<boolean | null> {
   return refreshPromise;
 }
 
-async function request<T>(path: string, init?: RequestInit, _retry = true): Promise<T> {
+async function request<T>(
+  path: string,
+  init?: RequestInit,
+  _retry = true,
+): Promise<T> {
   const token = getToken();
   const headers = new Headers(init?.headers);
   if (token) {
@@ -83,11 +91,20 @@ export const api = {
   getBook: (id: string) => request<Book>(`/api/books/${id}`),
   deleteBook: (id: string) =>
     request<{ message: string }>(`/api/books/${id}`, { method: "DELETE" }),
-  updateBook: (id: string, fields: { title?: string; author?: string; description?: string; cover?: File | null }) => {
+  updateBook: (
+    id: string,
+    fields: {
+      title?: string;
+      author?: string;
+      description?: string;
+      cover?: File | null;
+    },
+  ) => {
     const form = new FormData();
     if (fields.title !== undefined) form.append("title", fields.title);
     if (fields.author !== undefined) form.append("author", fields.author);
-    if (fields.description !== undefined) form.append("description", fields.description);
+    if (fields.description !== undefined)
+      form.append("description", fields.description);
     if (fields.cover) form.append("cover", fields.cover);
     return request<Book>(`/api/books/${id}`, { method: "PATCH", body: form });
   },
@@ -122,27 +139,44 @@ export const api = {
       `/api/chapters/${chapterId}/text`,
     ),
   updateChapterText: (chapterId: string, text_content: string) =>
-    request<{ id: string; word_count: number }>(`/api/chapters/${chapterId}/text`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text_content }),
-    }),
+    request<{ id: string; word_count: number }>(
+      `/api/chapters/${chapterId}/text`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text_content }),
+      },
+    ),
   deleteChapter: (chapterId: string) =>
-    request<{ deleted: string; total_chapters: number }>(`/api/chapters/${chapterId}`, {
-      method: "DELETE",
-    }),
-  updateChapter: (chapterId: string, fields: { title?: string; chapter_index?: number; text_content?: string }) =>
-    request<{ id: string; chapter_index: number; title: string; word_count: number }>(`/api/chapters/${chapterId}`, {
+    request<{ deleted: string; total_chapters: number }>(
+      `/api/chapters/${chapterId}`,
+      {
+        method: "DELETE",
+      },
+    ),
+  updateChapter: (
+    chapterId: string,
+    fields: { title?: string; chapter_index?: number; text_content?: string },
+  ) =>
+    request<{
+      id: string;
+      chapter_index: number;
+      title: string;
+      word_count: number;
+    }>(`/api/chapters/${chapterId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(fields),
     }),
   bulkDeleteChapters: (chapterIds: string[]) =>
-    request<{ deleted: number; book_totals: Record<string, number> }>(`/api/chapters/bulk-delete`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chapter_ids: chapterIds }),
-    }),
+    request<{ deleted: number; book_totals: Record<string, number> }>(
+      `/api/chapters/bulk-delete`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chapter_ids: chapterIds }),
+      },
+    ),
 
   // TTS
   getTtsStatus: (bookId: string) =>
@@ -219,7 +253,9 @@ export const api = {
       });
 
       xhr.addEventListener("error", () => reject(new Error("Network error")));
-      xhr.addEventListener("abort", () => reject(new Error("Upload cancelled")));
+      xhr.addEventListener("abort", () =>
+        reject(new Error("Upload cancelled")),
+      );
 
       xhr.send(form);
     });
@@ -227,24 +263,31 @@ export const api = {
 
   // Auth
   login: (email: string, password: string) =>
-    request<{ access_token: string; refresh_token?: string; user_id: string; email: string; role: string }>(
-      "/api/auth/login",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      },
-    ),
+    request<{
+      access_token: string;
+      refresh_token?: string;
+      user_id: string;
+      email: string;
+      role: string;
+    }>("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    }),
   signup: (email: string, password: string) =>
-    request<{ access_token: string; refresh_token?: string; user_id: string; email: string; role: string }>(
-      "/api/auth/signup",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      },
-    ),
-  getMe: () => request<{ id: string; email: string; role: string }>("/api/auth/me"),
+    request<{
+      access_token: string;
+      refresh_token?: string;
+      user_id: string;
+      email: string;
+      role: string;
+    }>("/api/auth/signup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    }),
+  getMe: () =>
+    request<{ id: string; email: string; role: string }>("/api/auth/me"),
 
   // Progress
   saveProgress: (data: {
@@ -259,13 +302,21 @@ export const api = {
       body: JSON.stringify(data),
     }),
   getMyBooks: () =>
-    request<Array<{
-      book: { id: string; title: string; author?: string; cover_url?: string; total_chapters: number };
-      chapter: { id: string; chapter_index: number; title: string };
-      progress_value: number;
-      total_value?: number;
-      updated_at: string;
-    }>>("/api/progress/my-books"),
+    request<
+      Array<{
+        book: {
+          id: string;
+          title: string;
+          author?: string;
+          cover_url?: string;
+          total_chapters: number;
+        };
+        chapter: { id: string; chapter_index: number; title: string };
+        progress_value: number;
+        total_value?: number;
+        updated_at: string;
+      }>
+    >("/api/progress/my-books"),
   getChapterProgress: (chapterId: string) =>
     request<UserProgress | null>(`/api/progress/chapter/${chapterId}`),
   getBookProgress: (bookId: string) =>
@@ -291,7 +342,10 @@ export const api = {
       body: JSON.stringify(data),
     }),
   // Admin: manual chapter creation
-  createChapter: (bookId: string, data: { chapter_index: number; title: string; text_content: string }) =>
+  createChapter: (
+    bookId: string,
+    data: { chapter_index: number; title: string; text_content: string },
+  ) =>
     request<Chapter>(`/api/books/${bookId}/chapters`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -315,7 +369,11 @@ export const api = {
   deleteGenre: (genreId: string) =>
     request<void>(`/api/genres/${genreId}`, { method: "DELETE" }),
   assignGenre: (bookId: string, genreId: string) =>
-    request<void>(`/api/genres/assign/${bookId}/${genreId}`, { method: "POST" }),
+    request<void>(`/api/genres/assign/${bookId}/${genreId}`, {
+      method: "POST",
+    }),
   removeGenre: (bookId: string, genreId: string) =>
-    request<void>(`/api/genres/assign/${bookId}/${genreId}`, { method: "DELETE" }),
+    request<void>(`/api/genres/assign/${bookId}/${genreId}`, {
+      method: "DELETE",
+    }),
 };

@@ -22,11 +22,15 @@ export default function LoginPage() {
         mode === "login"
           ? await api.login(email, password)
           : await api.signup(email, password);
-      await setAuth(result.access_token, {
-        user_id: result.user_id,
-        email: result.email,
-        role: result.role,
-      }, result.refresh_token);
+      await setAuth(
+        result.access_token,
+        {
+          user_id: result.user_id,
+          email: result.email,
+          role: result.role,
+        },
+        result.refresh_token,
+      );
       router.push("/");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Đã xảy ra lỗi");

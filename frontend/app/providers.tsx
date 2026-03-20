@@ -6,7 +6,13 @@ import { flushProgressQueue } from "@/lib/progressQueue";
 import { hydrateAuthFromNative } from "@/lib/auth";
 import { isNativePlatform } from "@/lib/capacitor";
 import { api, tryRefreshToken } from "@/lib/api";
-import { isLoggedIn, getUser, getToken, getRefreshToken, setAuth } from "@/lib/auth";
+import {
+  isLoggedIn,
+  getUser,
+  getToken,
+  getRefreshToken,
+  setAuth,
+} from "@/lib/auth";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(

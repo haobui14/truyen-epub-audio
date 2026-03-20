@@ -23,15 +23,16 @@ function ChapterRow({
   editBasePath?: string;
   activeChapterId?: string;
 }) {
-
   return (
-    <div className={`flex items-center gap-3 py-3 px-4 transition-colors ${
-      editBasePath && chapter.id === activeChapterId
-        ? "bg-indigo-50 dark:bg-indigo-950/30"
-        : selected
-        ? "bg-indigo-50 dark:bg-indigo-950/30"
-        : "hover:bg-gray-50 dark:hover:bg-gray-700/50"
-    }`}>
+    <div
+      className={`flex items-center gap-3 py-3 px-4 transition-colors ${
+        editBasePath && chapter.id === activeChapterId
+          ? "bg-indigo-50 dark:bg-indigo-950/30"
+          : selected
+            ? "bg-indigo-50 dark:bg-indigo-950/30"
+            : "hover:bg-gray-50 dark:hover:bg-gray-700/50"
+      }`}
+    >
       {showAdmin && (
         <input
           type="checkbox"
@@ -45,17 +46,22 @@ function ChapterRow({
       </span>
       <div className="flex-1 min-w-0">
         {editBasePath ? (
-          <Link
-            href={`${editBasePath}/${chapter.id}`}
-            className="group block"
-          >
-            <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">{chapter.title}</p>
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{chapter.word_count.toLocaleString()} từ</p>
+          <Link href={`${editBasePath}/${chapter.id}`} className="group block">
+            <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+              {chapter.title}
+            </p>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+              {chapter.word_count.toLocaleString()} từ
+            </p>
           </Link>
         ) : (
           <>
-            <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{chapter.title}</p>
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{chapter.word_count.toLocaleString()} từ</p>
+            <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+              {chapter.title}
+            </p>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+              {chapter.word_count.toLocaleString()} từ
+            </p>
           </>
         )}
       </div>
@@ -67,9 +73,18 @@ function ChapterRow({
               className="p-2 text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 bg-gray-100 dark:bg-gray-700 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 active:bg-indigo-100 dark:active:bg-indigo-950 rounded-lg transition-colors"
               title="Đọc"
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
+                />
               </svg>
             </Link>
             <Link
@@ -133,7 +148,11 @@ function Pagination({
 
   addPage(1);
   if (page > 3) pages.push("ellipsis");
-  for (let i = Math.max(2, page - 1); i <= Math.min(totalPages - 1, page + 1); i++) {
+  for (
+    let i = Math.max(2, page - 1);
+    i <= Math.min(totalPages - 1, page + 1);
+    i++
+  ) {
     addPage(i);
   }
   if (page < totalPages - 2) pages.push("ellipsis");
@@ -146,19 +165,37 @@ function Pagination({
         disabled={page <= 1}
         className="h-10 px-3 text-sm font-medium rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 active:bg-gray-200 dark:active:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
       >
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+        <svg
+          className="w-4 h-4"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M15 19l-7-7 7-7"
+          />
         </svg>
       </button>
 
       {pages.map((p, i) =>
         p === "ellipsis" ? (
-          <span key={`ellipsis-${i}`} className="px-1 text-gray-400 dark:text-gray-500 text-sm">
+          <span
+            key={`ellipsis-${i}`}
+            className="px-1 text-gray-400 dark:text-gray-500 text-sm"
+          >
             …
           </span>
         ) : (
-          <PaginationButton key={p} page={p} currentPage={page} onClick={onPageChange} />
-        )
+          <PaginationButton
+            key={p}
+            page={p}
+            currentPage={page}
+            onClick={onPageChange}
+          />
+        ),
       )}
 
       <button
@@ -166,8 +203,18 @@ function Pagination({
         disabled={page >= totalPages}
         className="h-10 px-3 text-sm font-medium rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 active:bg-gray-200 dark:active:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
       >
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        <svg
+          className="w-4 h-4"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M9 5l7 7-7 7"
+          />
         </svg>
       </button>
     </div>
@@ -206,17 +253,21 @@ export function ChapterList({
 
   useEffect(() => {
     if (selectAllRef.current) {
-      selectAllRef.current.indeterminate = someCurrentSelected && !allCurrentSelected;
+      selectAllRef.current.indeterminate =
+        someCurrentSelected && !allCurrentSelected;
     }
   }, [someCurrentSelected, allCurrentSelected]);
 
   // Clear selection when navigating to a different page
-  useEffect(() => { setSelected(new Set()); }, [page]);
+  useEffect(() => {
+    setSelected(new Set());
+  }, [page]);
 
   function toggleSelect(id: string) {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   }
@@ -235,11 +286,18 @@ export function ChapterList({
 
   async function handleBulkDelete() {
     const ids = [...selected];
-    if (!confirm(`Xoá ${ids.length} chương đã chọn? Thao tác này không thể hoàn tác.`)) return;
+    if (
+      !confirm(
+        `Xoá ${ids.length} chương đã chọn? Thao tác này không thể hoàn tác.`,
+      )
+    )
+      return;
     setBulkDeleting(true);
     try {
       await api.bulkDeleteChapters(ids);
-      ids.forEach((id) => queryClient.removeQueries({ queryKey: ["chapterText", id] }));
+      ids.forEach((id) =>
+        queryClient.removeQueries({ queryKey: ["chapterText", id] }),
+      );
       setSelected(new Set());
       queryClient.invalidateQueries({ queryKey: ["chapters", bookId] });
       queryClient.invalidateQueries({ queryKey: ["book", bookId] });
@@ -271,13 +329,38 @@ export function ChapterList({
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50"
           >
             {bulkDeleting ? (
-              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              <svg
+                className="w-4 h-4 animate-spin"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                />
               </svg>
             ) : (
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                />
               </svg>
             )}
             Xoá {selected.size} chương
@@ -314,7 +397,11 @@ export function ChapterList({
           ))}
         </div>
       </div>
-      <Pagination page={page} totalPages={totalPages} onPageChange={onPageChange} />
+      <Pagination
+        page={page}
+        totalPages={totalPages}
+        onPageChange={onPageChange}
+      />
     </div>
   );
 }

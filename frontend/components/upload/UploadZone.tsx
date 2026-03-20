@@ -12,7 +12,11 @@ export function UploadZone({ onFile, disabled }: UploadZoneProps) {
 
   const handleFile = (file: File) => {
     const name = file.name.toLowerCase();
-    if (!name.endsWith(".epub") && !name.endsWith(".pdf") && !name.endsWith(".txt")) {
+    if (
+      !name.endsWith(".epub") &&
+      !name.endsWith(".pdf") &&
+      !name.endsWith(".txt")
+    ) {
       alert("Vui lòng chọn file .epub, .pdf hoặc .txt");
       return;
     }
@@ -68,7 +72,9 @@ export function UploadZone({ onFile, disabled }: UploadZoneProps) {
       <p className="text-gray-600 dark:text-gray-300 font-medium mb-1">
         Kéo thả file vào đây
       </p>
-      <p className="text-sm text-gray-400 dark:text-gray-500">EPUB · PDF · TXT &nbsp;·&nbsp; tối đa 50MB</p>
+      <p className="text-sm text-gray-400 dark:text-gray-500">
+        EPUB · PDF · TXT &nbsp;·&nbsp; tối đa 50MB
+      </p>
     </div>
   );
 }

@@ -9,10 +9,7 @@ import { isLoggedIn, isAdmin } from "@/lib/auth";
 import { ChapterList } from "@/components/books/ChapterList";
 import { Spinner } from "@/components/ui/Spinner";
 import { GenreTag } from "@/components/books/GenreManager";
-import {
-  cacheChapterText,
-  isChapterTextCached,
-} from "@/lib/chapterTextCache";
+import { cacheChapterText, isChapterTextCached } from "@/lib/chapterTextCache";
 import { getLocalBookProgress } from "@/lib/progressQueue";
 import {
   getCachedBook,
@@ -24,7 +21,9 @@ import {
 export default function BookDetailPage() {
   const params = useParams();
   const searchParams = useSearchParams();
-  const bookId = (searchParams.get("id") || (params?.bookId as string) || "") as string;
+  const bookId = (searchParams.get("id") ||
+    (params?.bookId as string) ||
+    "") as string;
   const [page, setPage] = useState(1);
   const [admin, setAdmin] = useState(false);
   const [dlProgress, setDlProgress] = useState<{
@@ -40,10 +39,7 @@ export default function BookDetailPage() {
     return () => window.removeEventListener("auth-change", sync);
   }, []);
 
-  const {
-    data: book,
-    isLoading: bookLoading,
-  } = useQuery({
+  const { data: book, isLoading: bookLoading } = useQuery({
     queryKey: ["book", bookId],
     queryFn: async () => {
       try {
@@ -62,8 +58,7 @@ export default function BookDetailPage() {
     },
   });
 
-  const isParsing =
-    book?.status === "pending" || book?.status === "parsing";
+  const isParsing = book?.status === "pending" || book?.status === "parsing";
 
   const { data: chaptersData, isLoading: chaptersLoading } = useQuery({
     queryKey: ["chapters", bookId, page],
@@ -196,7 +191,8 @@ export default function BookDetailPage() {
 
   // Use localStorage-tracked listen chapter for audio resumption;
   // fall back to DB progress (which may be a read position), then first chapter.
-  const listenResumeId = lastListenChapterId ?? bookProgress?.chapter_id ?? firstChapter?.id;
+  const listenResumeId =
+    lastListenChapterId ?? bookProgress?.chapter_id ?? firstChapter?.id;
   const readResumeId = bookProgress?.chapter_id ?? firstChapter?.id;
   const hasProgress = !!bookProgress || !!lastListenChapterId;
 
@@ -233,8 +229,18 @@ export default function BookDetailPage() {
             href={`/admin/books/${bookId}/edit`}
             className="shrink-0 ml-3 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 border border-indigo-300 dark:border-indigo-700 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors"
           >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+            <svg
+              className="w-3.5 h-3.5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+              />
             </svg>
             Chỉnh sửa
           </Link>
@@ -285,7 +291,8 @@ export default function BookDetailPage() {
                 <p className="text-sm text-gray-600 dark:text-gray-400 mb-3 leading-relaxed line-clamp-3">
                   {book.description}
                 </p>
-              )}              <div className="flex flex-wrap items-center gap-2 text-xs text-gray-400 dark:text-gray-500 mb-3">
+              )}{" "}
+              <div className="flex flex-wrap items-center gap-2 text-xs text-gray-400 dark:text-gray-500 mb-3">
                 {book.total_chapters > 0 && (
                   <span className="flex items-center gap-1">
                     <svg
@@ -308,7 +315,9 @@ export default function BookDetailPage() {
               {/* Genre tags */}
               {book.genres && book.genres.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mb-2">
-                  {book.genres.map((g) => <GenreTag key={g.id} genre={g} />)}
+                  {book.genres.map((g) => (
+                    <GenreTag key={g.id} genre={g} />
+                  ))}
                 </div>
               )}
             </div>
@@ -353,9 +362,7 @@ export default function BookDetailPage() {
                     {hasProgress ? "Nghe tiếp" : "Nghe ngay"}
                   </p>
                   <p className="text-[11px] text-indigo-200 mt-0.5">
-                    {hasProgress
-                      ? "Tiếp tục từ chỗ dừng"
-                      : "TTS trực tiếp"}
+                    {hasProgress ? "Tiếp tục từ chỗ dừng" : "TTS trực tiếp"}
                   </p>
                 </div>
               </Link>
@@ -387,9 +394,7 @@ export default function BookDetailPage() {
                     {hasProgress ? "Đọc tiếp" : "Đọc truyện"}
                   </p>
                   <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
-                    {hasProgress
-                      ? "Tiếp tục từ chỗ dừng"
-                      : "Đọc văn bản"}
+                    {hasProgress ? "Tiếp tục từ chỗ dừng" : "Đọc văn bản"}
                   </p>
                 </div>
               </Link>

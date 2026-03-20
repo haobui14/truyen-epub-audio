@@ -22,7 +22,9 @@ export interface QueuedProgress {
   queued_at: number;
 }
 
-export async function enqueueProgress(entry: Omit<QueuedProgress, "id" | "queued_at">): Promise<void> {
+export async function enqueueProgress(
+  entry: Omit<QueuedProgress, "id" | "queued_at">,
+): Promise<void> {
   try {
     const db = await openOfflineDB();
     const id = `${entry.book_id}:${entry.chapter_id}`;
@@ -31,7 +33,9 @@ export async function enqueueProgress(entry: Omit<QueuedProgress, "id" | "queued
   } catch {}
 }
 
-export async function getQueuedProgress(chapterId: string): Promise<QueuedProgress | null> {
+export async function getQueuedProgress(
+  chapterId: string,
+): Promise<QueuedProgress | null> {
   try {
     const db = await openOfflineDB();
     return new Promise((resolve) => {
@@ -39,9 +43,15 @@ export async function getQueuedProgress(chapterId: string): Promise<QueuedProgre
       const req = tx.objectStore(STORE_NAME).openCursor();
       req.onsuccess = () => {
         const cursor = req.result;
-        if (!cursor) { resolve(null); return; }
+        if (!cursor) {
+          resolve(null);
+          return;
+        }
         const val = cursor.value as QueuedProgress;
-        if (val.chapter_id === chapterId) { resolve(val); return; }
+        if (val.chapter_id === chapterId) {
+          resolve(val);
+          return;
+        }
         cursor.continue();
       };
       req.onerror = () => resolve(null);
@@ -63,7 +73,9 @@ export interface LocalProgress {
   updated_at: number;
 }
 
-export async function saveLocalProgress(entry: Omit<LocalProgress, "id" | "updated_at">): Promise<void> {
+export async function saveLocalProgress(
+  entry: Omit<LocalProgress, "id" | "updated_at">,
+): Promise<void> {
   try {
     const db = await openOfflineDB();
     const id = `${entry.book_id}:${entry.chapter_id}`;
@@ -72,7 +84,9 @@ export async function saveLocalProgress(entry: Omit<LocalProgress, "id" | "updat
   } catch {}
 }
 
-export async function getLocalProgress(chapterId: string): Promise<LocalProgress | null> {
+export async function getLocalProgress(
+  chapterId: string,
+): Promise<LocalProgress | null> {
   try {
     const db = await openOfflineDB();
     return new Promise((resolve) => {
@@ -80,9 +94,15 @@ export async function getLocalProgress(chapterId: string): Promise<LocalProgress
       const req = tx.objectStore(LOCAL_STORE).openCursor();
       req.onsuccess = () => {
         const cursor = req.result;
-        if (!cursor) { resolve(null); return; }
+        if (!cursor) {
+          resolve(null);
+          return;
+        }
         const val = cursor.value as LocalProgress;
-        if (val.chapter_id === chapterId) { resolve(val); return; }
+        if (val.chapter_id === chapterId) {
+          resolve(val);
+          return;
+        }
         cursor.continue();
       };
       req.onerror = () => resolve(null);
@@ -164,7 +184,9 @@ export async function getLocalBookProgress(
  * Sync local book progress to the server for a given book.
  * Pushes local progress only if its chapter_index > the server's.
  */
-export async function syncBookProgressToServer(bookId: string): Promise<boolean> {
+export async function syncBookProgressToServer(
+  bookId: string,
+): Promise<boolean> {
   if (!isLoggedIn()) return false;
   try {
     const local = await getLocalBookProgress(bookId);
@@ -173,7 +195,11 @@ export async function syncBookProgressToServer(bookId: string): Promise<boolean>
     const server = await api.getBookProgress(bookId);
 
     // No server progress, or server is behind → push local
-    if (!server || (server.chapter_index != null && local.chapter_index > server.chapter_index)) {
+    if (
+      !server ||
+      (server.chapter_index != null &&
+        local.chapter_index > server.chapter_index)
+    ) {
       await api.saveProgress({
         book_id: local.book_id,
         chapter_id: local.chapter_id,
@@ -184,7 +210,10 @@ export async function syncBookProgressToServer(bookId: string): Promise<boolean>
     }
 
     // Server chapter_index unknown (old API) but different chapter → push local
-    if (server.chapter_index == null && server.chapter_id !== local.chapter_id) {
+    if (
+      server.chapter_index == null &&
+      server.chapter_id !== local.chapter_id
+    ) {
       await api.saveProgress({
         book_id: local.book_id,
         chapter_id: local.chapter_id,

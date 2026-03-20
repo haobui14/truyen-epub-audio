@@ -31,7 +31,11 @@ export function getUser(): AuthUser | null {
   }
 }
 
-export async function setAuth(token: string, user: AuthUser, refreshToken?: string): Promise<void> {
+export async function setAuth(
+  token: string,
+  user: AuthUser,
+  refreshToken?: string,
+): Promise<void> {
   localStorage.setItem(TOKEN_KEY, token);
   localStorage.setItem(USER_KEY, JSON.stringify(user));
   if (refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
@@ -61,23 +65,30 @@ export function isAdmin(): boolean {
 
 // ── Native persistence (Android SharedPreferences via @capacitor/preferences) ──
 
-async function persistAuthToNative(token: string, user: AuthUser, refreshToken?: string): Promise<void> {
+async function persistAuthToNative(
+  token: string,
+  user: AuthUser,
+  refreshToken?: string,
+): Promise<void> {
   if (!isNativePlatform()) return;
   try {
     const { Preferences } = await import("@capacitor/preferences");
     await Preferences.set({ key: TOKEN_KEY, value: token });
     await Preferences.set({ key: USER_KEY, value: JSON.stringify(user) });
-    if (refreshToken) await Preferences.set({ key: REFRESH_TOKEN_KEY, value: refreshToken });
+    if (refreshToken)
+      await Preferences.set({ key: REFRESH_TOKEN_KEY, value: refreshToken });
   } catch {}
 }
 
 function clearNativeAuth() {
   if (!isNativePlatform()) return;
-  import("@capacitor/preferences").then(({ Preferences }) => {
-    Preferences.remove({ key: TOKEN_KEY });
-    Preferences.remove({ key: USER_KEY });
-    Preferences.remove({ key: REFRESH_TOKEN_KEY });
-  }).catch(() => {});
+  import("@capacitor/preferences")
+    .then(({ Preferences }) => {
+      Preferences.remove({ key: TOKEN_KEY });
+      Preferences.remove({ key: USER_KEY });
+      Preferences.remove({ key: REFRESH_TOKEN_KEY });
+    })
+    .catch(() => {});
 }
 
 /**
@@ -90,7 +101,9 @@ export async function hydrateAuthFromNative(): Promise<void> {
     const { Preferences } = await import("@capacitor/preferences");
     const { value: token } = await Preferences.get({ key: TOKEN_KEY });
     const { value: user } = await Preferences.get({ key: USER_KEY });
-    const { value: refreshToken } = await Preferences.get({ key: REFRESH_TOKEN_KEY });
+    const { value: refreshToken } = await Preferences.get({
+      key: REFRESH_TOKEN_KEY,
+    });
     // Always overwrite localStorage with native preferences — this ensures
     // tokens survive app kills where the WebView's localStorage may be cleared.
     if (token) localStorage.setItem(TOKEN_KEY, token);
