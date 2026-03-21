@@ -66,6 +66,7 @@ function BookRow({ entry }: { entry: MyBookEntry }) {
             src={book.cover_url}
             alt={book.title}
             fill
+            sizes="56px"
             className="object-cover"
           />
         ) : (

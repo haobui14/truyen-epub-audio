@@ -66,8 +66,8 @@ export function BookGrid({ books, activeGenre, emptyMessage }: BookGridProps) {
 
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-      {filtered.map((book) => (
-        <BookCard key={book.id} book={book} />
+      {filtered.map((book, i) => (
+        <BookCard key={book.id} book={book} priority={i < 4} />
       ))}
     </div>
   );

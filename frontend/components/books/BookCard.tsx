@@ -9,7 +9,7 @@ import { GenreTag } from "@/components/books/GenreManager";
 import { isAdmin } from "@/lib/auth";
 import { api } from "@/lib/api";
 
-export function BookCard({ book }: { book: Book }) {
+export function BookCard({ book, priority }: { book: Book; priority?: boolean }) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [admin, setAdmin] = useState(false);
   const queryClient = useQueryClient();
@@ -41,7 +41,9 @@ export function BookCard({ book }: { book: Book }) {
                 src={book.cover_url}
                 alt={book.title}
                 fill
+                sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 20vw"
                 className="object-cover group-hover:scale-105 transition-transform duration-300"
+                priority={priority}
               />
             ) : (
               <div className="w-full h-full flex flex-col items-center justify-center text-indigo-300 dark:text-indigo-700 px-3">
