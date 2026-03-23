@@ -13,7 +13,9 @@ export default function EditChapterClient() {
   const params = useParams();
   const searchParams = useSearchParams();
   const bookId = (searchParams.get("bookId") || params?.bookId || "") as string;
-  const chapterId = (searchParams.get("id") || params?.chapterId || "") as string;
+  const chapterId = (searchParams.get("id") ||
+    params?.chapterId ||
+    "") as string;
   const isNew = chapterId === "new";
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -46,7 +48,6 @@ export default function EditChapterClient() {
       return () => window.removeEventListener("auth-change", checkAdmin);
     }
   }, [router]);
-
 
   // Book info for sidebar header
   const { data: book } = useQuery({
@@ -112,7 +113,9 @@ export default function EditChapterClient() {
   // Jump sidebar to the page that contains the currently-edited chapter
   useEffect(() => {
     if (!chapterMeta || isNew || chapterMeta.id !== chapterId) return;
-    const targetPage = Math.ceil((chapterMeta.chapter_index + 1) / SIDEBAR_PAGE_SIZE);
+    const targetPage = Math.ceil(
+      (chapterMeta.chapter_index + 1) / SIDEBAR_PAGE_SIZE,
+    );
     setSidebarPage(targetPage);
   }, [chapterMeta, chapterId, isNew]);
 
@@ -162,7 +165,8 @@ export default function EditChapterClient() {
   }
 
   async function handleDelete() {
-    if (!confirm(`Xoá chương "${title}"? Thao tác này không thể hoàn tác.`)) return;
+    if (!confirm(`Xoá chương "${title}"? Thao tác này không thể hoàn tác.`))
+      return;
     setDeleting(true);
     try {
       await api.deleteChapter(chapterId);
@@ -227,13 +231,15 @@ export default function EditChapterClient() {
       )}
 
       {/* ─── Sidebar ─── */}
-      <aside className={`
+      <aside
+        className={`
         fixed top-16 bottom-0 left-0 z-50 w-72 flex flex-col border-r border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 overflow-hidden
         transform transition-transform duration-200
         ${mobileSidebarOpen ? "translate-x-0" : "-translate-x-full"}
         sm:relative sm:top-auto sm:bottom-auto sm:left-auto sm:z-auto sm:translate-x-0
         sm:sticky sm:top-16 sm:self-start sm:h-[calc(100vh-8rem)] sm:w-60 lg:w-64
-      `}>
+      `}
+      >
         {/* Header */}
         <div className="px-3 py-3 border-b border-gray-200 dark:border-gray-700 space-y-2">
           <div className="flex items-center justify-between">
@@ -241,18 +247,40 @@ export default function EditChapterClient() {
               href={`/admin/edit-book?id=${bookId}`}
               className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors min-w-0"
             >
-              <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              <svg
+                className="w-3.5 h-3.5 shrink-0"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M15 19l-7-7 7-7"
+                />
               </svg>
-              <span className="truncate">{book?.title ?? "Chỉnh sửa truyện"}</span>
+              <span className="truncate">
+                {book?.title ?? "Chỉnh sửa truyện"}
+              </span>
             </Link>
             <button
               type="button"
               onClick={() => setMobileSidebarOpen(false)}
               className="sm:hidden p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-lg active:bg-gray-200 dark:active:bg-gray-700 transition-colors shrink-0"
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M6 18L18 6M6 6l12 12"
+                />
               </svg>
             </button>
           </div>
@@ -260,8 +288,18 @@ export default function EditChapterClient() {
             href={`/admin/edit-chapter?bookId=${bookId}&id=new`}
             className="flex items-center justify-center gap-1.5 w-full px-2 py-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 border border-indigo-300 dark:border-indigo-700 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors"
           >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            <svg
+              className="w-3.5 h-3.5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 4v16m8-8H4"
+              />
             </svg>
             Thêm chương mới
           </Link>
@@ -278,8 +316,18 @@ export default function EditChapterClient() {
               {isNew && (
                 <li>
                   <span className="flex items-center gap-2 px-3 py-2.5 bg-indigo-600 text-white text-xs">
-                    <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    <svg
+                      className="w-3 h-3 shrink-0"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M12 4v16m8-8H4"
+                      />
                     </svg>
                     <span className="truncate font-medium">Chương mới</span>
                   </span>
@@ -297,7 +345,9 @@ export default function EditChapterClient() {
                           : "text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
                       }`}
                     >
-                      <span className={`font-mono shrink-0 w-6 text-right ${isActive ? "text-indigo-200" : "text-gray-400 dark:text-gray-500"}`}>
+                      <span
+                        className={`font-mono shrink-0 w-6 text-right ${isActive ? "text-indigo-200" : "text-gray-400 dark:text-gray-500"}`}
+                      >
                         {ch.chapter_index + 1}
                       </span>
                       <span className="truncate">{ch.title}</span>
@@ -317,20 +367,42 @@ export default function EditChapterClient() {
               disabled={sidebarPage <= 1}
               className="p-1.5 rounded text-gray-500 hover:text-indigo-600 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M15 19l-7-7 7-7"
+                />
               </svg>
             </button>
             <span className="text-xs text-gray-500 dark:text-gray-400">
               {sidebarPage} / {sidebarTotalPages}
             </span>
             <button
-              onClick={() => setSidebarPage((p) => Math.min(sidebarTotalPages, p + 1))}
+              onClick={() =>
+                setSidebarPage((p) => Math.min(sidebarTotalPages, p + 1))
+              }
               disabled={sidebarPage >= sidebarTotalPages}
               className="p-1.5 rounded text-gray-500 hover:text-indigo-600 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 5l7 7-7 7"
+                />
               </svg>
             </button>
           </div>
@@ -345,8 +417,18 @@ export default function EditChapterClient() {
           onClick={() => setMobileSidebarOpen(true)}
           className="sm:hidden flex items-center gap-2 mb-4 px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 active:bg-gray-100 dark:active:bg-gray-700 transition-colors"
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+          <svg
+            className="w-4 h-4"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M4 6h16M4 12h16M4 18h16"
+            />
           </svg>
           Danh sách chương
         </button>
@@ -371,8 +453,18 @@ export default function EditChapterClient() {
                   {deleting ? (
                     <Spinner className="w-3 h-3" />
                   ) : (
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    <svg
+                      className="w-3.5 h-3.5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                      />
                     </svg>
                   )}
                   Xoá chương
@@ -418,13 +510,21 @@ export default function EditChapterClient() {
                 <div className="flex items-center gap-2">
                   {textContent && (
                     <span className="text-xs text-gray-400 dark:text-gray-500">
-                      {textContent.split(/\s+/).filter(Boolean).length.toLocaleString()} từ
+                      {textContent
+                        .split(/\s+/)
+                        .filter(Boolean)
+                        .length.toLocaleString()}{" "}
+                      từ
                     </span>
                   )}
                   {!isNew && (
                     <button
                       type="button"
-                      onClick={aiFixing ? () => aiAbortRef.current?.abort() : handleAiFix}
+                      onClick={
+                        aiFixing
+                          ? () => aiAbortRef.current?.abort()
+                          : handleAiFix
+                      }
                       disabled={!textContent.trim()}
                       className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors disabled:opacity-40 ${
                         aiFixing
@@ -439,8 +539,18 @@ export default function EditChapterClient() {
                         </>
                       ) : (
                         <>
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3l14 9-14 9V3z" />
+                          <svg
+                            className="w-3.5 h-3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M5 3l14 9-14 9V3z"
+                            />
                           </svg>
                           Sửa AI
                         </>

@@ -18,7 +18,13 @@ const LABEL_PRESETS = [
   { value: "Nổi bật", label: "✨ Nổi bật" },
 ];
 
-function BookRow({ book, onFeature }: { book: Book; onFeature: (b: Book) => void }) {
+function BookRow({
+  book,
+  onFeature,
+}: {
+  book: Book;
+  onFeature: (b: Book) => void;
+}) {
   return (
     <div
       className={`flex items-center gap-3 sm:gap-4 px-4 py-3 rounded-xl border transition-colors ${
@@ -39,9 +45,18 @@ function BookRow({ book, onFeature }: { book: Book; onFeature: (b: Book) => void
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
-            <svg className="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+            <svg
+              className="w-5 h-5 text-indigo-400"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.5}
+                d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
+              />
             </svg>
           </div>
         )}
@@ -74,9 +89,18 @@ function BookRow({ book, onFeature }: { book: Book; onFeature: (b: Book) => void
           className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-colors"
           title="Chỉnh sửa"
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-              d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+          <svg
+            className="w-4 h-4"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+            />
           </svg>
         </Link>
         <button
@@ -88,9 +112,18 @@ function BookRow({ book, onFeature }: { book: Book; onFeature: (b: Book) => void
           }`}
           title={book.is_featured ? "Bỏ spotlight" : "Đặt làm spotlight"}
         >
-          <svg className="w-4 h-4" fill={book.is_featured ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-              d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+          <svg
+            className="w-4 h-4"
+            fill={book.is_featured ? "currentColor" : "none"}
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"
+            />
           </svg>
         </button>
       </div>
@@ -109,7 +142,11 @@ function FeatureModal({
   onClose: () => void;
 }) {
   const [label, setLabel] = useState(book.featured_label ?? "Weekly Star");
-  const [custom, setCustom] = useState(!LABEL_PRESETS.some((p) => p.value === (book.featured_label ?? "Weekly Star")));
+  const [custom, setCustom] = useState(
+    !LABEL_PRESETS.some(
+      (p) => p.value === (book.featured_label ?? "Weekly Star"),
+    ),
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
@@ -128,7 +165,10 @@ function FeatureModal({
           {LABEL_PRESETS.map((p) => (
             <button
               key={p.value}
-              onClick={() => { setLabel(p.value); setCustom(false); }}
+              onClick={() => {
+                setLabel(p.value);
+                setCustom(false);
+              }}
               className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors border ${
                 !custom && label === p.value
                   ? "bg-amber-500 text-white border-amber-500"
@@ -222,8 +262,8 @@ export default function ManageBooksClient() {
           b.id === updated.id
             ? updated
             : updated.is_featured
-            ? { ...b, is_featured: false, featured_label: null }
-            : b,
+              ? { ...b, is_featured: false, featured_label: null }
+              : b,
         ),
       );
       showToast(
@@ -273,18 +313,35 @@ export default function ManageBooksClient() {
     <div className="max-w-2xl mx-auto px-4 py-8">
       {/* Breadcrumb */}
       <nav className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 mb-6">
-        <Link href="/" className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">
+        <Link
+          href="/"
+          className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+        >
           Thư viện
         </Link>
-        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        <svg
+          className="w-3.5 h-3.5"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M9 5l7 7-7 7"
+          />
         </svg>
-        <span className="text-gray-700 dark:text-gray-200 font-medium">Quản lý truyện</span>
+        <span className="text-gray-700 dark:text-gray-200 font-medium">
+          Quản lý truyện
+        </span>
       </nav>
 
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Quản lý truyện</h1>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+            Quản lý truyện
+          </h1>
           <p className="text-sm text-gray-400 dark:text-gray-500 mt-0.5">
             Đặt spotlight, chỉnh sửa và sắp xếp thư viện
           </p>
@@ -299,7 +356,11 @@ export default function ManageBooksClient() {
       {/* Current spotlight info banner */}
       {featured && (
         <div className="flex items-center gap-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl px-4 py-3 mb-5">
-          <svg className="w-5 h-5 text-amber-500 flex-none" fill="currentColor" viewBox="0 0 20 20">
+          <svg
+            className="w-5 h-5 text-amber-500 flex-none"
+            fill="currentColor"
+            viewBox="0 0 20 20"
+          >
             <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
           </svg>
           <div className="flex-1 min-w-0">
@@ -311,7 +372,9 @@ export default function ManageBooksClient() {
             </p>
           </div>
           <button
-            onClick={() => featureMutation.mutate({ id: featured.id, is_featured: false })}
+            onClick={() =>
+              featureMutation.mutate({ id: featured.id, is_featured: false })
+            }
             className="text-xs text-amber-600 dark:text-amber-400 hover:underline flex-none"
           >
             Bỏ
@@ -323,10 +386,16 @@ export default function ManageBooksClient() {
       <div className="relative mb-4">
         <svg
           className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none"
-          fill="none" stroke="currentColor" viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
         >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-            d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+          />
         </svg>
         <input
           type="search"
@@ -340,8 +409,18 @@ export default function ManageBooksClient() {
             onClick={() => setSearch("")}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            <svg
+              className="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M6 18L18 6M6 6l12 12"
+              />
             </svg>
           </button>
         )}
@@ -349,8 +428,22 @@ export default function ManageBooksClient() {
 
       {/* Legend */}
       <p className="text-xs text-gray-400 dark:text-gray-500 mb-3">
-        Nhấn <svg className="inline w-3.5 h-3.5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg>{" "}
-        để đặt một truyện làm spotlight trên trang chủ. Chỉ một truyện được spotlight tại một thời điểm.
+        Nhấn{" "}
+        <svg
+          className="inline w-3.5 h-3.5 mb-0.5"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"
+          />
+        </svg>{" "}
+        để đặt một truyện làm spotlight trên trang chủ. Chỉ một truyện được
+        spotlight tại một thời điểm.
       </p>
 
       {/* Book list */}

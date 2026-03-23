@@ -71,7 +71,9 @@ export default function RootLayout({
                 </div>
                 <span className="font-bold text-gray-900 dark:text-gray-100 text-base tracking-tight">
                   Truyện
-                  <span className="text-indigo-600 dark:text-indigo-400">Audio</span>
+                  <span className="text-indigo-600 dark:text-indigo-400">
+                    Audio
+                  </span>
                 </span>
               </Link>
               <DarkModeToggle />

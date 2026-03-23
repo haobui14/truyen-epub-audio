@@ -67,8 +67,7 @@ export function isAdmin(): boolean {
 // hydrateAuthFromNative() has copied SharedPreferences → localStorage.
 // Admin-guarded pages must wait for this before checking isAdmin() so they
 // don't redirect on Android due to empty localStorage before hydration.
-let _authReady: boolean =
-  typeof window !== "undefined" && !isNativePlatform();
+let _authReady: boolean = typeof window !== "undefined" && !isNativePlatform();
 
 export function isAuthReady(): boolean {
   return _authReady;

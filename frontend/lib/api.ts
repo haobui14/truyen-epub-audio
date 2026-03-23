@@ -119,7 +119,10 @@ export const api = {
     request<Book>(`/api/books/${id}/feature`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ is_featured, featured_label: featured_label ?? null }),
+      body: JSON.stringify({
+        is_featured,
+        featured_label: featured_label ?? null,
+      }),
     }),
 
   // Chapters
@@ -428,7 +431,9 @@ export const api = {
           const { text: delta } = JSON.parse(payload) as { text: string };
           accumulated += delta;
           onChunk(delta, accumulated);
-        } catch { /* ignore malformed chunks */ }
+        } catch {
+          /* ignore malformed chunks */
+        }
       }
     }
     return accumulated;

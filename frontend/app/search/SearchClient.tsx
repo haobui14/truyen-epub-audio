@@ -46,7 +46,11 @@ export default function SearchClient() {
     inputRef.current?.focus();
   }, []);
 
-  const { data: books, isLoading, error } = useQuery({
+  const {
+    data: books,
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ["books"],
     queryFn: async () => {
       try {
@@ -69,7 +73,9 @@ export default function SearchClient() {
   // Only show genres that are actually used by at least one book
   const usedGenres = useMemo<Genre[]>(() => {
     if (!books || !genres) return [];
-    const usedIds = new Set(books.flatMap((b) => (b.genres ?? []).map((g) => g.id)));
+    const usedIds = new Set(
+      books.flatMap((b) => (b.genres ?? []).map((g) => g.id)),
+    );
     return genres.filter((g) => usedIds.has(g.id));
   }, [books, genres]);
 
@@ -86,13 +92,11 @@ export default function SearchClient() {
 
       // Story status filter
       const statusMatch =
-        storyFilter === "all" ||
-        (b.story_status ?? "unknown") === storyFilter;
+        storyFilter === "all" || (b.story_status ?? "unknown") === storyFilter;
 
       // Genre filter
       const genreMatch =
-        !genreFilter ||
-        (b.genres ?? []).some((g) => g.id === genreFilter);
+        !genreFilter || (b.genres ?? []).some((g) => g.id === genreFilter);
 
       return textMatch && statusMatch && genreMatch;
     });
@@ -147,8 +151,18 @@ export default function SearchClient() {
             onClick={() => setQuery("")}
             className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            <svg
+              className="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M6 18L18 6M6 6l12 12"
+              />
             </svg>
           </button>
         )}
@@ -198,7 +212,9 @@ export default function SearchClient() {
               {usedGenres.map((g) => (
                 <button
                   key={g.id}
-                  onClick={() => setGenreFilter(genreFilter === g.id ? null : g.id)}
+                  onClick={() =>
+                    setGenreFilter(genreFilter === g.id ? null : g.id)
+                  }
                   className={`flex-none px-3.5 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap ${
                     genreFilter === g.id
                       ? "bg-indigo-600 text-white shadow-sm"
@@ -242,8 +258,12 @@ export default function SearchClient() {
 
       {error && (
         <div className="text-center py-20">
-          <p className="text-red-500 font-medium">Không thể tải danh sách truyện</p>
-          <p className="text-sm text-gray-400 mt-1">Vui lòng kiểm tra kết nối và thử lại.</p>
+          <p className="text-red-500 font-medium">
+            Không thể tải danh sách truyện
+          </p>
+          <p className="text-sm text-gray-400 mt-1">
+            Vui lòng kiểm tra kết nối và thử lại.
+          </p>
         </div>
       )}
 
@@ -263,7 +283,9 @@ export default function SearchClient() {
             />
           </svg>
           <p className="text-base font-medium text-gray-500 dark:text-gray-400">
-            {hasActiveFilters ? "Không tìm thấy kết quả" : "Nhập từ khóa để tìm kiếm"}
+            {hasActiveFilters
+              ? "Không tìm thấy kết quả"
+              : "Nhập từ khóa để tìm kiếm"}
           </p>
           {hasActiveFilters && (
             <button

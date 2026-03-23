@@ -277,7 +277,9 @@ function BookInfoEditor({
   const [title, setTitle] = useState(book.title);
   const [author, setAuthor] = useState(book.author ?? "");
   const [description, setDescription] = useState(book.description ?? "");
-  const [storyStatus, setStoryStatus] = useState(book.story_status ?? "unknown");
+  const [storyStatus, setStoryStatus] = useState(
+    book.story_status ?? "unknown",
+  );
   const [cover, setCover] = useState<File | null>(null);
   const [coverPreview, setCoverPreview] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);

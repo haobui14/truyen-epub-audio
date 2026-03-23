@@ -3,23 +3,27 @@ import Image from "next/image";
 import type { Book } from "@/types";
 import { GenreTag } from "@/components/books/GenreManager";
 
-const STORY_STATUS_LABELS: Record<string, { label: string; classes: string }> = {
-  completed: {
-    label: "Hoàn thành",
-    classes: "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300",
-  },
-  ongoing: {
-    label: "Đang ra",
-    classes: "bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300",
-  },
-  unknown: {
-    label: "Chưa rõ",
-    classes: "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400",
-  },
-};
+const STORY_STATUS_LABELS: Record<string, { label: string; classes: string }> =
+  {
+    completed: {
+      label: "Hoàn thành",
+      classes:
+        "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300",
+    },
+    ongoing: {
+      label: "Đang ra",
+      classes: "bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300",
+    },
+    unknown: {
+      label: "Chưa rõ",
+      classes: "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400",
+    },
+  };
 
 export function BookListRow({ book }: { book: Book }) {
-  const storyStatus = STORY_STATUS_LABELS[book.story_status ?? "unknown"] ?? STORY_STATUS_LABELS.unknown;
+  const storyStatus =
+    STORY_STATUS_LABELS[book.story_status ?? "unknown"] ??
+    STORY_STATUS_LABELS.unknown;
 
   return (
     <Link
@@ -73,7 +77,9 @@ export function BookListRow({ book }: { book: Book }) {
         {/* Bottom row: badges + chapter count */}
         <div className="flex flex-wrap items-center gap-1.5">
           {/* Story status badge */}
-          <span className={`inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full ${storyStatus.classes}`}>
+          <span
+            className={`inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full ${storyStatus.classes}`}
+          >
             {storyStatus.label}
           </span>
 
@@ -93,8 +99,18 @@ export function BookListRow({ book }: { book: Book }) {
 
           {/* Chapter count */}
           <span className="ml-auto flex items-center gap-1 text-[11px] text-gray-400 dark:text-gray-500 flex-none">
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
+            <svg
+              className="w-3 h-3"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 6h16M4 12h16M4 18h7"
+              />
             </svg>
             {book.total_chapters}
           </span>
@@ -103,8 +119,18 @@ export function BookListRow({ book }: { book: Book }) {
 
       {/* Chevron */}
       <div className="flex-none self-center text-gray-300 dark:text-gray-600 group-hover:text-indigo-400 transition-colors">
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        <svg
+          className="w-4 h-4"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M9 5l7 7-7 7"
+          />
         </svg>
       </div>
     </Link>

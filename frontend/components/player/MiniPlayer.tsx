@@ -15,7 +15,10 @@ export function MiniPlayer() {
   const listenUrl = `/listen?id=${track.bookId}&chapter=${track.chapterId}`;
 
   return (
-    <div className="fixed left-0 right-0 z-50 bg-white/90 dark:bg-gray-900/90 backdrop-blur-lg border-t border-gray-200/70 dark:border-gray-800/70 shadow-xl" style={{ bottom: "calc(3.5rem + var(--sab))" }}>
+    <div
+      className="fixed left-0 right-0 z-50 bg-white/90 dark:bg-gray-900/90 backdrop-blur-lg border-t border-gray-200/70 dark:border-gray-800/70 shadow-xl"
+      style={{ bottom: "calc(3.5rem + var(--sab))" }}
+    >
       {/* Progress bar along the very top edge */}
       <div className="h-1 bg-gray-100 dark:bg-gray-800">
         <div
@@ -51,7 +54,10 @@ export function MiniPlayer() {
         </Link>
 
         {/* Track info → tap to go to listen page */}
-        <Link href={listenUrl} className="min-w-0 flex-1 flex items-center gap-2">
+        <Link
+          href={listenUrl}
+          className="min-w-0 flex-1 flex items-center gap-2"
+        >
           <div className="min-w-0 flex-1">
             <p className="text-xs text-indigo-500 dark:text-indigo-400 truncate leading-tight">
               {book.title}

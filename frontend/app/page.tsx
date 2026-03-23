@@ -1,12 +1,13 @@
 "use client";
 import Link from "next/link";
-import { useSyncExternalStore } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { getCachedBooks, cacheBooks } from "@/lib/bookCache";
 import { isAdmin } from "@/lib/auth";
-import { BookGrid } from "@/components/books/BookGrid";
 import { SpotlightCard } from "@/components/books/SpotlightCard";
+import { BookScrollRow } from "@/components/books/BookScrollRow";
+import { getColorClasses } from "@/components/books/GenreManager";
 import { Spinner } from "@/components/ui/Spinner";
 
 export default function HomePage() {
@@ -39,8 +40,38 @@ export default function HomePage() {
     refetchInterval: 10_000,
   });
 
+  const { data: genres } = useQuery({
+    queryKey: ["genres"],
+    queryFn: api.listGenres,
+    staleTime: 60_000,
+  });
+
   const hasBooks = books && books.length > 0;
   const featuredBook = books?.find((b) => b.is_featured) ?? books?.[0] ?? null;
+
+  // Books sorted newest-first
+  const newBooks = useMemo(() => {
+    if (!books) return [];
+    return [...books]
+      .sort(
+        (a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      )
+      .slice(0, 12);
+  }, [books]);
+
+  // Genres that have at least one book, with their books list
+  const genreSections = useMemo(() => {
+    if (!books || !genres) return [];
+    return genres
+      .map((genre) => ({
+        genre,
+        books: books.filter((b) =>
+          (b.genres ?? []).some((g) => g.id === genre.id),
+        ),
+      }))
+      .filter((s) => s.books.length > 0);
+  }, [books, genres]);
 
   return (
     <div>
@@ -74,8 +105,18 @@ export default function HomePage() {
               href="/upload"
               className="inline-flex items-center gap-2 bg-indigo-600 text-white font-medium px-6 py-3 rounded-xl hover:bg-indigo-700 active:scale-[0.98] transition-all shadow-md hover:shadow-lg"
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 4v16m8-8H4"
+                />
               </svg>
               Tải lên truyện đầu tiên
             </Link>
@@ -97,7 +138,7 @@ export default function HomePage() {
           <div className="flex items-center justify-between mb-5">
             <div>
               <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100 leading-tight">
-                Thư viện truyện
+                Khám phá
               </h1>
               <p className="text-sm text-gray-400 dark:text-gray-500 mt-0.5">
                 Nghe hoặc đọc truyện của bạn
@@ -105,26 +146,30 @@ export default function HomePage() {
             </div>
             {books && (
               <div className="flex items-center gap-2">
-                {/* Search shortcut */}
-                <Link
-                  href="/search"
-                  className="p-2 rounded-xl text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-colors"
-                  title="Tìm kiếm"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
-                </Link>
                 {admin && (
                   <Link
                     href="/admin/manage-books"
                     className="p-2 rounded-xl text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-colors"
                     title="Quản lý truyện"
                   >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                        d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <svg
+                      className="w-4 h-4"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+                      />
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                      />
                     </svg>
                   </Link>
                 )}
@@ -170,8 +215,25 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Book grid */}
-      {hasBooks && <BookGrid books={books} />}
+      {/* Sections: newest + per-genre */}
+      {hasBooks && (
+        <>
+          <BookScrollRow
+            title="Mới thêm"
+            seeAllHref="/search"
+            books={newBooks}
+          />
+          {genreSections.map(({ genre, books: genreBooks }) => (
+            <BookScrollRow
+              key={genre.id}
+              title={genre.name}
+              seeAllHref={`/search?genre=${genre.id}`}
+              colorDot={getColorClasses(genre.color).dot}
+              books={genreBooks}
+            />
+          ))}
+        </>
+      )}
     </div>
   );
 }

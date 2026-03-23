@@ -134,9 +134,7 @@ export function BottomNav() {
 
           {/* Profile */}
           <button
-            onClick={() =>
-              user ? openSheet() : router.push("/login")
-            }
+            onClick={() => (user ? openSheet() : router.push("/login"))}
             className={btnCls}
           >
             <Pill active={profileActive}>

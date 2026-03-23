@@ -3,10 +3,16 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @keyframes slideUp {
-  from { transform: translateY(100%); }
-  to   { transform: translateY(0); }
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
 }
-.animate-slide-up { animation: slideUp 0.22s cubic-bezier(0.32, 0.72, 0, 1); }
+.animate-slide-up {
+  animation: slideUp 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+}
 
 :root {
   --font-geist-sans: "Geist", sans-serif;
@@ -117,8 +123,13 @@ input[type="range"].accent-emerald::-moz-range-thumb {
 
 /* Sound wave bars (used in player) */
 @keyframes wave-bounce {
-  0%, 100% { transform: scaleY(0.35); }
-  50% { transform: scaleY(1); }
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
 }
 .sound-bar {
   display: inline-block;
@@ -129,14 +140,25 @@ input[type="range"].accent-emerald::-moz-range-thumb {
   transform-origin: bottom;
   animation: wave-bounce 0.9s ease-in-out infinite;
 }
-.sound-bar:nth-child(2) { animation-delay: 0.15s; }
-.sound-bar:nth-child(3) { animation-delay: 0.3s; }
-.sound-bar:nth-child(4) { animation-delay: 0.45s; }
+.sound-bar:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.sound-bar:nth-child(3) {
+  animation-delay: 0.3s;
+}
+.sound-bar:nth-child(4) {
+  animation-delay: 0.45s;
+}
 
 /* Floating icon animation (empty states) */
 @keyframes float {
-  0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-8px); }
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
 }
 .animate-float {
   animation: float 4s ease-in-out infinite;
@@ -157,8 +179,12 @@ input[type="range"].accent-emerald::-moz-range-thumb {
 }
 .card-hover:hover {
   transform: translateY(-3px);
-  box-shadow: 0 12px 28px -4px rgba(0, 0, 0, 0.1), 0 4px 8px -2px rgba(0, 0, 0, 0.04);
+  box-shadow:
+    0 12px 28px -4px rgba(0, 0, 0, 0.1),
+    0 4px 8px -2px rgba(0, 0, 0, 0.04);
 }
 .dark .card-hover:hover {
-  box-shadow: 0 12px 28px -4px rgba(0, 0, 0, 0.4), 0 4px 8px -2px rgba(0, 0, 0, 0.2);
+  box-shadow:
+    0 12px 28px -4px rgba(0, 0, 0, 0.4),
+    0 4px 8px -2px rgba(0, 0, 0, 0.2);
 }
