@@ -236,8 +236,8 @@ export default function EditChapterClient() {
         fixed top-16 bottom-0 left-0 z-50 w-72 flex flex-col border-r border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 overflow-hidden
         transform transition-transform duration-200
         ${mobileSidebarOpen ? "translate-x-0" : "-translate-x-full"}
-        sm:relative sm:top-auto sm:bottom-auto sm:left-auto sm:z-auto sm:translate-x-0
-        sm:sticky sm:top-16 sm:self-start sm:h-[calc(100vh-8rem)] sm:w-60 lg:w-64
+        sm:sticky sm:top-16 sm:bottom-auto sm:left-auto sm:z-auto sm:translate-x-0
+        sm:self-start sm:h-[calc(100vh-8rem)] sm:w-60 lg:w-64
       `}
       >
         {/* Header */}

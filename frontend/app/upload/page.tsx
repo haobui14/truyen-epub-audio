@@ -5,13 +5,23 @@ import { useRouter } from "next/navigation";
 import { UploadZone } from "@/components/upload/UploadZone";
 import { Spinner } from "@/components/ui/Spinner";
 import { api } from "@/lib/api";
-import { isLoggedIn, isAdmin } from "@/lib/auth";
+import { isLoggedIn, isAdmin, isAuthReady } from "@/lib/auth";
 
 export default function UploadPage() {
   const router = useRouter();
 
   useEffect(() => {
-    if (!isLoggedIn() || !isAdmin()) router.replace("/");
+    const checkAuth = () => {
+      if (!isLoggedIn() || !isAdmin()) router.replace("/");
+    };
+    if (isAuthReady()) {
+      checkAuth();
+    } else {
+      // On Android, localStorage is empty until hydrateAuthFromNative() completes.
+      // Wait for the auth-change event before checking.
+      window.addEventListener("auth-change", checkAuth, { once: true });
+      return () => window.removeEventListener("auth-change", checkAuth);
+    }
   }, [router]);
   const [file, setFile] = useState<File | null>(null);
   const [cover, setCover] = useState<File | null>(null);
