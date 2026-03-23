@@ -270,12 +270,14 @@ function BookInfoEditor({
     author?: string | null;
     description?: string | null;
     cover_url?: string | null;
+    story_status?: string | null;
   };
   onSaved: () => void;
 }) {
   const [title, setTitle] = useState(book.title);
   const [author, setAuthor] = useState(book.author ?? "");
   const [description, setDescription] = useState(book.description ?? "");
+  const [storyStatus, setStoryStatus] = useState(book.story_status ?? "unknown");
   const [cover, setCover] = useState<File | null>(null);
   const [coverPreview, setCoverPreview] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -293,6 +295,9 @@ function BookInfoEditor({
   useEffect(() => {
     setDescription(book.description ?? "");
   }, [book.description]);
+  useEffect(() => {
+    setStoryStatus(book.story_status ?? "unknown");
+  }, [book.story_status]);
 
   const handleCover = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0] ?? null;
@@ -310,6 +315,7 @@ function BookInfoEditor({
         title,
         author: author || undefined,
         description: description || undefined,
+        story_status: storyStatus,
         cover,
       });
       onSaved();
@@ -424,6 +430,22 @@ function BookInfoEditor({
             />
           </div>
         </div>
+      </div>
+
+      {/* Story status */}
+      <div>
+        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+          Tình trạng
+        </label>
+        <select
+          value={storyStatus}
+          onChange={(e) => setStoryStatus(e.target.value)}
+          className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        >
+          <option value="unknown">Chưa rõ</option>
+          <option value="ongoing">Đang ra</option>
+          <option value="completed">Hoàn thành</option>
+        </select>
       </div>
 
       {/* Description */}

@@ -22,3 +22,4 @@ class BookResponse(BaseModel):
     genres: List[GenreInBook] = []
     is_featured: bool = False
     featured_label: Optional[str] = None
+    story_status: str = "unknown"  # 'ongoing' | 'completed' | 'unknown'

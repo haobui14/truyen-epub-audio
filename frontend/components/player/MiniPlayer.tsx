@@ -15,7 +15,7 @@ export function MiniPlayer() {
   const listenUrl = `/listen?id=${track.bookId}&chapter=${track.chapterId}`;
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 bg-white/90 dark:bg-gray-900/90 backdrop-blur-lg border-t border-gray-200/70 dark:border-gray-800/70 shadow-xl" style={{ paddingBottom: "var(--sab)" }}>
+    <div className="fixed left-0 right-0 z-50 bg-white/90 dark:bg-gray-900/90 backdrop-blur-lg border-t border-gray-200/70 dark:border-gray-800/70 shadow-xl" style={{ bottom: "calc(3.5rem + var(--sab))" }}>
       {/* Progress bar along the very top edge */}
       <div className="h-1 bg-gray-100 dark:bg-gray-800">
         <div

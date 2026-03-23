@@ -2,6 +2,12 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+.animate-slide-up { animation: slideUp 0.22s cubic-bezier(0.32, 0.72, 0, 1); }
+
 :root {
   --font-geist-sans: "Geist", sans-serif;
   --sat: env(safe-area-inset-top, 0px);

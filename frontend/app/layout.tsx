@@ -4,7 +4,7 @@ import "./globals.css";
 import { Providers } from "./providers";
 import Link from "next/link";
 import { DarkModeToggle } from "@/components/ui/DarkModeToggle";
-import { HeaderAuth } from "@/components/ui/HeaderAuth";
+import { BottomNav } from "@/components/ui/BottomNav";
 import { MiniPlayer } from "@/components/player/MiniPlayer";
 import { PlayerPadding } from "@/components/player/PlayerPadding";
 
@@ -52,11 +52,11 @@ export default function RootLayout({
             className="bg-white/85 dark:bg-gray-900/85 backdrop-blur-md border-b border-gray-200/60 dark:border-gray-800/60 sticky z-40"
             style={{ top: "var(--sat)" }}
           >
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
               <Link href="/" className="flex items-center gap-2 group">
-                <div className="w-8 h-8 bg-linear-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center shadow-sm group-hover:shadow-md transition-shadow">
+                <div className="w-7 h-7 bg-linear-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center shadow-sm group-hover:shadow-md transition-shadow">
                   <svg
-                    className="w-4.5 h-4.5 text-white"
+                    className="w-4 h-4 text-white"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -69,24 +69,19 @@ export default function RootLayout({
                     />
                   </svg>
                 </div>
-                <span className="font-bold text-gray-900 dark:text-gray-100 text-lg tracking-tight">
+                <span className="font-bold text-gray-900 dark:text-gray-100 text-base tracking-tight">
                   Truyện
-                  <span className="text-indigo-600 dark:text-indigo-400">
-                    Audio
-                  </span>
+                  <span className="text-indigo-600 dark:text-indigo-400">Audio</span>
                 </span>
               </Link>
-              <div className="flex items-center gap-1.5 sm:gap-2">
-                <HeaderAuth />
-                <DarkModeToggle />
-              </div>
+              <DarkModeToggle />
             </div>
           </header>
           <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6">
             {children}
             <PlayerPadding />
           </main>
-          <footer className="border-t border-gray-200/60 dark:border-gray-800/60 bg-white/50 dark:bg-gray-900/50 mt-auto">
+          <footer className="hidden sm:block border-t border-gray-200/60 dark:border-gray-800/60 bg-white/50 dark:bg-gray-900/50 mt-auto">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-400 dark:text-gray-500">
               <p>
                 &copy; {new Date().getFullYear()} TruyệnAudio. Nghe và đọc
@@ -150,6 +145,7 @@ export default function RootLayout({
             </div>
           </footer>
           <MiniPlayer />
+          <BottomNav />
         </Providers>
       </body>
     </html>

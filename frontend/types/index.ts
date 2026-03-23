@@ -18,6 +18,7 @@ export interface Book {
   genres: Genre[];
   is_featured?: boolean;
   featured_label?: string | null;
+  story_status?: "ongoing" | "completed" | "unknown";
 }
 
 export interface AudioSummary {

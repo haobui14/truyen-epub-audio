@@ -1,6 +1,7 @@
 "use client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useRouter, usePathname } from "next/navigation";
 import { PlayerProvider } from "@/context/PlayerContext";
 import { flushProgressQueue } from "@/lib/progressQueue";
 import { hydrateAuthFromNative } from "@/lib/auth";
@@ -83,7 +84,14 @@ export function Providers({ children }: { children: React.ReactNode }) {
       }
       if (isLoggedIn() && getRefreshToken()) {
         const ok = await tryRefreshToken();
-        if (ok) queryClient.invalidateQueries();
+        if (ok) {
+          // Skip progress queries — refetching them while playing causes
+          // setTrack() to re-fire with a stale server position, which stops
+          // or jumps the player back on screen-on.
+          queryClient.invalidateQueries({
+            predicate: (query) => query.queryKey[0] !== "progress",
+          });
+        }
       }
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -118,7 +126,63 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <PlayerProvider>{children}</PlayerProvider>
+      <PlayerProvider>
+        <NativeUrlRestorer />
+        {children}
+      </PlayerProvider>
     </QueryClientProvider>
   );
+}
+
+/**
+ * Saves the current URL to localStorage on every navigation so it can be
+ * restored after Android kills the app process (screen-off → process death).
+ *
+ * Detection: sessionStorage is cleared on process death but localStorage is
+ * not. On first mount with no sessionStorage marker → process death → restore
+ * from localStorage. On a normal resume sessionStorage still has the marker.
+ */
+function NativeUrlRestorer() {
+  const router = useRouter();
+  const pathname = usePathname();
+  // Prevents the pathname save-effect from overwriting the last URL with "/"
+  // during the brief moment between starting the restore navigation and the
+  // target URL being committed by the router.
+  const isRestoringRef = useRef(false);
+
+  // On first mount: if sessionStorage is empty this is a fresh process start
+  // (process death). Try to navigate back to the last visited page.
+  useEffect(() => {
+    if (!isNativePlatform()) return;
+    if (sessionStorage.getItem("app-session")) return; // normal resume
+    sessionStorage.setItem("app-session", "1");
+
+    const lastUrl = localStorage.getItem("native-last-url");
+    if (lastUrl && lastUrl !== "/" && !lastUrl.startsWith("/login")) {
+      isRestoringRef.current = true;
+      router.replace(lastUrl);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist current URL on every navigation (strip ?autoplay=1 so restoration
+  // doesn't force-resume playback — user taps play to continue).
+  useEffect(() => {
+    if (!isNativePlatform()) return;
+    // Skip saving the transient "/" during a process-death restore navigation.
+    if (isRestoringRef.current) {
+      isRestoringRef.current = false;
+      return;
+    }
+    try {
+      const urlObj = new URL(window.location.href);
+      urlObj.searchParams.delete("autoplay");
+      const qs = urlObj.searchParams.toString();
+      const cleanUrl = urlObj.pathname + (qs ? "?" + qs : "");
+      localStorage.setItem("native-last-url", cleanUrl || "/");
+    } catch {
+      // URL parsing failed — skip
+    }
+  }, [pathname]);
+
+  return null;
 }

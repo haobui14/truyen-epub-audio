@@ -21,6 +21,11 @@ ALTER TABLE books ADD COLUMN IF NOT EXISTS featured_label TEXT;  -- e.g. 'Weekly
 -- Only one book should be featured at a time; enforce via app logic.
 CREATE INDEX IF NOT EXISTS idx_books_featured ON books(is_featured) WHERE is_featured = TRUE;
 
+-- Migration: story completion status (narrative state, separate from TTS processing status)
+ALTER TABLE books ADD COLUMN IF NOT EXISTS story_status TEXT NOT NULL DEFAULT 'unknown'
+    CHECK (story_status IN ('ongoing', 'completed', 'unknown'));
+CREATE INDEX IF NOT EXISTS idx_books_story_status ON books(story_status);
+
 CREATE INDEX IF NOT EXISTS idx_books_created_at ON books(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_books_status ON books(status);
 

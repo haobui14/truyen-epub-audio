@@ -23,7 +23,7 @@ def _attach_genres(rows: list) -> list:
 
 _BOOK_SELECT = (
     "id,title,author,description,cover_url,voice,status,total_chapters,created_at,"
-    "is_featured,featured_label,"
+    "is_featured,featured_label,story_status,"
     "book_genres(genres(id,name,color))"
 )
 
@@ -107,10 +107,11 @@ async def update_book(
     title: Optional[str] = Form(None),
     author: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
+    story_status: Optional[str] = Form(None),
     cover: Optional[UploadFile] = File(None),
     _admin: dict = Depends(get_admin_user),
 ):
-    """Admin-only: update book metadata (title, author, cover image)."""
+    """Admin-only: update book metadata (title, author, cover image, story status)."""
     db = get_client()
     book = db.table("books").select("id,cover_url").eq("id", book_id).single().execute()
     if not book.data:
@@ -126,9 +127,12 @@ async def update_book(
         updates["author"] = author.strip() or None
     if description is not None:
         updates["description"] = description.strip() or None
+    if story_status is not None:
+        if story_status not in ("ongoing", "completed", "unknown"):
+            raise HTTPException(status_code=400, detail="story_status must be 'ongoing', 'completed', or 'unknown'")
+        updates["story_status"] = story_status
 
     if cover and cover.filename:
-        content_type = cover.content_type or "image/jpeg"
         if content_type not in VALID_COVER_TYPES:
             raise HTTPException(status_code=400, detail="Cover must be JPEG, PNG, or WebP")
         cover_data = await cover.read()

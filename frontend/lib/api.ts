@@ -97,6 +97,7 @@ export const api = {
       title?: string;
       author?: string;
       description?: string;
+      story_status?: string;
       cover?: File | null;
     },
   ) => {
@@ -105,6 +106,8 @@ export const api = {
     if (fields.author !== undefined) form.append("author", fields.author);
     if (fields.description !== undefined)
       form.append("description", fields.description);
+    if (fields.story_status !== undefined)
+      form.append("story_status", fields.story_status);
     if (fields.cover) form.append("cover", fields.cover);
     return request<Book>(`/api/books/${id}`, { method: "PATCH", body: form });
   },
