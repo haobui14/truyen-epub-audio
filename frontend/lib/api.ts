@@ -108,6 +108,16 @@ export const api = {
     if (fields.cover) form.append("cover", fields.cover);
     return request<Book>(`/api/books/${id}`, { method: "PATCH", body: form });
   },
+  featureBook: (
+    id: string,
+    is_featured: boolean,
+    featured_label?: string | null,
+  ) =>
+    request<Book>(`/api/books/${id}/feature`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_featured, featured_label: featured_label ?? null }),
+    }),
 
   // Chapters
   getBookChapters: (bookId: string, page = 1, pageSize = 100) =>

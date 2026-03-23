@@ -15,6 +15,12 @@ CREATE TABLE IF NOT EXISTS books (
 -- Migration: add description column if upgrading from an older schema
 ALTER TABLE books ADD COLUMN IF NOT EXISTS description TEXT;
 
+-- Migration: spotlight / weekly-star columns
+ALTER TABLE books ADD COLUMN IF NOT EXISTS is_featured BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE books ADD COLUMN IF NOT EXISTS featured_label TEXT;  -- e.g. 'Weekly Star', 'Hot', 'Mới'
+-- Only one book should be featured at a time; enforce via app logic.
+CREATE INDEX IF NOT EXISTS idx_books_featured ON books(is_featured) WHERE is_featured = TRUE;
+
 CREATE INDEX IF NOT EXISTS idx_books_created_at ON books(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_books_status ON books(status);
 

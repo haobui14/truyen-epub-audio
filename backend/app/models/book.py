@@ -20,3 +20,5 @@ class BookResponse(BaseModel):
     total_chapters: int
     created_at: datetime
     genres: List[GenreInBook] = []
+    is_featured: bool = False
+    featured_label: Optional[str] = None

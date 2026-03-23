@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter, useParams, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { isAdmin } from "@/lib/auth";
+import { isAdmin, isAuthReady } from "@/lib/auth";
 import { Spinner } from "@/components/ui/Spinner";
 
 const SIDEBAR_PAGE_SIZE = 50;
@@ -34,7 +34,17 @@ export default function EditChapterClient() {
   const aiAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    if (!isAdmin()) router.replace("/");
+    const checkAdmin = () => {
+      if (!isAdmin()) router.replace("/");
+    };
+    if (isAuthReady()) {
+      checkAdmin();
+    } else {
+      // Native: localStorage is empty until hydrateAuthFromNative() finishes.
+      // Wait for the auth-change event fired by providers.tsx after hydration.
+      window.addEventListener("auth-change", checkAdmin, { once: true });
+      return () => window.removeEventListener("auth-change", checkAdmin);
+    }
   }, [router]);
 
 

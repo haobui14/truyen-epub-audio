@@ -23,6 +23,7 @@ def _attach_genres(rows: list) -> list:
 
 _BOOK_SELECT = (
     "id,title,author,description,cover_url,voice,status,total_chapters,created_at,"
+    "is_featured,featured_label,"
     "book_genres(genres(id,name,color))"
 )
 
@@ -174,6 +175,35 @@ class ChapterCreateBody(BaseModel):
     chapter_index: int
     title: str
     text_content: str
+
+
+class FeatureBookBody(BaseModel):
+    is_featured: bool
+    featured_label: Optional[str] = None  # e.g. 'Weekly Star', 'Hot', 'Mới'
+
+
+@router.patch("/{book_id}/feature", response_model=BookResponse)
+async def feature_book(
+    book_id: str,
+    body: FeatureBookBody,
+    _admin: dict = Depends(get_admin_user),
+):
+    db = get_client()
+    book = db.table("books").select("id").eq("id", book_id).single().execute()
+    if not book.data:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    # Un-feature every other book first so only one spotlight exists at a time.
+    if body.is_featured:
+        db.table("books").update({"is_featured": False, "featured_label": None}).neq("id", book_id).execute()
+
+    db.table("books").update({
+        "is_featured": body.is_featured,
+        "featured_label": body.featured_label if body.is_featured else None,
+    }).eq("id", book_id).execute()
+
+    result = db.table("books").select(_BOOK_SELECT).eq("id", book_id).single().execute()
+    return _attach_genres([result.data])[0]
 
 
 @router.post("/{book_id}/chapters", response_model=ChapterResponse, status_code=201)

@@ -5,7 +5,7 @@ import Image from "next/image";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { isAdmin } from "@/lib/auth";
+import { isAdmin, isAuthReady } from "@/lib/auth";
 import { ChapterList } from "@/components/books/ChapterList";
 import { GenreManager } from "@/components/books/GenreManager";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
@@ -22,7 +22,17 @@ export default function EditBookClient() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   useEffect(() => {
-    if (!isAdmin()) router.replace("/");
+    const checkAdmin = () => {
+      if (!isAdmin()) router.replace("/");
+    };
+    if (isAuthReady()) {
+      checkAdmin();
+    } else {
+      // Native: localStorage is empty until hydrateAuthFromNative() finishes.
+      // Wait for the auth-change event fired by providers.tsx after hydration.
+      window.addEventListener("auth-change", checkAdmin, { once: true });
+      return () => window.removeEventListener("auth-change", checkAdmin);
+    }
   }, [router]);
 
   const { data: book, isLoading: bookLoading } = useQuery({

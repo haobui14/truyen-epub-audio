@@ -16,6 +16,8 @@ export interface Book {
   total_chapters: number;
   created_at: string;
   genres: Genre[];
+  is_featured?: boolean;
+  featured_label?: string | null;
 }
 
 export interface AudioSummary {
