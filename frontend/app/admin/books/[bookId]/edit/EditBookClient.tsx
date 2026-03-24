@@ -20,6 +20,13 @@ export default function EditBookClient() {
 
   const [chapterPage, setChapterPage] = useState(1);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [autoSplitRunning, setAutoSplitRunning] = useState(false);
+  const [autoSplitResult, setAutoSplitResult] = useState<{
+    old_count: number;
+    new_count: number;
+    missing_chapters: Array<{ title: string; chapter_index: number }>;
+  } | null>(null);
+  const [autoSplitError, setAutoSplitError] = useState<string | null>(null);
 
   useEffect(() => {
     const checkAdmin = () => {
@@ -200,6 +207,83 @@ export default function EditBookClient() {
               />
             )}
           </div>
+        </div>
+      </section>
+
+      {/* Auto-split */}
+      <section className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-100 dark:border-gray-700">
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+            Tự động tách chương
+          </h2>
+        </div>
+        <div className="p-5 space-y-3">
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Gộp toàn bộ nội dung lại rồi tách theo tiêu đề{" "}
+            <span className="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">
+              Chương N
+            </span>{" "}
+            /{" "}
+            <span className="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">
+              Chapter N
+            </span>
+            . Audio cũ sẽ bị xóa, tất cả chương mới về trạng thái{" "}
+            <span className="font-medium">pending</span>.
+          </p>
+          <button
+            type="button"
+            disabled={autoSplitRunning}
+            onClick={async () => {
+              setAutoSplitRunning(true);
+              setAutoSplitResult(null);
+              setAutoSplitError(null);
+              try {
+                const result = await api.autoSplitBook(bookId);
+                setAutoSplitResult(result);
+                queryClient.invalidateQueries({ queryKey: ["chapters", bookId] });
+                queryClient.invalidateQueries({ queryKey: ["book", bookId] });
+              } catch (err) {
+                setAutoSplitError(
+                  err instanceof Error ? err.message : "Lỗi không xác định",
+                );
+              } finally {
+                setAutoSplitRunning(false);
+              }
+            }}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-indigo-600 dark:text-indigo-400 border border-indigo-300 dark:border-indigo-700 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/30 disabled:opacity-60 transition-colors"
+          >
+            {autoSplitRunning && <Spinner className="w-4 h-4" />}
+            {autoSplitRunning ? "Đang tách…" : "Chạy tách tự động"}
+          </button>
+          {autoSplitError && (
+            <p className="text-xs text-red-600 dark:text-red-400">
+              {autoSplitError}
+            </p>
+          )}
+          {autoSplitResult && (
+            <div className="space-y-2">
+              <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                Hoàn thành: {autoSplitResult.old_count} → {autoSplitResult.new_count} chương
+              </p>
+              {autoSplitResult.missing_chapters.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-amber-600 dark:text-amber-400 mb-1">
+                    {autoSplitResult.missing_chapters.length} chương thiếu nội dung:
+                  </p>
+                  <ul className="space-y-0.5 max-h-40 overflow-y-auto">
+                    {autoSplitResult.missing_chapters.map((ch) => (
+                      <li
+                        key={ch.chapter_index}
+                        className="text-xs text-gray-600 dark:text-gray-400 font-mono bg-amber-50 dark:bg-amber-950/20 px-2 py-0.5 rounded"
+                      >
+                        [{ch.chapter_index + 1}] {ch.title}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </section>
 

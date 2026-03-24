@@ -357,6 +357,14 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     }),
+  // Admin: join all chapters and re-split by Chương/Chapter headers
+  autoSplitBook: (bookId: string) =>
+    request<{
+      old_count: number;
+      new_count: number;
+      missing_chapters: Array<{ title: string; chapter_index: number }>;
+    }>(`/api/books/${bookId}/auto-split`, { method: "POST" }),
+
   // Admin: manual chapter creation
   createChapter: (
     bookId: string,

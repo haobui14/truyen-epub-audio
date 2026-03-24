@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import tempfile
 import uuid
 import logging
@@ -15,6 +16,101 @@ from app.utils.text_cleaner import html_to_text
 from app.services import storage_service, task_queue
 
 logger = logging.getLogger(__name__)
+
+_CHAPTER_HEADER_RE = re.compile(r'^(chương|chapter)\s+\d+', re.IGNORECASE)
+
+
+def split_text_by_headers(text: str) -> list[dict]:
+    """Split text into parts by Chương/Chapter headers.
+
+    All text before the first header (preamble, separator lines between EPUB
+    spine items, etc.) is prepended to the first real chapter's body so it is
+    never lost and never counted as a spurious extra chapter.
+
+    Returns a list of dicts: {title, text_content, has_body}.
+    has_body is False when a header was detected but the body is empty.
+    """
+    lines = text.split("\n")
+    parts: list[dict] = []
+    current_title = ""
+    buf: list[str] = []
+
+    def flush() -> None:
+        body = "\n".join(buf).strip()
+        if current_title:
+            parts.append({
+                "title": current_title,
+                "text_content": f"{current_title}\n{body}".strip(),
+                "has_body": bool(body),
+            })
+        elif body:
+            # Pre-header content — tag it so we can merge it into the first
+            # real chapter rather than treating it as a standalone entry.
+            parts.append({"_pre": body})
+
+    for line in lines:
+        if _CHAPTER_HEADER_RE.match(line.strip()):
+            flush()
+            current_title = line.strip()
+            buf = []
+        else:
+            buf.append(line)
+    flush()
+
+    # Merge any leading preamble into the first real chapter's body.
+    # If there are no real chapters at all, drop the preamble entirely.
+    if parts and "_pre" in parts[0]:
+        pre = parts.pop(0)["_pre"]
+        if parts:
+            p = parts[0]
+            p["text_content"] = (pre + "\n" + p["text_content"]).strip()
+            p["has_body"] = True
+
+    return parts
+
+
+def auto_split_chapters(chapters_data: list[dict]) -> tuple[list[dict], list[str]]:
+    """Join all chapter text and re-split by chapter headers.
+
+    Only replaces chapters_data when more chapters are detected (i.e. the EPUB
+    had multiple chapters merged into a single spine item).
+
+    Returns:
+        (new_chapters_data, missing_titles) — missing_titles are headers with
+        no body text between them and the next header.
+    """
+    if not chapters_data:
+        return chapters_data, []
+
+    book_id = chapters_data[0]["book_id"]
+    # Join with a single newline so there is always a line break between
+    # adjacent chapters even when text_content has no trailing newline.
+    combined = "\n".join((ch.get("text_content") or "") for ch in chapters_data)
+    parts = split_text_by_headers(combined)
+
+    # Only apply when we find strictly more chapters (merged EPUB items)
+    if len(parts) <= len(chapters_data):
+        return chapters_data, []
+
+    missing_titles = [p["title"] for p in parts if not p["has_body"]]
+    new_chapters = [
+        {
+            "id": str(uuid.uuid4()),
+            "book_id": book_id,
+            "chapter_index": i,
+            "title": p["title"],
+            "text_content": p["text_content"],
+            "word_count": len(p["text_content"].split()),
+            "status": "pending",
+        }
+        for i, p in enumerate(parts)
+    ]
+
+    logger.info(
+        f"Auto-split: {len(chapters_data)} EPUB items → {len(new_chapters)} chapters"
+        + (f", {len(missing_titles)} missing body" if missing_titles else "")
+    )
+    return new_chapters, missing_titles
 
 VALID_MEDIA_TYPES = {ebooklib.ITEM_DOCUMENT}
 
@@ -124,6 +220,9 @@ async def parse_epub_task(book_id: str, epub_bytes: bytes) -> None:
 
         if not chapters_data:
             raise ValueError("No readable chapters found in EPUB")
+
+        # Auto-split merged EPUB spine items by Vietnamese/English chapter headers
+        chapters_data, _missing = auto_split_chapters(chapters_data)
 
         # Insert chapters in batches to avoid Supabase statement timeout on large books
         BATCH_SIZE = 100

@@ -210,6 +210,87 @@ async def feature_book(
     return _attach_genres([result.data])[0]
 
 
+@router.post("/{book_id}/auto-split")
+async def auto_split_book(
+    book_id: str,
+    _admin: dict = Depends(get_admin_user),
+):
+    """Admin-only: join all chapters and re-split by Chương/Chapter headers.
+
+    Returns old_count, new_count, and any chapters whose header had no body.
+    """
+    from app.services.epub_parser import split_text_by_headers
+    import uuid as _uuid
+
+    db = get_client()
+    book = db.table("books").select("id").eq("id", book_id).single().execute()
+    if not book.data:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    # Fetch ALL chapters in reading order.
+    # Supabase PostgREST defaults to 1000 rows; use a high explicit limit so
+    # chapters that sit between two merged items are never silently dropped.
+    chapters_result = db.table("chapters").select(
+        "id,chapter_index,text_content"
+    ).eq("book_id", book_id).order("chapter_index").limit(100_000).execute()
+
+    chapters = chapters_result.data or []
+    old_count = len(chapters)
+    if not chapters:
+        raise HTTPException(status_code=400, detail="No chapters to split")
+
+    # Merge every chapter's text in reading order, then split by headers.
+    # Using "\n" ensures a line break between chapters even when a chapter's
+    # text_content has no trailing newline.
+    combined = "\n".join((ch.get("text_content") or "") for ch in chapters)
+    parts = split_text_by_headers(combined)
+
+    if not parts:
+        raise HTTPException(status_code=400, detail="No chapter headers detected in text")
+
+    missing_chapters = [
+        {"title": p["title"], "chapter_index": i}
+        for i, p in enumerate(parts)
+        if not p["has_body"]
+    ]
+
+    # Delete audio from storage (best effort) then delete chapter rows
+    for ch in chapters:
+        try:
+            await storage_service.delete_path("audio", f"{book_id}/{ch['id']}.mp3")
+        except Exception:
+            pass
+
+    chapter_ids = [ch["id"] for ch in chapters]
+    db.table("chapters").delete().in_("id", chapter_ids).execute()
+
+    # Insert new chapters in batches
+    new_chapters = [
+        {
+            "id": str(_uuid.uuid4()),
+            "book_id": book_id,
+            "chapter_index": i,
+            "title": p["title"],
+            "text_content": p["text_content"],
+            "word_count": len(p["text_content"].split()),
+            "status": "pending",
+        }
+        for i, p in enumerate(parts)
+    ]
+    BATCH_SIZE = 100
+    for i in range(0, len(new_chapters), BATCH_SIZE):
+        db.table("chapters").insert(new_chapters[i : i + BATCH_SIZE]).execute()
+
+    new_count = len(new_chapters)
+    db.table("books").update({"total_chapters": new_count}).eq("id", book_id).execute()
+
+    return {
+        "old_count": old_count,
+        "new_count": new_count,
+        "missing_chapters": missing_chapters,
+    }
+
+
 @router.post("/{book_id}/chapters", response_model=ChapterResponse, status_code=201)
 async def create_chapter(
     book_id: str,
