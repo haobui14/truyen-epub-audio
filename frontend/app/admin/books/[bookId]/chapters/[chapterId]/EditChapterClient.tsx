@@ -9,6 +9,255 @@ import { Spinner } from "@/components/ui/Spinner";
 
 const SIDEBAR_PAGE_SIZE = 50;
 
+// ─── Split-chapter helpers ───────────────────────────────────────────────────
+
+interface SplitPart {
+  title: string;
+  text: string;
+}
+
+/** Auto-detect chapter split points by scanning for "Chương N / Chapter N" headers. */
+function detectSplits(text: string, fallbackTitle: string): SplitPart[] {
+  const HEADER_RE = /^(chương|chapter)\s+\d+/i;
+  const lines = text.split("\n");
+  const parts: SplitPart[] = [];
+  let currentTitle = "";
+  let buf: string[] = [];
+
+  const flush = () => {
+    const body = buf.join("\n").trim();
+    if (currentTitle || body) {
+      parts.push({ title: currentTitle || fallbackTitle, text: body });
+    }
+  };
+
+  for (const line of lines) {
+    if (HEADER_RE.test(line.trim())) {
+      flush();
+      currentTitle = line.trim();
+      buf = [];
+    } else {
+      buf.push(line);
+    }
+  }
+  flush();
+  return parts;
+}
+
+function SplitChapterModal({
+  text,
+  currentTitle,
+  onConfirm,
+  onClose,
+}: {
+  text: string;
+  currentTitle: string;
+  onConfirm: (parts: SplitPart[]) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [parts, setParts] = useState<SplitPart[]>(() =>
+    detectSplits(text, currentTitle),
+  );
+  const [custom, setCustom] = useState("");
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function updateTitle(i: number, val: string) {
+    setParts((ps) => ps.map((p, j) => (j === i ? { ...p, title: val } : p)));
+  }
+
+  function reSplit() {
+    setError(null);
+    const delim = custom.trim();
+    if (!delim) {
+      setParts(detectSplits(text, currentTitle));
+      return;
+    }
+    const segments = text
+      .split(delim)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    if (segments.length < 2) {
+      setError(`Không tìm thấy "${delim}" trong văn bản.`);
+      return;
+    }
+    setParts(
+      segments.map((seg, i) => {
+        const firstLine = seg.split("\n")[0].trim();
+        const rest = seg.split("\n").slice(1).join("\n").trim();
+        return {
+          title:
+            firstLine.length > 0 && firstLine.length <= 200
+              ? firstLine
+              : `${currentTitle} (${i + 1})`,
+          text: rest || seg,
+        };
+      }),
+    );
+  }
+
+  async function handleConfirm() {
+    const bad = parts.findIndex((p) => !p.title.trim());
+    if (bad >= 0) {
+      setError(`Phần ${bad + 1} chưa có tiêu đề.`);
+      return;
+    }
+    setError(null);
+    setConfirming(true);
+    try {
+      await onConfirm(parts);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Lỗi không xác định");
+      setConfirming(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+      <div className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-xl bg-white dark:bg-gray-900 shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+              Tách chương
+            </h2>
+            {parts.length >= 2 ? (
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                Phát hiện {parts.length} phần — chỉnh tiêu đề rồi xác nhận
+              </p>
+            ) : (
+              <p className="text-xs text-orange-500 dark:text-orange-400 mt-0.5">
+                Không phát hiện tiêu đề chương — nhập ký tự phân cách bên dưới
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-lg transition-colors"
+          >
+            <svg
+              className="w-5 h-5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M6 18L18 6M6 6l12 12"
+              />
+            </svg>
+          </button>
+        </div>
+
+        {/* Custom delimiter row */}
+        <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-100 dark:border-gray-800">
+          <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0">
+            Tách theo:
+          </span>
+          <input
+            value={custom}
+            onChange={(e) => setCustom(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && reSplit()}
+            placeholder="Auto-detect (Chương N / Chapter N)"
+            className="flex-1 min-w-0 px-2.5 py-1.5 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+          />
+          <button
+            type="button"
+            onClick={reSplit}
+            className="px-3 py-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 border border-indigo-300 dark:border-indigo-700 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors"
+          >
+            Phân tích lại
+          </button>
+        </div>
+
+        {/* Parts list */}
+        <div className="flex-1 overflow-y-auto px-5 py-3 space-y-3">
+          {parts.length < 2 ? (
+            <div className="flex flex-col items-center gap-2 py-10 text-gray-400 dark:text-gray-600">
+              <svg
+                className="w-10 h-10"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.5}
+                  d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+                />
+              </svg>
+              <span className="text-sm">
+                Nhập ký tự phân cách rồi nhấn &quot;Phân tích lại&quot;
+              </span>
+            </div>
+          ) : (
+            parts.map((part, i) => (
+              <div
+                key={i}
+                className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 space-y-2"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-mono text-indigo-500 dark:text-indigo-400 shrink-0">
+                    #{i + 1}
+                  </span>
+                  <input
+                    value={part.title}
+                    onChange={(e) => updateTitle(i, e.target.value)}
+                    placeholder="Tiêu đề chương..."
+                    className="flex-1 min-w-0 px-2.5 py-1.5 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                  />
+                  <span className="text-xs text-gray-400 dark:text-gray-500 shrink-0">
+                    {part.text
+                      .split(/\s+/)
+                      .filter(Boolean)
+                      .length.toLocaleString()}{" "}
+                    từ
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed line-clamp-2 font-mono">
+                  {part.text.slice(0, 200)}
+                  {part.text.length > 200 ? "…" : ""}
+                </p>
+              </div>
+            ))
+          )}
+        </div>
+
+        {error && (
+          <div className="px-5 pb-2">
+            <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
+          </div>
+        )}
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-gray-200 dark:border-gray-700">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={confirming}
+            className="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors disabled:opacity-50"
+          >
+            Huỷ
+          </button>
+          <button
+            type="button"
+            onClick={handleConfirm}
+            disabled={parts.length < 2 || confirming}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-60 active:scale-[0.98] transition-all"
+          >
+            {confirming && <Spinner className="w-3.5 h-3.5" />}
+            {confirming ? "Đang tách…" : `Tách thành ${parts.length} chương`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function EditChapterClient() {
   const params = useParams();
   const searchParams = useSearchParams();
@@ -34,6 +283,7 @@ export default function EditChapterClient() {
   const [aiFixing, setAiFixing] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const aiAbortRef = useRef<AbortController | null>(null);
+  const [splitModalOpen, setSplitModalOpen] = useState(false);
 
   useEffect(() => {
     const checkAdmin = () => {
@@ -214,6 +464,20 @@ export default function EditChapterClient() {
     } finally {
       setAiFixing(false);
     }
+  }
+
+  async function handleSplitConfirm(parts: SplitPart[]) {
+    await api.splitChapter(
+      chapterId,
+      parts.map((p) => ({ title: p.title, text_content: p.text })),
+    );
+    queryClient.invalidateQueries({ queryKey: ["chapters", bookId] });
+    queryClient.invalidateQueries({ queryKey: ["book", bookId] });
+    queryClient.invalidateQueries({ queryKey: ["chapter", chapterId] });
+    queryClient.invalidateQueries({ queryKey: ["chapterText", chapterId] });
+    setSplitModalOpen(false);
+    // Navigate away so the refreshed chapter list is visible
+    router.replace(`/admin/edit-book?id=${bookId}`);
   }
 
   const sidebarChapters = sidebarData?.items ?? [];
@@ -444,15 +708,13 @@ export default function EditChapterClient() {
                 {isNew ? "Thêm chương mới" : "Chỉnh sửa chương"}
               </h1>
               {!isNew && (
-                <button
-                  type="button"
-                  onClick={handleDelete}
-                  disabled={deleting}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 dark:text-red-400 border border-red-300 dark:border-red-800 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors disabled:opacity-50"
-                >
-                  {deleting ? (
-                    <Spinner className="w-3 h-3" />
-                  ) : (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSplitModalOpen(true)}
+                    disabled={!textContent.trim()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-600 dark:text-amber-400 border border-amber-300 dark:border-amber-700 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors disabled:opacity-40"
+                  >
                     <svg
                       className="w-3.5 h-3.5"
                       fill="none"
@@ -463,12 +725,37 @@ export default function EditChapterClient() {
                         strokeLinecap="round"
                         strokeLinejoin="round"
                         strokeWidth={2}
-                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                        d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm0-11.516a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z"
                       />
                     </svg>
-                  )}
-                  Xoá chương
-                </button>
+                    Tách chương
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDelete}
+                    disabled={deleting}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 dark:text-red-400 border border-red-300 dark:border-red-800 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors disabled:opacity-50"
+                  >
+                    {deleting ? (
+                      <Spinner className="w-3 h-3" />
+                    ) : (
+                      <svg
+                        className="w-3.5 h-3.5"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                        />
+                      </svg>
+                    )}
+                    Xoá chương
+                  </button>
+                </div>
               )}
             </div>
 
@@ -611,6 +898,16 @@ export default function EditChapterClient() {
           </form>
         )}
       </main>
+
+      {/* ─── Split Chapter Modal ─── */}
+      {splitModalOpen && !isNew && (
+        <SplitChapterModal
+          text={textContent}
+          currentTitle={title}
+          onConfirm={handleSplitConfirm}
+          onClose={() => setSplitModalOpen(false)}
+        />
+      )}
     </div>
   );
 }

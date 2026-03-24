@@ -175,6 +175,77 @@ async def ai_fix_chapter(
     )
 
 
+class SplitPart(BaseModel):
+    title: str
+    text_content: str
+
+
+class SplitRequest(BaseModel):
+    parts: list[SplitPart]
+
+
+@router.post("/chapters/{chapter_id}/split")
+async def split_chapter(
+    chapter_id: str,
+    body: SplitRequest,
+    _admin: dict = Depends(get_admin_user),
+):
+    import uuid as _uuid
+
+    if len(body.parts) < 2:
+        raise HTTPException(status_code=400, detail="Need at least 2 parts to split")
+    for part in body.parts:
+        if not part.title.strip():
+            raise HTTPException(status_code=400, detail="Each part must have a non-empty title")
+
+    db = get_client()
+    result = db.table("chapters").select("id,book_id,chapter_index").eq("id", chapter_id).maybe_single().execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Chapter not found")
+
+    book_id = result.data["book_id"]
+    base_index = result.data["chapter_index"]
+    num_new = len(body.parts) - 1
+
+    # Shift all chapters after base_index up by num_new to make room for new chapters
+    db.rpc("shift_chapters_up_by_n", {
+        "p_book_id": book_id,
+        "p_insert_index": base_index + 1,
+        "p_n": num_new,
+    }).execute()
+
+    # Update the existing chapter with parts[0]
+    first = body.parts[0]
+    db.table("chapters").update({
+        "title": first.title.strip(),
+        "text_content": first.text_content,
+        "word_count": len(first.text_content.split()),
+        "status": "pending",
+    }).eq("id", chapter_id).execute()
+
+    # Insert new chapters for parts[1:]
+    new_ids = []
+    for i, part in enumerate(body.parts[1:], start=1):
+        new_id = str(_uuid.uuid4())
+        new_ids.append(new_id)
+        db.table("chapters").insert({
+            "id": new_id,
+            "book_id": book_id,
+            "chapter_index": base_index + i,
+            "title": part.title.strip(),
+            "text_content": part.text_content,
+            "word_count": len(part.text_content.split()),
+            "status": "pending",
+        }).execute()
+
+    # Update total_chapters
+    count_result = db.table("chapters").select("id", count="exact").eq("book_id", book_id).execute()
+    new_total = count_result.count or 0
+    db.table("books").update({"total_chapters": new_total}).eq("id", book_id).execute()
+
+    return {"chapter_id": chapter_id, "new_chapter_ids": new_ids, "total_chapters": new_total}
+
+
 class BulkDeleteRequest(BaseModel):
     chapter_ids: list[str]
 

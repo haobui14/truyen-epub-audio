@@ -199,6 +199,29 @@ BEGIN
 END;
 $$;
 
+-- Shift chapters at >= p_insert_index upward by p_n positions (for split-chapter inserts)
+CREATE OR REPLACE FUNCTION shift_chapters_up_by_n(
+    p_book_id UUID,
+    p_insert_index INT,
+    p_n INT
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+    UPDATE chapters
+    SET chapter_index = chapter_index + 1000000
+    WHERE book_id = p_book_id
+      AND chapter_index >= p_insert_index;
+
+    UPDATE chapters
+    SET chapter_index = chapter_index - 1000000 + p_n
+    WHERE book_id = p_book_id
+      AND chapter_index >= 1000000;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION reindex_chapters_after_delete(
     p_book_id UUID,
     p_deleted_index INT

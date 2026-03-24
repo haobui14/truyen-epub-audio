@@ -368,6 +368,21 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  // Admin: split a merged chapter into multiple chapters
+  splitChapter: (
+    chapterId: string,
+    parts: Array<{ title: string; text_content: string }>,
+  ) =>
+    request<{
+      chapter_id: string;
+      new_chapter_ids: string[];
+      total_chapters: number;
+    }>(`/api/chapters/${chapterId}/split`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ parts }),
+    }),
+
   // Genres
   listGenres: () => request<Genre[]>("/api/genres"),
   createGenre: (name: string, color: string) =>
