@@ -27,7 +27,11 @@ function detectSplits(text: string, fallbackTitle: string): SplitPart[] {
   const flush = () => {
     const body = buf.join("\n").trim();
     if (currentTitle || body) {
-      parts.push({ title: currentTitle || fallbackTitle, text: body });
+      const resolvedTitle = currentTitle || fallbackTitle;
+      const textWithHeader = resolvedTitle
+        ? `${resolvedTitle}\n${body}`
+        : body;
+      parts.push({ title: resolvedTitle, text: textWithHeader.trim() });
     }
   };
 
@@ -63,7 +67,16 @@ function SplitChapterModal({
   const [error, setError] = useState<string | null>(null);
 
   function updateTitle(i: number, val: string) {
-    setParts((ps) => ps.map((p, j) => (j === i ? { ...p, title: val } : p)));
+    setParts((ps) =>
+      ps.map((p, j) => {
+        if (j !== i) return p;
+        // Keep the first line of text in sync with the title
+        const lines = p.text.split("\n");
+        const rest = lines.slice(1).join("\n");
+        const newText = rest ? `${val}\n${rest}` : val;
+        return { ...p, title: val, text: newText };
+      }),
+    );
   }
 
   function reSplit() {
@@ -85,13 +98,12 @@ function SplitChapterModal({
       segments.map((seg, i) => {
         const firstLine = seg.split("\n")[0].trim();
         const rest = seg.split("\n").slice(1).join("\n").trim();
-        return {
-          title:
-            firstLine.length > 0 && firstLine.length <= 200
-              ? firstLine
-              : `${currentTitle} (${i + 1})`,
-          text: rest || seg,
-        };
+        const title =
+          firstLine.length > 0 && firstLine.length <= 200
+            ? firstLine
+            : `${currentTitle} (${i + 1})`;
+        const textWithHeader = `${title}\n${rest || seg}`;
+        return { title, text: textWithHeader.trim() };
       }),
     );
   }
