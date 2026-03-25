@@ -10,7 +10,7 @@ from app.database import get_client
 from app.config import settings
 from app.dependencies import get_admin_user
 from app.services import storage_service, epub_parser
-from app.services.converter import txt_to_epub, pdf_to_epub
+from app.services.converter import txt_to_epub, pdf_to_epub, prc_to_epub
 
 router = APIRouter(prefix="/api", tags=["upload"])
 logger = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ _background_tasks: set = set()
 
 VALID_VOICES = ["vi-VN-HoaiMyNeural", "vi-VN-NamMinhNeural"]
 VALID_COVER_TYPES = {"image/jpeg", "image/png", "image/webp"}
-VALID_EXTENSIONS = {".epub", ".pdf", ".txt"}
+VALID_EXTENSIONS = {".epub", ".pdf", ".txt", ".prc", ".mobi"}
 
 
 @router.post("/upload")
@@ -37,7 +37,7 @@ async def upload_book(
     if not ext:
         raise HTTPException(
             status_code=400,
-            detail="Only .epub, .pdf, and .txt files are accepted",
+            detail="Only .epub, .pdf, .txt, .prc, and .mobi files are accepted",
         )
 
     if voice not in VALID_VOICES:
@@ -98,6 +98,8 @@ async def upload_book(
         ".epub": "application/epub+zip",
         ".pdf": "application/pdf",
         ".txt": "text/plain",
+        ".prc": "application/x-mobipocket-ebook",
+        ".mobi": "application/x-mobipocket-ebook",
     }[ext]
     try:
         await storage_service.upload_bytes(
@@ -131,6 +133,9 @@ async def _convert_and_parse(
         elif ext == ".txt":
             logger.info(f"Book {book_id}: converting TXT → EPUB")
             epub_bytes = await asyncio.to_thread(txt_to_epub, content, title)
+        elif ext in (".prc", ".mobi"):
+            logger.info(f"Book {book_id}: converting PRC/MOBI → EPUB")
+            epub_bytes = await asyncio.to_thread(prc_to_epub, content, title)
         else:  # .pdf
             logger.info(f"Book {book_id}: converting PDF → EPUB")
             epub_bytes = await asyncio.to_thread(pdf_to_epub, content, title)

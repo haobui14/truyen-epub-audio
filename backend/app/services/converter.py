@@ -1,15 +1,18 @@
 """
-Convert TXT and PDF files to EPUB, then feed into the existing EPUB parser.
+Convert TXT, PDF, and PRC/MOBI files to EPUB, then feed into the existing
+EPUB parser.
 
 Strategy:
-  TXT  → split into chapters by heading detection or ~5000-word chunks → EPUB
-  PDF  → extract text (PyMuPDF for text PDFs, pytesseract OCR for image PDFs)
-       → same chapter splitting → EPUB
+  TXT      → split into chapters by heading detection or ~5000-word chunks → EPUB
+  PDF      → extract text (PyMuPDF for text PDFs, pytesseract OCR for image PDFs)
+             → same chapter splitting → EPUB
+  PRC/MOBI → extract via mobi library (KindleUnpack) → EPUB or HTML → EPUB
 """
 
 import logging
 import os
 import re
+import shutil
 import tempfile
 import uuid
 from typing import Optional
@@ -241,3 +244,156 @@ def pdf_to_epub(pdf_bytes: bytes, title: str) -> bytes:
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
+
+
+def _read_html_to_text(filepath: str) -> str:
+    """Read an HTML file and return cleaned plain text.
+
+    Tries UTF-8 first, falls back to latin-1 for older PRC files that use
+    windows-1252 or similar single-byte encodings.
+    """
+    from bs4 import BeautifulSoup
+
+    for encoding in ("utf-8", "latin-1"):
+        try:
+            with open(filepath, "r", encoding=encoding, errors="replace") as f:
+                html = f.read()
+            break
+        except UnicodeDecodeError:
+            continue
+    else:
+        with open(filepath, "rb") as f:
+            html = f.read().decode("utf-8", errors="replace")
+
+    soup = BeautifulSoup(html, "lxml")
+    for tag in soup(["script", "style", "img", "figure", "nav"]):
+        tag.decompose()
+    return soup.get_text(separator="\n")
+
+
+def prc_to_epub(prc_bytes: bytes, title: str) -> bytes:
+    """
+    Convert a PRC/MOBI file to EPUB bytes.
+
+    Uses the ``mobi`` library (KindleUnpack) to extract the file.  Handles
+    three possible extraction outputs:
+
+    - **EPUB** (KF8/mobi8) — validated and returned directly; falls back to
+      HTML re-parse if the EPUB is corrupt.
+    - **HTML** (mobi7)     — text extracted, split into chapters, assembled
+      into a fresh EPUB.
+    - **PDF** (Print Replica) — routed through the existing ``pdf_to_epub``
+      converter.
+
+    Edge cases covered:
+    - DRM-encrypted books → clear error message
+    - Invalid/corrupt PRC files → clear error message
+    - Empty content after extraction
+    - Encoding variations (UTF-8 / latin-1 / windows-1252)
+    """
+    import mobi
+    from mobi.kindleunpack import unpackException
+
+    tmp_path: Optional[str] = None
+    extract_dir: Optional[str] = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".prc", delete=False) as f:
+            f.write(prc_bytes)
+            tmp_path = f.name
+
+        # --- Extract --------------------------------------------------------
+        try:
+            extract_dir, filepath = mobi.extract(tmp_path)
+        except unpackException as e:
+            msg = str(e)
+            if "encrypt" in msg.lower():
+                raise ValueError(
+                    "File PRC/MOBI được bảo vệ bằng DRM, không thể đọc"
+                ) from e
+            if "invalid file format" in msg.lower():
+                raise ValueError(
+                    "File không phải định dạng PRC/MOBI hợp lệ"
+                ) from e
+            raise ValueError(f"Không thể giải nén file PRC/MOBI: {msg}") from e
+        except Exception as e:
+            raise ValueError(
+                f"Không thể giải nén file PRC/MOBI: {e}"
+            ) from e
+
+        filepath_lower = filepath.lower()
+
+        # --- Case 1: KindleUnpack produced a PDF (Print Replica) ------------
+        if filepath_lower.endswith(".pdf"):
+            logger.info(f"PRC→EPUB: '{title}' — Print Replica PDF detected, "
+                        "routing through PDF converter")
+            with open(filepath, "rb") as f:
+                pdf_bytes = f.read()
+            return pdf_to_epub(pdf_bytes, title)
+
+        # --- Case 2: KindleUnpack produced an EPUB (KF8 / mobi8) -----------
+        if filepath_lower.endswith(".epub"):
+            with open(filepath, "rb") as f:
+                epub_bytes = f.read()
+
+            # Validate the EPUB is usable — some mobi8 EPUBs are malformed
+            tmp_epub: Optional[str] = None
+            try:
+                from ebooklib import epub as epublib
+                with tempfile.NamedTemporaryFile(
+                    suffix=".epub", delete=False
+                ) as ef:
+                    ef.write(epub_bytes)
+                    tmp_epub = ef.name
+                book = epublib.read_epub(tmp_epub)
+                has_content = any(
+                    item.get_type() == ebooklib.ITEM_DOCUMENT
+                    for item in book.get_items()
+                )
+                if has_content:
+                    logger.info(
+                        f"PRC→EPUB: '{title}' — extracted KF8 EPUB directly"
+                    )
+                    return epub_bytes
+                logger.warning(
+                    f"PRC→EPUB: '{title}' — KF8 EPUB has no document items, "
+                    "falling back to HTML"
+                )
+            except Exception as epub_err:
+                logger.warning(
+                    f"PRC→EPUB: '{title}' — KF8 EPUB is malformed "
+                    f"({epub_err}), falling back to HTML"
+                )
+            finally:
+                if tmp_epub and os.path.exists(tmp_epub):
+                    os.unlink(tmp_epub)
+
+            # Fall through to HTML extraction from mobi7
+            mobi7_html = os.path.join(
+                extract_dir, "mobi7", "book.html"
+            )
+            if not os.path.isfile(mobi7_html):
+                raise ValueError(
+                    "KF8 EPUB is corrupt and no mobi7 HTML fallback available"
+                )
+            filepath = mobi7_html
+
+        # --- Case 3: HTML (mobi7) — parse text and build EPUB --------------
+        full_text = _read_html_to_text(filepath)
+
+        if len(full_text.strip()) < 50:
+            raise ValueError("No readable content found in PRC/MOBI file")
+
+        chapters = _split_text_into_chapters(full_text)
+        if not chapters:
+            raise ValueError("No readable content found in PRC/MOBI file")
+
+        logger.info(
+            f"PRC→EPUB: '{title}' → {len(chapters)} chapters (from HTML)"
+        )
+        return _chapters_to_epub(chapters, title)
+
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        if extract_dir and os.path.isdir(extract_dir):
+            shutil.rmtree(extract_dir, ignore_errors=True)

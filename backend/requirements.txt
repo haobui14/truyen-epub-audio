@@ -4,6 +4,7 @@ python-multipart==0.0.9
 gtts>=2.5.1
 edge-tts>=6.1.9
 ebooklib==0.18
+mobi==0.4.1
 beautifulsoup4==4.12.3
 lxml>=5.2.1
 supabase==2.4.2

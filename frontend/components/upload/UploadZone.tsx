@@ -15,9 +15,11 @@ export function UploadZone({ onFile, disabled }: UploadZoneProps) {
     if (
       !name.endsWith(".epub") &&
       !name.endsWith(".pdf") &&
-      !name.endsWith(".txt")
+      !name.endsWith(".txt") &&
+      !name.endsWith(".prc") &&
+      !name.endsWith(".mobi")
     ) {
-      alert("Vui lòng chọn file .epub, .pdf hoặc .txt");
+      alert("Vui lòng chọn file .epub, .pdf, .txt, .prc hoặc .mobi");
       return;
     }
     onFile(file);
@@ -47,7 +49,7 @@ export function UploadZone({ onFile, disabled }: UploadZoneProps) {
       <input
         ref={inputRef}
         type="file"
-        accept=".epub,.pdf,.txt"
+        accept=".epub,.pdf,.txt,.prc,.mobi"
         className="hidden"
         onChange={(e) => {
           const file = e.target.files?.[0];
@@ -73,7 +75,7 @@ export function UploadZone({ onFile, disabled }: UploadZoneProps) {
         Kéo thả file vào đây
       </p>
       <p className="text-sm text-gray-400 dark:text-gray-500">
-        EPUB · PDF · TXT &nbsp;·&nbsp; tối đa 50MB
+        EPUB · PDF · TXT · PRC · MOBI &nbsp;·&nbsp; tối đa 50MB
       </p>
     </div>
   );
