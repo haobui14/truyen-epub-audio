@@ -60,7 +60,7 @@ async def create_genre(body: GenreCreate, _admin: dict = Depends(get_admin_user)
 @router.patch("/{genre_id}", response_model=GenreResponse)
 async def update_genre(genre_id: str, body: GenreUpdate, _admin: dict = Depends(get_admin_user)):
     db = get_client()
-    existing = db.table("genres").select("id").eq("id", genre_id).single().execute()
+    existing = db.table("genres").select("id").eq("id", genre_id).maybe_single().execute()
     if not existing.data:
         raise HTTPException(status_code=404, detail="Genre not found")
 
@@ -91,7 +91,7 @@ async def update_genre(genre_id: str, body: GenreUpdate, _admin: dict = Depends(
 @router.delete("/{genre_id}", status_code=204)
 async def delete_genre(genre_id: str, _admin: dict = Depends(get_admin_user)):
     db = get_client()
-    existing = db.table("genres").select("id").eq("id", genre_id).single().execute()
+    existing = db.table("genres").select("id").eq("id", genre_id).maybe_single().execute()
     if not existing.data:
         raise HTTPException(status_code=404, detail="Genre not found")
 
@@ -103,10 +103,10 @@ async def delete_genre(genre_id: str, _admin: dict = Depends(get_admin_user)):
 @router.post("/assign/{book_id}/{genre_id}", status_code=204)
 async def assign_genre(book_id: str, genre_id: str, _admin: dict = Depends(get_admin_user)):
     db = get_client()
-    book = db.table("books").select("id").eq("id", book_id).single().execute()
+    book = db.table("books").select("id").eq("id", book_id).maybe_single().execute()
     if not book.data:
         raise HTTPException(status_code=404, detail="Book not found")
-    genre = db.table("genres").select("id").eq("id", genre_id).single().execute()
+    genre = db.table("genres").select("id").eq("id", genre_id).maybe_single().execute()
     if not genre.data:
         raise HTTPException(status_code=404, detail="Genre not found")
 

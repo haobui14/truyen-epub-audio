@@ -16,7 +16,7 @@ async def get_chapter(chapter_id: str):
     db = get_client()
     result = db.table("chapters").select(
         "id,book_id,chapter_index,title,word_count,status,error_message,created_at"
-    ).eq("id", chapter_id).single().execute()
+    ).eq("id", chapter_id).maybe_single().execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Chapter not found")
 
@@ -35,7 +35,7 @@ async def get_chapter(chapter_id: str):
 @router.get("/chapters/{chapter_id}/text")
 async def get_chapter_text(chapter_id: str):
     db = get_client()
-    result = db.table("chapters").select("id,text_content").eq("id", chapter_id).single().execute()
+    result = db.table("chapters").select("id,text_content").eq("id", chapter_id).maybe_single().execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Chapter not found")
     return {"id": result.data["id"], "text_content": result.data.get("text_content") or ""}
@@ -44,7 +44,7 @@ async def get_chapter_text(chapter_id: str):
 @router.get("/audio/{chapter_id}", response_model=AudioFileResponse)
 async def get_audio(chapter_id: str):
     db = get_client()
-    result = db.table("audio_files").select("*").eq("chapter_id", chapter_id).single().execute()
+    result = db.table("audio_files").select("*").eq("chapter_id", chapter_id).maybe_single().execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Audio not ready yet")
     return result.data
@@ -90,7 +90,7 @@ async def update_chapter(
 
     updated = db.table("chapters").select(
         "id,chapter_index,title,word_count"
-    ).eq("id", chapter_id).single().execute()
+    ).eq("id", chapter_id).maybe_single().execute()
     return updated.data
 
 

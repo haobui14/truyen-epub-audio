@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api/tts", tags=["tts"])
 @router.post("/book/{book_id}")
 async def enqueue_book_tts(book_id: str):
     db = get_client()
-    book = db.table("books").select("id,status").eq("id", book_id).single().execute()
+    book = db.table("books").select("id,status").eq("id", book_id).maybe_single().execute()
     if not book.data:
         raise HTTPException(status_code=404, detail="Book not found")
 
@@ -31,7 +31,7 @@ async def enqueue_book_tts(book_id: str):
 @router.post("/chapter/{chapter_id}")
 async def enqueue_chapter_tts(chapter_id: str):
     db = get_client()
-    chapter = db.table("chapters").select("id,book_id,status").eq("id", chapter_id).single().execute()
+    chapter = db.table("chapters").select("id,book_id,status").eq("id", chapter_id).maybe_single().execute()
     if not chapter.data:
         raise HTTPException(status_code=404, detail="Chapter not found")
 
@@ -171,7 +171,7 @@ async def chapter_full_audio(chapter_id: str, voice: str = "vi-VN-HoaiMyNeural")
         db.table("chapters")
         .select("id,text_content")
         .eq("id", chapter_id)
-        .single()
+        .maybe_single()
         .execute()
     )
     if not chapter.data:

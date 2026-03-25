@@ -38,7 +38,7 @@ async def list_books():
 @router.get("/{book_id}", response_model=BookResponse)
 async def get_book(book_id: str):
     db = get_client()
-    result = db.table("books").select(_BOOK_SELECT).eq("id", book_id).single().execute()
+    result = db.table("books").select(_BOOK_SELECT).eq("id", book_id).maybe_single().execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Book not found")
     return _attach_genres([result.data])[0]
@@ -52,7 +52,7 @@ async def get_book_chapters(
 ):
     db = get_client()
     # Verify book exists
-    book = db.table("books").select("id,total_chapters").eq("id", book_id).single().execute()
+    book = db.table("books").select("id,total_chapters").eq("id", book_id).maybe_single().execute()
     if not book.data:
         raise HTTPException(status_code=404, detail="Book not found")
 
@@ -113,7 +113,7 @@ async def update_book(
 ):
     """Admin-only: update book metadata (title, author, cover image, story status)."""
     db = get_client()
-    book = db.table("books").select("id,cover_url").eq("id", book_id).single().execute()
+    book = db.table("books").select("id,cover_url").eq("id", book_id).maybe_single().execute()
     if not book.data:
         raise HTTPException(status_code=404, detail="Book not found")
 
@@ -154,14 +154,14 @@ async def update_book(
     if updates:
         db.table("books").update(updates).eq("id", book_id).execute()
 
-    result = db.table("books").select(_BOOK_SELECT).eq("id", book_id).single().execute()
+    result = db.table("books").select(_BOOK_SELECT).eq("id", book_id).maybe_single().execute()
     return _attach_genres([result.data])[0]
 
 
 @router.delete("/{book_id}")
 async def delete_book(book_id: str, _admin: dict = Depends(get_admin_user)):
     db = get_client()
-    book = db.table("books").select("id").eq("id", book_id).single().execute()
+    book = db.table("books").select("id").eq("id", book_id).maybe_single().execute()
     if not book.data:
         raise HTTPException(status_code=404, detail="Book not found")
 
@@ -193,7 +193,7 @@ async def feature_book(
     _admin: dict = Depends(get_admin_user),
 ):
     db = get_client()
-    book = db.table("books").select("id").eq("id", book_id).single().execute()
+    book = db.table("books").select("id").eq("id", book_id).maybe_single().execute()
     if not book.data:
         raise HTTPException(status_code=404, detail="Book not found")
 
@@ -206,7 +206,7 @@ async def feature_book(
         "featured_label": body.featured_label if body.is_featured else None,
     }).eq("id", book_id).execute()
 
-    result = db.table("books").select(_BOOK_SELECT).eq("id", book_id).single().execute()
+    result = db.table("books").select(_BOOK_SELECT).eq("id", book_id).maybe_single().execute()
     return _attach_genres([result.data])[0]
 
 
@@ -223,7 +223,7 @@ async def auto_split_book(
     import uuid as _uuid
 
     db = get_client()
-    book = db.table("books").select("id").eq("id", book_id).single().execute()
+    book = db.table("books").select("id").eq("id", book_id).maybe_single().execute()
     if not book.data:
         raise HTTPException(status_code=404, detail="Book not found")
 
@@ -272,7 +272,9 @@ async def auto_split_book(
 
     # INSERT new rows first. If this fails (e.g. DB timeout) the old chapters
     # are still intact and the book is not left empty.
-    BATCH_SIZE = 50
+    # Batch size is kept at 1 to avoid Supabase statement timeouts when
+    # text_content is large (novel chapters can be hundreds of KB each).
+    BATCH_SIZE = 1
     inserted_ids: list[str] = []
     try:
         for i in range(0, len(new_chapters), BATCH_SIZE):
@@ -331,7 +333,7 @@ async def create_chapter(
     text_content = body.text_content.strip()
 
     db = get_client()
-    book = db.table("books").select("id").eq("id", book_id).single().execute()
+    book = db.table("books").select("id").eq("id", book_id).maybe_single().execute()
     if not book.data:
         raise HTTPException(status_code=404, detail="Book not found")
 
