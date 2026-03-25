@@ -254,22 +254,14 @@ async def auto_split_book(
         if not p["has_body"]
     ]
 
-    # Delete audio from storage (best effort) then delete chapter rows
-    for ch in chapters:
-        try:
-            await storage_service.delete_path("audio", f"{book_id}/{ch['id']}.mp3")
-        except Exception:
-            pass
-
-    chapter_ids = [ch["id"] for ch in chapters]
-    db.table("chapters").delete().in_("id", chapter_ids).execute()
-
-    # Insert new chapters in batches
+    # Build new chapter rows. Use a large offset (1_000_000 + i) so the
+    # temporary indices don't collide with existing rows (which have index < 1_000_000).
+    OFFSET = 1_000_000
     new_chapters = [
         {
             "id": str(_uuid.uuid4()),
             "book_id": book_id,
-            "chapter_index": i,
+            "chapter_index": OFFSET + i,
             "title": p["title"],
             "text_content": p["text_content"],
             "word_count": len(p["text_content"].split()),
@@ -277,9 +269,42 @@ async def auto_split_book(
         }
         for i, p in enumerate(parts)
     ]
-    BATCH_SIZE = 100
-    for i in range(0, len(new_chapters), BATCH_SIZE):
-        db.table("chapters").insert(new_chapters[i : i + BATCH_SIZE]).execute()
+
+    # INSERT new rows first. If this fails (e.g. DB timeout) the old chapters
+    # are still intact and the book is not left empty.
+    BATCH_SIZE = 50
+    inserted_ids: list[str] = []
+    try:
+        for i in range(0, len(new_chapters), BATCH_SIZE):
+            db.table("chapters").insert(new_chapters[i : i + BATCH_SIZE]).execute()
+            inserted_ids.extend(ch["id"] for ch in new_chapters[i : i + BATCH_SIZE])
+    except Exception as insert_err:
+        # Roll back any rows we managed to insert before the failure
+        if inserted_ids:
+            try:
+                db.table("chapters").delete().in_("id", inserted_ids).execute()
+            except Exception:
+                pass
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to insert new chapters (no data was lost): {insert_err}",
+        )
+
+    # Only now that new chapters are safely stored: delete old chapters & audio
+    chapter_ids = [ch["id"] for ch in chapters]
+    for ch in chapters:
+        try:
+            await storage_service.delete_path("audio", f"{book_id}/{ch['id']}.mp3")
+        except Exception:
+            pass
+    db.table("chapters").delete().in_("id", chapter_ids).execute()
+
+    # Normalize chapter_index back to 0-based now that old rows are gone.
+    # We can't do "SET chapter_index = chapter_index - OFFSET" via PostgREST,
+    # so update each row individually. For typical book sizes this is acceptable.
+    for ch in new_chapters:
+        real_index = ch["chapter_index"] - OFFSET
+        db.table("chapters").update({"chapter_index": real_index}).eq("id", ch["id"]).execute()
 
     new_count = len(new_chapters)
     db.table("books").update({"total_chapters": new_count}).eq("id", book_id).execute()
