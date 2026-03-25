@@ -17,7 +17,12 @@ from app.services import storage_service, task_queue
 
 logger = logging.getLogger(__name__)
 
-_CHAPTER_HEADER_RE = re.compile(r'^(chương|chapter)\s+\d+', re.IGNORECASE)
+_CHAPTER_HEADER_RE = re.compile(
+    r'^(?:\d+\.\s*)?'          # optional leading "3. " numbering
+    r'(chương|chapter)'        # the keyword
+    r'\s+\d+',                 # followed by a chapter number
+    re.IGNORECASE
+)
 
 
 def split_text_by_headers(text: str) -> list[dict]:
