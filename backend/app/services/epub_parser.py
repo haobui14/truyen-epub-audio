@@ -226,9 +226,6 @@ async def parse_epub_task(book_id: str, epub_bytes: bytes) -> None:
         if not chapters_data:
             raise ValueError("No readable chapters found in EPUB")
 
-        # Auto-split merged EPUB spine items by Vietnamese/English chapter headers
-        chapters_data, _missing = auto_split_chapters(chapters_data)
-
         # Insert chapters in batches to avoid Supabase statement timeout on large books
         BATCH_SIZE = 100
         for i in range(0, len(chapters_data), BATCH_SIZE):

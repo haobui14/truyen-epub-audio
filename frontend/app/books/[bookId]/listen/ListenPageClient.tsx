@@ -315,6 +315,10 @@ export default function ListenPage() {
   const chapterIdRef = useRef(chapterId);
   chapterIdRef.current = chapterId;
 
+  // Guards the one-shot cold-start native sync so it only runs once per mount
+  // even though its effect dependencies include allChapters (which updates later).
+  const nativeInitSyncDoneRef = useRef(false);
+
   const chapterTextContent = chapterText?.text_content ?? null;
   const chunks = useMemo(
     () => (chapterTextContent ? splitIntoChunks(chapterTextContent) : []),
@@ -376,6 +380,43 @@ export default function ListenPage() {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [voice, chapterId, bookId, allChapters, router]);
+
+  // ── Initial native sync on cold start ──
+  // visibilitychange only fires on state *transitions*. If the OS killed the
+  // WebView while TtsPlaybackService kept running, the document is already
+  // visible when the page reloads and no visibilitychange event fires.
+  // Run the same sync logic once, as soon as allChapters finishes loading.
+  useEffect(() => {
+    if (!voice.startsWith("native:") || allChapters.length === 0) return;
+    if (nativeInitSyncDoneRef.current) return;
+    nativeInitSyncDoneRef.current = true;
+
+    const bridge = getTtsBridge();
+    if (!bridge || typeof bridge.getCurrentChapterId !== "function") return;
+    const nativeChapterId = bridge.getCurrentChapterId();
+    if (!nativeChapterId || nativeChapterId === chapterId) return;
+
+    const targetChapter = allChapters.find((c) => c.id === nativeChapterId);
+    if (!targetChapter) return;
+
+    const nativeChunk = bridge.getCurrentChunk();
+    saveLocalBookProgress({
+      book_id: bookId,
+      chapter_id: nativeChapterId,
+      chapter_index: targetChapter.chapter_index,
+      progress_value: nativeChunk >= 0 ? nativeChunk : 0,
+    });
+    localStorage.setItem(`listen-chapter:${bookId}`, nativeChapterId);
+    syncBookProgressToServer(bookId).catch(() => {});
+
+    const nativePlaying = bridge.isPlaying();
+    router.replace(
+      `/listen?id=${bookId}&chapter=${nativeChapterId}${
+        nativePlaying ? "&autoplay=1" : ""
+      }`,
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voice, allChapters, bookId, chapterId, router]);
 
   // ── Native TTS: queue cached chapters in the Java service ──
   // Queues all chapters whose text is already in React Query / IndexedDB.
