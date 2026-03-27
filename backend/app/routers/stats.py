@@ -46,7 +46,7 @@ async def complete_chapter(
             .maybe_single()
             .execute()
         )
-        if existing.data:
+        if existing and existing.data:
             return {"exp_earned": 0, "already_completed": True, "total_exp": None}
 
         # Calculate exp
@@ -75,7 +75,7 @@ async def complete_chapter(
             .execute()
         )
 
-        if stats_row.data:
+        if stats_row and stats_row.data:
             s = stats_row.data
             update_data: Dict[str, Any] = {
                 "total_exp": s["total_exp"] + exp_earned,

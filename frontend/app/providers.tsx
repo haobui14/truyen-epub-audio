@@ -13,6 +13,7 @@ import {
   getToken,
   getRefreshToken,
   setAuth,
+  clearAuth,
 } from "@/lib/auth";
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -51,7 +52,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
       // (Access tokens expire in 1 hour; refresh tokens last 90 days.)
       let tokenOk = isLoggedIn() && !getRefreshToken(); // no refresh token = rely on existing access token
       if (isLoggedIn() && getRefreshToken()) {
-        tokenOk = (await tryRefreshToken()) === true;
+        const result = await tryRefreshToken();
+        tokenOk = result === true;
+        // Server explicitly rejected token (false) → clear stale session now.
+        // Don't clear on null (network error) — the token may still be valid.
+        if (result === false) clearAuth();
       }
 
       // Sync role from server — best-effort only when we have a fresh token.
@@ -95,7 +100,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
       }
       if (isLoggedIn() && getRefreshToken()) {
         const ok = await tryRefreshToken();
-        if (ok) {
+        if (ok === false) {
+          clearAuth();
+        } else if (ok === true) {
           // Skip progress queries — refetching them while playing causes
           // setTrack() to re-fire with a stale server position, which stops
           // or jumps the player back on screen-on.
@@ -118,7 +125,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
     const REFRESH_INTERVAL_MS = 45 * 60 * 1000; // 45 minutes
     const id = setInterval(async () => {
       if (isLoggedIn() && getRefreshToken()) {
-        await tryRefreshToken();
+        const ok = await tryRefreshToken();
+        if (ok === false) clearAuth();
       }
     }, REFRESH_INTERVAL_MS);
     return () => clearInterval(id);
