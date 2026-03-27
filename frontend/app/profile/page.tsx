@@ -188,10 +188,12 @@ export default function ProfilePage() {
   // Reactive — re-reads localStorage whenever auth-change fires (same pattern
   // as BottomNav.tsx). Needed because router.refresh() is a no-op in the
   // Capacitor static export and getUser() is not reactive on its own.
-  const [user, setUser] = useState<AuthUser | null>(() => getUser());
+  const [user, setUser] = useState<AuthUser | null>(null);
 
   // Keep user state in sync with any auth changes (login, token refresh, saves)
+  // Initial read is deferred to useEffect to avoid SSR/hydration mismatch on Vercel
   useEffect(() => {
+    setUser(getUser());
     const sync = () => setUser(getUser());
     window.addEventListener("auth-change", sync);
     return () => window.removeEventListener("auth-change", sync);

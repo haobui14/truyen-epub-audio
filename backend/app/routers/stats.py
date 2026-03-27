@@ -112,21 +112,24 @@ async def complete_chapter(
 @router.get("/me")
 async def get_my_stats(user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     """Return aggregate XP and reading stats for the current user."""
-    db = get_client()
-    result = (
-        db.table("user_stats")
-        .select("*")
-        .eq("user_id", user["id"])
-        .maybe_single()
-        .execute()
-    )
-    if not result.data:
-        return {
-            "user_id": user["id"],
-            "total_exp": 0,
-            "total_chapters_read": 0,
-            "total_chapters_listened": 0,
-            "total_words_read": 0,
-            "updated_at": None,
-        }
-    return result.data
+    try:
+        db = get_client()
+        result = (
+            db.table("user_stats")
+            .select("*")
+            .eq("user_id", user["id"])
+            .maybe_single()
+            .execute()
+        )
+        if not result or not result.data:
+            return {
+                "user_id": user["id"],
+                "total_exp": 0,
+                "total_chapters_read": 0,
+                "total_chapters_listened": 0,
+                "total_words_read": 0,
+                "updated_at": None,
+            }
+        return result.data
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Stats fetch failed: {exc}") from exc
