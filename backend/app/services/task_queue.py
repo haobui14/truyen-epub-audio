@@ -1,7 +1,6 @@
 import asyncio
 import os
 import tempfile
-import uuid
 import logging
 
 from app.database import get_client
@@ -80,20 +79,14 @@ async def _process_chapter(book_id: str, chapter_id: str) -> None:
             content_type="audio/mpeg",
         )
 
-        # Insert audio_files record
-        db.table("audio_files").upsert({
-            "id": str(uuid.uuid4()),
-            "chapter_id": chapter_id,
-            "book_id": book_id,
-            "storage_path": storage_path,
-            "public_url": public_url,
-            "file_size_bytes": file_size,
-            "duration_seconds": duration,
-            "voice": voice,
-        }, on_conflict="chapter_id").execute()
-
-        # Mark chapter ready
-        db.table("chapters").update({"status": "ready"}).eq("id", chapter_id).execute()
+        # Write audio fields directly onto the chapters row
+        db.table("chapters").update({
+            "status": "ready",
+            "audio_url": public_url,
+            "audio_storage_path": storage_path,
+            "audio_duration_seconds": duration,
+            "audio_file_size_bytes": file_size,
+        }).eq("id", chapter_id).execute()
         logger.info(f"Chapter {chapter_id} converted successfully ({duration:.1f}s)")
 
         # Check if all chapters for this book are done

@@ -146,14 +146,14 @@ async def chapter_full_audio(chapter_id: str, voice: str = "vi-VN-HoaiMyNeural")
 
     # ── 1. Check for a pre-stored audio file ─────────────────────────────────
     audio_row = (
-        db.table("audio_files")
-        .select("public_url")
-        .eq("chapter_id", chapter_id)
+        db.table("chapters")
+        .select("audio_url")
+        .eq("id", chapter_id)
         .maybe_single()
         .execute()
     )
-    if audio_row.data and audio_row.data.get("public_url"):
-        public_url = audio_row.data["public_url"]
+    if audio_row and audio_row.data and audio_row.data.get("audio_url"):
+        public_url = audio_row.data["audio_url"]
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 r = await client.get(public_url)

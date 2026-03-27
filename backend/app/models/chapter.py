@@ -16,9 +16,9 @@ class ChapterResponse(BaseModel):
 
 
 class AudioSummary(BaseModel):
-    public_url: str
-    duration_seconds: Optional[float] = None
-    file_size_bytes: Optional[int] = None
+    audio_url: str
+    audio_duration_seconds: Optional[float] = None
+    audio_file_size_bytes: Optional[int] = None
 
 
 class PaginatedChaptersResponse(BaseModel):

@@ -4,8 +4,6 @@ import type {
   Book,
   Chapter,
   Genre,
-  TtsStatus,
-  AudioSummary,
   PaginatedChapters,
   UserProgress,
   UserStats,
@@ -197,44 +195,7 @@ export const api = {
       },
     ),
 
-  // TTS
-  getTtsStatus: (bookId: string) =>
-    request<TtsStatus>(`/api/tts/status/${bookId}`),
-  enqueueTtsBook: (bookId: string) =>
-    request<{ enqueued: number }>(`/api/tts/book/${bookId}`, {
-      method: "POST",
-    }),
-  retryChapter: (chapterId: string) =>
-    request<{ status: string }>(`/api/tts/chapter/${chapterId}`, {
-      method: "POST",
-    }),
-  prefetchChapters: (bookId: string, fromIndex: number, count = 3) =>
-    request<{ enqueued: number }>(
-      `/api/tts/prefetch/${bookId}?from_index=${fromIndex}&count=${count}`,
-      { method: "POST" },
-    ),
-
-  // Audio
-  getAudio: (chapterId: string) =>
-    request<{
-      id: string;
-      chapter_id: string;
-      public_url: string;
-      duration_seconds?: number;
-    }>(`/api/audio/${chapterId}`),
-
   // Upload
-  uploadEpub: (file: File, voice: string, cover?: File | null) => {
-    const form = new FormData();
-    form.append("file", file);
-    form.append("voice", voice);
-    if (cover) form.append("cover", cover);
-    return request<{ book_id: string; status: string }>("/api/upload", {
-      method: "POST",
-      body: form,
-    });
-  },
-
   uploadEpubWithProgress: (
     file: File,
     voice: string,
@@ -345,8 +306,6 @@ export const api = {
         updated_at: string;
       }>
     >("/api/progress/my-books"),
-  getChapterProgress: (chapterId: string) =>
-    request<UserProgress | null>(`/api/progress/chapter/${chapterId}`),
   getBookProgress: (bookId: string) =>
     request<UserProgress | null>(`/api/progress/book/${bookId}`),
 

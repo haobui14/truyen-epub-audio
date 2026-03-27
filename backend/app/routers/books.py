@@ -63,27 +63,19 @@ async def get_book_chapters(
     end = offset + page_size - 1
 
     chapters = db.table("chapters").select(
-        "id,book_id,chapter_index,title,word_count,status,error_message,created_at"
+        "id,book_id,chapter_index,title,word_count,status,error_message,created_at,audio_url,audio_duration_seconds,audio_file_size_bytes"
     ).eq("book_id", book_id).order("chapter_index").range(offset, end).execute()
-
-    chapter_ids = {ch["id"] for ch in (chapters.data or [])}
-
-    # Fetch audio info for this book, then filter to current page's chapters
-    audio_map = {}
-    if chapter_ids:
-        audio_result = db.table("audio_files").select(
-            "chapter_id,public_url,duration_seconds,file_size_bytes"
-        ).eq("book_id", book_id).execute()
-        for a in (audio_result.data or []):
-            if a["chapter_id"] in chapter_ids:
-                audio_map[a["chapter_id"]] = a
 
     items = []
     for ch in (chapters.data or []):
-        audio = audio_map.get(ch["id"])
+        audio = AudioSummary(
+            audio_url=ch["audio_url"],
+            audio_duration_seconds=ch.get("audio_duration_seconds"),
+            audio_file_size_bytes=ch.get("audio_file_size_bytes"),
+        ) if ch.get("audio_url") else None
         ch_response = ChapterResponse(
-            **ch,
-            audio=AudioSummary(**audio) if audio else None,
+            **{k: v for k, v in ch.items() if k in ChapterResponse.model_fields},
+            audio=audio,
         )
         items.append(ch_response)
 
