@@ -296,7 +296,7 @@ export default function ListenPage() {
           mode: "listen",
           word_count: currentChapter?.word_count ?? 0,
         })
-        .catch(() => {});
+        .catch((err) => console.error("[XP] chunk-based award failed:", err));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chunkIndex, totalChunks]);
@@ -320,7 +320,7 @@ export default function ListenPage() {
           mode: "listen",
           word_count: ch?.word_count ?? 0,
         })
-        .catch(() => {});
+        .catch((err) => console.error("[XP] advance award failed:", err));
     };
     window.addEventListener("native-tts-chapter-advance", onAdvance);
     return () => window.removeEventListener("native-tts-chapter-advance", onAdvance);
@@ -350,7 +350,7 @@ export default function ListenPage() {
               mode: "listen",
               word_count: ch?.word_count ?? 0,
             })
-            .catch(() => {});
+            .catch((err) => console.error("[XP] screen-on safety-net award failed:", err));
         });
       } catch {
         /* ignore JSON parse errors */

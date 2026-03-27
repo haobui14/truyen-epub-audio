@@ -46,7 +46,10 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     logger.exception("Unhandled error: %s", exc)
     origin = request.headers.get("origin", "")
     headers = {}
-    if origin in settings.cors_origins:
+    # Always echo the requesting origin back so Capacitor WebViews (https://localhost)
+    # can read the error body even when the origin isn't in the configured allow-list.
+    # A 500 response is never cacheable, so reflecting the origin is safe here.
+    if origin:
         headers["Access-Control-Allow-Origin"] = origin
         headers["Access-Control-Allow-Credentials"] = "true"
     return JSONResponse(
