@@ -1,15 +1,104 @@
 "use client";
 import Link from "next/link";
+import Image from "next/image";
 import { useMemo, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { getCachedBooks, cacheBooks } from "@/lib/bookCache";
-import { isAdmin } from "@/lib/auth";
+import { isAdmin, isLoggedIn } from "@/lib/auth";
 import { SpotlightCard } from "@/components/books/SpotlightCard";
 import { BookScrollRow } from "@/components/books/BookScrollRow";
 import { getColorClasses } from "@/components/books/GenreManager";
 import { Spinner } from "@/components/ui/Spinner";
 
+// ── Recent-progress mini-card ─────────────────────────────────────────────────
+function RecentCard({
+  item,
+}: {
+  item: {
+    book: {
+      id: string;
+      title: string;
+      author?: string;
+      cover_url?: string;
+      total_chapters: number;
+    };
+    chapter: { id: string; chapter_index: number; title: string };
+    updated_at: string;
+  };
+}) {
+  const { book, chapter } = item;
+  const isLastChapter = chapter.chapter_index + 1 >= book.total_chapters;
+
+  return (
+    <Link
+      href={`/book?id=${book.id}`}
+      className="flex-none w-28 sm:w-33 group relative"
+    >
+      {/* Cover */}
+      <div className="aspect-2/3 rounded-xl overflow-hidden bg-linear-to-br from-indigo-50 to-purple-50 dark:from-indigo-950 dark:to-purple-950 relative shadow-sm mb-2">
+        {book.cover_url ? (
+          <Image
+            src={book.cover_url}
+            alt={book.title}
+            fill
+            sizes="132px"
+            className="object-cover group-hover:scale-105 transition-transform duration-300"
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            <svg
+              className="w-8 h-8 text-indigo-300 dark:text-indigo-700"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.5}
+                d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
+              />
+            </svg>
+          </div>
+        )}
+
+        {/* "Đọc xong" badge */}
+        {isLastChapter && (
+          <div className="absolute bottom-1.5 left-1.5 right-1.5 flex justify-center">
+            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500 text-white shadow-md">
+              ✓ Đọc xong
+            </span>
+          </div>
+        )}
+
+        {/* Progress bar at bottom of cover */}
+        {!isLastChapter && book.total_chapters > 0 && (
+          <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/20">
+            <div
+              className="h-full bg-indigo-500 transition-all"
+              style={{
+                width: `${Math.round(((chapter.chapter_index + 1) / book.total_chapters) * 100)}%`,
+              }}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Title */}
+      <p className="text-xs font-semibold text-gray-900 dark:text-gray-100 line-clamp-2 leading-tight group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+        {book.title}
+      </p>
+
+      {/* Last chapter */}
+      <p className="text-[10px] text-gray-400 dark:text-gray-500 truncate mt-0.5">
+        Ch.{chapter.chapter_index + 1}/{book.total_chapters}
+      </p>
+    </Link>
+  );
+}
+
+// ── Home page ─────────────────────────────────────────────────────────────────
 export default function HomePage() {
   const admin = useSyncExternalStore(
     (cb) => {
@@ -17,6 +106,15 @@ export default function HomePage() {
       return () => window.removeEventListener("auth-change", cb);
     },
     isAdmin,
+    () => false,
+  );
+
+  const loggedIn = useSyncExternalStore(
+    (cb) => {
+      window.addEventListener("auth-change", cb);
+      return () => window.removeEventListener("auth-change", cb);
+    },
+    isLoggedIn,
     () => false,
   );
 
@@ -44,6 +142,14 @@ export default function HomePage() {
     queryKey: ["genres"],
     queryFn: api.listGenres,
     staleTime: 60_000,
+  });
+
+  // My books — only fetch when logged in; sorted by updated_at desc (server-side)
+  const { data: myBooks } = useQuery({
+    queryKey: ["my-books"],
+    queryFn: api.getMyBooks,
+    enabled: loggedIn,
+    staleTime: 30_000,
   });
 
   const hasBooks = books && books.length > 0;
@@ -215,9 +321,43 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Sections: newest + per-genre */}
+      {/* Sections */}
       {hasBooks && (
         <>
+          {/* "Continue reading" — sorted by last viewed, only for logged-in users */}
+          {loggedIn && myBooks && myBooks.length > 0 && (
+            <section className="mb-8">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 shrink-0" />
+                  <h2 className="text-base font-bold text-gray-900 dark:text-gray-100">
+                    Tiếp tục đọc
+                  </h2>
+                </div>
+                <Link
+                  href="/profile"
+                  className="flex items-center gap-0.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline shrink-0"
+                >
+                  Trang cá nhân
+                  <svg
+                    className="w-3.5 h-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2.5}
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                  </svg>
+                </Link>
+              </div>
+              <div className="flex gap-3 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] pb-1">
+                {myBooks.map((item) => (
+                  <RecentCard key={item.book.id} item={item} />
+                ))}
+              </div>
+            </section>
+          )}
+
           <BookScrollRow
             title="Mới thêm"
             seeAllHref="/search"

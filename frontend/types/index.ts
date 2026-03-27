@@ -74,6 +74,15 @@ export interface UserProgress {
   updated_at: string;
 }
 
+export interface UserStats {
+  user_id: string;
+  total_exp: number;
+  total_chapters_read: number;
+  total_chapters_listened: number;
+  total_words_read: number;
+  updated_at: string | null;
+}
+
 export const VOICES = [
   { value: "vi-VN-HoaiMyNeural", label: "HoaiMy (Nữ)" },
   { value: "vi-VN-NamMinhNeural", label: "NamMinh (Nam)" },

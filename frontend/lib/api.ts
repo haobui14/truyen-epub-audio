@@ -8,6 +8,7 @@ import type {
   AudioSummary,
   PaginatedChapters,
   UserProgress,
+  UserStats,
 } from "@/types";
 
 // Prevent multiple concurrent refresh attempts
@@ -390,6 +391,23 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ parts }),
     }),
+
+  // Stats / XP
+  completeChapter: (data: {
+    chapter_id: string;
+    book_id: string;
+    mode: "read" | "listen";
+    word_count: number;
+  }) =>
+    request<{ exp_earned: number; already_completed: boolean; total_exp: number | null }>(
+      "/api/stats/complete-chapter",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      },
+    ),
+  getMyStats: () => request<UserStats>("/api/stats/me"),
 
   // Genres
   listGenres: () => request<Genre[]>("/api/genres"),

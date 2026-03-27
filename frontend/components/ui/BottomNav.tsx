@@ -57,7 +57,7 @@ export function BottomNav() {
         : "text-gray-400 dark:text-gray-500"
     }`;
 
-  const profileActive = pathname.startsWith("/login") || sheetOpen;
+  const profileActive = pathname.startsWith("/login") || pathname.startsWith("/profile") || sheetOpen;
   const btnCls = `flex-1 flex flex-col items-center justify-center gap-0.5 py-1 text-[10px] font-medium transition-colors ${
     profileActive
       ? "text-indigo-600 dark:text-indigo-400"
@@ -209,6 +209,47 @@ export function BottomNav() {
 
             {/* Menu items */}
             <div className="py-1.5">
+              {/* Profile page */}
+              <Link
+                href="/profile"
+                onClick={closeSheet}
+                className="flex items-center gap-3.5 px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+              >
+                <span className="w-8 h-8 rounded-full bg-indigo-50 dark:bg-indigo-950/60 flex items-center justify-center shrink-0">
+                  <svg
+                    className="w-4 h-4 text-indigo-600 dark:text-indigo-400"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M13 10V3L4 14h7v7l9-11h-7z"
+                    />
+                  </svg>
+                </span>
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                    Trang cá nhân
+                  </span>
+                  <p className="text-xs text-gray-400 dark:text-gray-500">
+                    Cấp độ &amp; thống kê tu luyện
+                  </p>
+                </div>
+                <svg
+                  className="w-4 h-4 text-gray-300 dark:text-gray-600 shrink-0"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+              </Link>
+              <div className="h-px mx-5 bg-gray-100 dark:bg-gray-800 my-1" />
+
               {admin && (
                 <>
                   <Link

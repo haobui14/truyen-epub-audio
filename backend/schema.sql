@@ -128,6 +128,36 @@ CREATE TABLE IF NOT EXISTS book_genres (
 CREATE INDEX IF NOT EXISTS idx_book_genres_genre_id ON book_genres(genre_id);
 
 -- ============================================================
+-- User XP / Leveling System
+-- ============================================================
+
+-- One row per user+chapter+mode to prevent duplicate XP awards
+CREATE TABLE IF NOT EXISTS user_chapter_completions (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    chapter_id      UUID NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+    book_id         UUID NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    mode            TEXT NOT NULL CHECK (mode IN ('read', 'listen')),
+    word_count      INTEGER NOT NULL DEFAULT 0,
+    exp_earned      INTEGER NOT NULL DEFAULT 0,
+    completed_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(user_id, chapter_id, mode)
+);
+
+CREATE INDEX IF NOT EXISTS idx_completions_user_id ON user_chapter_completions(user_id);
+CREATE INDEX IF NOT EXISTS idx_completions_book_id ON user_chapter_completions(user_id, book_id);
+
+-- Aggregate stats per user (updated on each completion)
+CREATE TABLE IF NOT EXISTS user_stats (
+    user_id                 UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    total_exp               BIGINT NOT NULL DEFAULT 0,
+    total_chapters_read     INTEGER NOT NULL DEFAULT 0,
+    total_chapters_listened INTEGER NOT NULL DEFAULT 0,
+    total_words_read        BIGINT NOT NULL DEFAULT 0,
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ============================================================
 -- Storage RLS policies
 -- Run this in Supabase SQL Editor (safe to re-run)
 -- ============================================================

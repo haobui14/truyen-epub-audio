@@ -19,11 +19,24 @@ interface TtsBridgeNative {
   queueNextChapter(chunksJson: string, chapterId: string, title: string, rate: number, pitch: number): void;
   /** Queue ALL remaining chapters at once for continuous background playback. */
   queueAllChapters(chaptersJson: string): void;
+  /**
+   * Like queueAllChapters but uses mergeQueue() — never clears the currently
+   * playing chapter entry, so there is no empty-queue race window. Use for
+   * incremental queue updates while playback is already in progress.
+   */
+  mergeQueuedChapters(chaptersJson: string): void;
   clearNextChapter(): void;
   /** Set sleep timer to fire at an absolute epoch-ms timestamp (screen-off safe). */
   setSleepTimer(expireAtMs: number): void;
   /** Cancel the sleep timer. */
   cancelSleepTimer(): void;
+  /**
+   * Returns a JSON-encoded string array of chapter IDs that completed via
+   * native auto-advance since the last call, then clears the list.
+   * Use on screen-on to award XP for chapters that finished while the
+   * WebView JS was throttled (screen off).
+   */
+  getCompletedChapterIds(): string;
 }
 
 export function getTtsBridge(): TtsBridgeNative | undefined {

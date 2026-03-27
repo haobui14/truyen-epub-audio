@@ -10,6 +10,88 @@ import { Spinner } from "@/components/ui/Spinner";
 import { getLocalProgress, saveLocalBookProgress } from "@/lib/progressQueue";
 import type { Chapter } from "@/types";
 
+/**
+ * Track actual reading engagement and award XP when the user has spent
+ * enough time actively reading the chapter (visible page, not just loaded).
+ * Threshold: max(15s, wordCount / 300 * 60 * 0.35) seconds, capped at 90s.
+ */
+function useReadingXp(
+  chapterId: string | null,
+  bookId: string,
+  wordCount: number,
+  hasText: boolean,
+) {
+  const completedRef = useRef<Set<string>>(new Set());
+  const timeRef = useRef(0);
+  const lastVisibleRef = useRef<number | null>(null);
+  const scrolledPastRef = useRef(false);
+
+  // Reset on chapter change
+  useEffect(() => {
+    timeRef.current = 0;
+    lastVisibleRef.current = null;
+    scrolledPastRef.current = false;
+  }, [chapterId]);
+
+  // Track scroll depth (need >25% scrolled)
+  useEffect(() => {
+    if (!hasText) return;
+    const onScroll = () => {
+      const scrollMax = document.documentElement.scrollHeight - window.innerHeight;
+      if (scrollMax <= 0) return;
+      if (window.scrollY / scrollMax > 0.25) scrolledPastRef.current = true;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [hasText, chapterId]);
+
+  // Accumulate visible time and fire XP when threshold met
+  useEffect(() => {
+    if (!chapterId || !hasText || !isLoggedIn()) return;
+
+    const threshold = Math.min(
+      90,
+      Math.max(15, Math.round((wordCount / 300) * 60 * 0.35)),
+    );
+
+    const tick = () => {
+      if (document.hidden) {
+        lastVisibleRef.current = null;
+        return;
+      }
+      const now = Date.now();
+      if (lastVisibleRef.current !== null) {
+        timeRef.current += (now - lastVisibleRef.current) / 1000;
+      }
+      lastVisibleRef.current = now;
+
+      if (
+        timeRef.current >= threshold &&
+        scrolledPastRef.current &&
+        !completedRef.current.has(chapterId)
+      ) {
+        completedRef.current.add(chapterId);
+        api
+          .completeChapter({ chapter_id: chapterId, book_id: bookId, mode: "read", word_count: wordCount })
+          .catch(() => {});
+      }
+    };
+
+    const onVisibility = () => {
+      if (document.hidden) lastVisibleRef.current = null;
+      else lastVisibleRef.current = Date.now();
+    };
+
+    lastVisibleRef.current = document.hidden ? null : Date.now();
+    const interval = setInterval(tick, 2000);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [chapterId, bookId, wordCount, hasText]);
+}
+
 const FONT_SIZES = [14, 16, 18, 20, 22, 24] as const;
 const FONT_KEY = "reader-font-size";
 const FONT_FAMILY_KEY = "reader-font-family";
@@ -134,6 +216,14 @@ export default function ReadPage() {
     chapterId: chapterId ?? "",
     chapterIndex: currentIndex >= 0 ? currentIndex : undefined,
   });
+
+  // Award reading XP based on actual time spent on page
+  useReadingXp(
+    chapterId,
+    bookId,
+    currentChapter?.word_count ?? 0,
+    !!chapterText?.text_content,
+  );
 
   // Save book-level progress when the reading chapter changes
   useEffect(() => {

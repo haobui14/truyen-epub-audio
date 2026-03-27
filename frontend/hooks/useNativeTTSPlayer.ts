@@ -145,22 +145,36 @@ export function useNativeTTSPlayer(
       setIsBuffering(false);
     };
 
-    const onChapterAdvance = () => {
+    const onChapterAdvance = (e: Event) => {
       // The native service auto-advanced to the queued next chapter.
       // Set a flag so the reset effect (triggered by the upcoming navigation)
       // doesn't stop the service that's already playing.
       chapterAdvancedRef.current = true;
-      // Pass the native bridge's actual current chapter ID so the navigation
-      // target is always what native is ACTUALLY playing, not a stale JS closure.
-      // This prevents cascade skips when native advances faster than React renders.
+
+      // Prefer the newChapterId embedded in the event — it is set by Java
+      // BEFORE startChapter() mutates currentChapterId, so it is always
+      // the correct navigation target even if getCurrentChapterId() is called
+      // before the volatile field is written on the main thread.
+      const detail = (e as CustomEvent<{
+        completedChapterId?: string;
+        newChapterId?: string;
+      }>).detail;
+      const newChId = detail?.newChapterId;
+
+      // Fall back to the bridge only if the event was sent by an older APK
+      // that doesn't include newChapterId in the detail.
       const bridge = getTtsBridge();
-      const nativeChId = bridge?.getCurrentChapterId?.() ?? undefined;
+      const resolvedChId =
+        (newChId && newChId.length > 0)
+          ? newChId
+          : (bridge?.getCurrentChapterId?.() ?? undefined);
+
       // Deduplicate: when the WebView resumes after being suspended, all queued
       // native-tts-chapter-advance events fire in a single microtask batch and
-      // each reads the same current chapter ID. Only navigate once per chapter.
-      if (nativeChId && nativeChId === lastAdvancedChapterRef.current) return;
-      lastAdvancedChapterRef.current = nativeChId;
-      onEndedRef.current?.(nativeChId);
+      // each may resolve the same chapter ID. Only navigate once per chapter.
+      if (resolvedChId && resolvedChId === lastAdvancedChapterRef.current) return;
+      lastAdvancedChapterRef.current = resolvedChId;
+      onEndedRef.current?.(resolvedChId);
     };
 
     const onDone = () => {

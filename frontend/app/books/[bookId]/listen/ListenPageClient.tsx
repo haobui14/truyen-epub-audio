@@ -275,6 +275,91 @@ export default function ListenPage() {
     });
   }, [bookId, chapterId, currentIndex]);
 
+  // Award XP when the user has listened to ≥80% of the chapter.
+  // Uses a ref set so each chapter+mode is only awarded once per session.
+  const listenXpCompletedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (
+      !chapterId ||
+      !bookId ||
+      totalChunks === 0 ||
+      !isLoggedIn()
+    )
+      return;
+    if (listenXpCompletedRef.current.has(chapterId)) return;
+    if (chunkIndex / totalChunks >= 0.8) {
+      listenXpCompletedRef.current.add(chapterId);
+      api
+        .completeChapter({
+          chapter_id: chapterId,
+          book_id: bookId,
+          mode: "listen",
+          word_count: currentChapter?.word_count ?? 0,
+        })
+        .catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chunkIndex, totalChunks]);
+
+  // Award XP when native auto-advance fires a chapter-complete event.
+  // This covers the normal case AND the screen-off case where JS was throttled:
+  // the WebView event queue is flushed on screen-on, so this handler fires even
+  // if the chapter finished while the screen was dark.
+  useEffect(() => {
+    if (!bookId || !isLoggedIn()) return;
+    const onAdvance = (e: Event) => {
+      const completedId = (e as CustomEvent<{ completedChapterId?: string }>).detail
+        ?.completedChapterId;
+      if (!completedId || listenXpCompletedRef.current.has(completedId)) return;
+      listenXpCompletedRef.current.add(completedId);
+      const ch = allChapters.find((c) => c.id === completedId);
+      api
+        .completeChapter({
+          chapter_id: completedId,
+          book_id: bookId,
+          mode: "listen",
+          word_count: ch?.word_count ?? 0,
+        })
+        .catch(() => {});
+    };
+    window.addEventListener("native-tts-chapter-advance", onAdvance);
+    return () => window.removeEventListener("native-tts-chapter-advance", onAdvance);
+  }, [bookId, allChapters]);
+
+  // Screen-on safety net: drain the Java-side completed-chapter list.
+  // If the WebView was completely suspended (deep doze / screen off for a long time),
+  // the queued JS evaluations may not have been processed yet, so the event handler
+  // above might not have fired. Reading the list directly from the bridge ensures
+  // we never miss XP even in that case.
+  useEffect(() => {
+    if (!bookId || !isNativePlatform() || !isLoggedIn()) return;
+    const onVisible = () => {
+      if (document.hidden) return;
+      const bridge = getTtsBridge();
+      if (!bridge) return;
+      try {
+        const ids = JSON.parse(bridge.getCompletedChapterIds()) as string[];
+        ids.forEach((completedId) => {
+          if (listenXpCompletedRef.current.has(completedId)) return;
+          listenXpCompletedRef.current.add(completedId);
+          const ch = allChapters.find((c) => c.id === completedId);
+          api
+            .completeChapter({
+              chapter_id: completedId,
+              book_id: bookId,
+              mode: "listen",
+              word_count: ch?.word_count ?? 0,
+            })
+            .catch(() => {});
+        });
+      } catch {
+        /* ignore JSON parse errors */
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [bookId, allChapters]);
+
   // Auto-sync book progress to server when network comes back online
   useEffect(() => {
     if (!bookId) return;
@@ -508,18 +593,31 @@ export default function ListenPage() {
 
       // Phase 1: send immediately available chapters so native can start
       // auto-advancing without waiting for the full fetch below.
+      // Use mergeQueuedChapters (same as Phase 2) so that if native auto-advanced
+      // to the next chapter while the async IndexedDB reads were in progress,
+      // we never re-add the currently-playing chapter to the queue (which would
+      // cause it to replay after finishing). mergeQueue() seeds its dedup set
+      // with currentChapterId before rebuilding, so it is strictly safer than
+      // queueAllChapters() and still replaces stale queue content atomically.
+      const mergePhase1 = (bridge as { mergeQueuedChapters?: (j: string) => void })
+        .mergeQueuedChapters;
       const initialQueue = buildQueue();
       if (initialQueue.length > 0) {
-        bridge.queueAllChapters(JSON.stringify(initialQueue));
+        if (typeof mergePhase1 === "function") {
+          mergePhase1.call(bridge, JSON.stringify(initialQueue));
+        } else {
+          // Fallback for old APKs that don't have mergeQueuedChapters yet.
+          bridge.queueAllChapters(JSON.stringify(initialQueue));
+        }
       }
 
       // Phase 2: fetch uncached chapters from API and queue each one as soon
       // as its text arrives. This ensures the native service always has the
       // next chapter ready before the current one finishes, so it can
       // auto-advance in the background without needing a JS round-trip.
-      // Do NOT gate on navigator.onLine — it is unreliable in Capacitor's
-      // WebView (returns false even when connected). Let each fetch fail
-      // naturally; the catch block already handles network errors gracefully.
+      // Use mergeQueuedChapters (not queueAllChapters) so we never create an
+      // empty-queue window — the merge preserves the currently-playing chapter
+      // and atomically rebuilds the rest of the queue.
       const uncached = remainingChapters.filter((ch) => !chunkMap.has(ch.id));
       let queuedLen = initialQueue.length;
       for (const ch of uncached) {
@@ -534,7 +632,14 @@ export default function ListenPage() {
               // Queue immediately — don't wait for all chapters to be fetched.
               const q = buildQueue();
               if (!cancelled && q.length > queuedLen) {
-                bridge.queueAllChapters(JSON.stringify(q));
+                // mergeQueuedChapters: atomic replace without the empty-queue gap
+                const mergeFn = (bridge as { mergeQueuedChapters?: (j: string) => void })
+                  .mergeQueuedChapters;
+                if (typeof mergeFn === "function") {
+                  mergeFn.call(bridge, JSON.stringify(q));
+                } else {
+                  bridge.queueAllChapters(JSON.stringify(q));
+                }
                 queuedLen = q.length;
               }
             }
@@ -550,7 +655,13 @@ export default function ListenPage() {
       // last incremental update was skipped due to ordering.
       const finalQueue = buildQueue();
       if (finalQueue.length > queuedLen) {
-        bridge.queueAllChapters(JSON.stringify(finalQueue));
+        const mergeFn = (bridge as { mergeQueuedChapters?: (j: string) => void })
+          .mergeQueuedChapters;
+        if (typeof mergeFn === "function") {
+          mergeFn.call(bridge, JSON.stringify(finalQueue));
+        } else {
+          bridge.queueAllChapters(JSON.stringify(finalQueue));
+        }
       }
     })();
 
@@ -695,7 +806,10 @@ export default function ListenPage() {
               // skips clearing/rebuilding the existing native queue.
               wasAutoAdvanceRef.current = true;
               autoPlayNextRef.current = true;
-              router.push(
+              // Use replace (not push) so batched screen-on events don't create
+              // N history entries (e.g. ch2→ch3→…→ch12). Each replace overwrites
+              // the previous, leaving only one history entry for the transition.
+              router.replace(
                 `/listen?id=${bookId}&chapter=${nativeChapterId}&autoplay=1`,
               );
               return;

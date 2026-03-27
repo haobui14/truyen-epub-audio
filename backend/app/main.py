@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.services import task_queue
-from app.routers import auth, books, chapters, progress, upload, tts, genres
+from app.routers import auth, books, chapters, progress, upload, tts, genres, stats
 from app.routers import settings as settings_router
 
 logging.basicConfig(level=logging.INFO)
@@ -63,6 +63,7 @@ app.include_router(tts.router)
 app.include_router(progress.router)
 app.include_router(settings_router.router)
 app.include_router(genres.router)
+app.include_router(stats.router)
 
 
 @app.get("/api/health")

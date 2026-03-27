@@ -276,6 +276,40 @@ public class TtsBridge {
         });
     }
 
+    /**
+     * Same as queueAllChapters but uses mergeQueue() which never clears the
+     * in-flight chapter, preventing the race where native finishes the current
+     * chapter during the empty-queue window created by clear()+addAll().
+     * Use this for incremental queue updates while playback is in progress.
+     */
+    @JavascriptInterface
+    public void mergeQueuedChapters(String chaptersJson) {
+        mainHandler.post(() -> {
+            if (service == null) return;
+            try {
+                JSONArray arr = new JSONArray(chaptersJson);
+                List<TtsPlaybackService.ChapterItem> list = new ArrayList<>(arr.length());
+                for (int i = 0; i < arr.length(); i++) {
+                    JSONObject obj       = arr.getJSONObject(i);
+                    JSONArray  chunksArr = obj.getJSONArray("chunks");
+                    List<String> chunks  = new ArrayList<>(chunksArr.length());
+                    for (int j = 0; j < chunksArr.length(); j++) {
+                        chunks.add(chunksArr.getString(j));
+                    }
+                    String chapterId = obj.optString("chapterId", "");
+                    String title     = obj.optString("title", "");
+                    float  rate      = (float) obj.optDouble("rate",  1.0);
+                    float  pitch     = (float) obj.optDouble("pitch", 1.0);
+                    list.add(new TtsPlaybackService.ChapterItem(
+                            chunks, chapterId, title, rate, pitch));
+                }
+                service.mergeQueue(list);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        });
+    }
+
     @JavascriptInterface
     public void clearNextChapter() {
         mainHandler.post(() -> {
@@ -295,6 +329,26 @@ public class TtsBridge {
         mainHandler.post(() -> {
             if (service != null) service.cancelSleepTimer();
         });
+    }
+
+    /**
+     * Returns a JSON array of chapter IDs that were completed by native
+     * auto-advance (e.g. while the screen was off) since the last call,
+     * then clears the internal list.  Called by JS on screen-on to award
+     * XP for chapters that finished while the WebView was throttled.
+     */
+    @JavascriptInterface
+    public String getCompletedChapterIds() {
+        TtsPlaybackService svc = service;
+        if (svc == null) return "[]";
+        java.util.List<String> ids = svc.getAndClearCompletedChapterIds();
+        try {
+            JSONArray arr = new JSONArray();
+            for (String id : ids) arr.put(id);
+            return arr.toString();
+        } catch (Exception e) {
+            return "[]";
+        }
     }
 
     /**
