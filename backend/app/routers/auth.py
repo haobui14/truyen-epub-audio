@@ -31,6 +31,13 @@ class AuthResponse(BaseModel):
     user_id: str
     email: str
     role: str = "user"
+    display_name: str | None = None
+    avatar_base64: str | None = None
+
+
+class UpdateProfileRequest(BaseModel):
+    display_name: str | None = None
+    avatar_base64: str | None = None
 
 
 class RefreshRequest(BaseModel):
@@ -97,13 +104,43 @@ async def signup(body: AuthRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.patch("/update-profile")
+async def update_profile(
+    body: UpdateProfileRequest,
+    user: dict = Depends(get_current_user),
+):
+    user_id = user["id"]
+    # Guard against huge payloads (500 KB base64 ≈ 375 KB raw image)
+    if body.avatar_base64 and len(body.avatar_base64) > 500_000:
+        raise HTTPException(status_code=400, detail="Ảnh quá lớn (tối đa ~375 KB)")
+    db = get_client()
+    updates: dict = {}
+    if body.display_name is not None:
+        updates["display_name"] = body.display_name.strip() or None
+    if body.avatar_base64 is not None:
+        updates["avatar_base64"] = body.avatar_base64 or None
+    if not updates:
+        raise HTTPException(status_code=400, detail="Không có gì để cập nhật")
+    result = (
+        db.table("users")
+        .update(updates)
+        .eq("id", user_id)
+        .execute()
+    )
+    row = result.data[0] if result.data else {}
+    return {
+        "display_name": row.get("display_name"),
+        "avatar_base64": row.get("avatar_base64"),
+    }
+
+
 @router.post("/login", response_model=AuthResponse)
 async def login(body: AuthRequest):
     db = get_client()
     try:
         result = (
             db.table("users")
-            .select("id, email, password_hash")
+            .select("id, email, password_hash, display_name, avatar_base64")
             .eq("email", body.email)
             .maybe_single()
             .execute()
@@ -125,6 +162,8 @@ async def login(body: AuthRequest):
             user_id=user_id,
             email=user_data["email"],
             role=_lookup_role(user_id),
+            display_name=user_data.get("display_name"),
+            avatar_base64=user_data.get("avatar_base64"),
         )
     except HTTPException:
         raise
@@ -155,11 +194,12 @@ async def refresh(body: RefreshRequest):
             raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
 
         user_id = row.data["user_id"]
-        user_row = db.table("users").select("email").eq("id", user_id).maybe_single().execute()
+        user_row = db.table("users").select("email, display_name, avatar_base64").eq("id", user_id).maybe_single().execute()
         if not user_row or not user_row.data:
             raise HTTPException(status_code=401, detail="User not found")
 
-        email = user_row.data["email"]
+        u = user_row.data
+        email = u["email"]
         # Rotate: revoke old token and issue a fresh one
         _revoke_refresh_token(body.refresh_token)
         new_refresh_token = _create_refresh_token(user_id)
@@ -170,6 +210,8 @@ async def refresh(body: RefreshRequest):
             user_id=user_id,
             email=email,
             role=_lookup_role(user_id),
+            display_name=u.get("display_name"),
+            avatar_base64=u.get("avatar_base64"),
         )
     except HTTPException:
         raise
@@ -182,4 +224,11 @@ async def refresh(body: RefreshRequest):
 
 @router.get("/me")
 async def get_me(user: dict = Depends(get_current_user)):
-    return user
+    db = get_client()
+    row = db.table("users").select("display_name, avatar_base64").eq("id", user["id"]).maybe_single().execute()
+    extra = row.data if row and row.data else {}
+    return {
+        **user,
+        "display_name": extra.get("display_name"),
+        "avatar_base64": extra.get("avatar_base64"),
+    }

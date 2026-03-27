@@ -50,6 +50,19 @@
 
 ## 2. Frontend Pages
 
+### `app/providers.tsx` — App Bootstrap
+
+Wraps the entire app tree. Runs once on mount:
+
+1. **Native hydration** — calls `hydrateAuthFromNative()` to copy tokens from Android `SharedPreferences` → `localStorage`, then dispatches `auth-change` and invalidates React Query.
+2. **Token refresh** — calls `tryRefreshToken()` proactively. If it fails (expired / no network), leaves auth alone rather than logging the user out.
+3. **Profile sync** — if the token is fresh, calls `api.getMe()` and updates the stored `AuthUser` with the latest `role`, `display_name`, and `avatar_base64` from the server. This is the only automatic sync path; the profile page handles updates interactively.
+4. **Visibility listeners** — on every screen-on, re-runs token refresh + query invalidation.
+5. **45-minute token rotation** — `setInterval` proactively rotates the access token before expiry.
+6. **Progress flush** — flushes the offline progress queue on mount and whenever `online` fires.
+
+Also renders `NativeUrlRestorer` — saves the current URL to `localStorage` on every route change, restores it after Android process-death (detected via `sessionStorage` being empty on cold start).
+
 ### `app/page.tsx` — Home / Library
 
 - Fetches all books from `/api/books` with `getCachedBooks()` as offline fallback.
@@ -105,12 +118,19 @@ The most complex page (~700 lines). Key responsibilities:
 ### `app/profile/page.tsx` — User Profile
 
 - Redirects to `/login` if not authenticated.
+- User object is held in **reactive `useState`** initialised from `getUser()`, then kept in sync via an `auth-change` event listener (same pattern as `BottomNav.tsx`). This is required on Android because the Capacitor build uses `output: "export"` — `router.refresh()` is a no-op in a static export, so state must be updated directly.
 - Calls `api.getMyStats()` → renders:
   - **SVG level ring** — circular progress arc colored by realm tier.
   - **XP bar** — progress within current level.
   - **4-stat grid**: chapters read, chapters listened, total EXP, books in progress.
   - **"Cách nhận EXP" info box** — explains earning rules to user.
   - **Realm progression table** — all 24 levels with lock/active/completed state.
+- **Edit profile** (pencil button overlay on avatar corner):
+  - Opens an in-page modal with avatar picker + display name text input.
+  - `handleImagePick` — reads the picked image file, resizes it to max 400×400 via `<canvas>` at 0.75 JPEG quality before base64 encoding (keeps payload under ~100 KB).
+  - `handleSave` — calls `api.updateProfile()`, then `setAuth()` with the merged user object. `setAuth` writes to localStorage + Android SharedPreferences and dispatches `auth-change`, which the reactive listener picks up to update the displayed user immediately — no navigation needed.
+  - Avatar display: renders the `avatar_base64` `<img>` if set; otherwise falls back to 2-letter initials in the level colour.
+  - Name display: shows `display_name` if set, with `email` shown as a subtitle line below it.
 
 ### `app/login/` — Auth Pages
 
@@ -245,14 +265,27 @@ Utility hooks. `useNativeTTSAvailable` uses `useState` (not `useMemo`) to avoid 
 All backend API calls. Key points:
 - Auto-attaches `Authorization: Bearer <token>` header.
 - On 401, calls `tryRefreshToken()` once and retries. On confirmed invalid token → `clearAuth()`. On network error → leaves auth alone.
-- `tryRefreshToken` is de-duplicated (single concurrent attempt via `refreshPromise`).
+- `tryRefreshToken` is de-duplicated (single concurrent attempt via `refreshPromise`). On success, merges `display_name` and `avatar_base64` from the refresh response back into the stored user.
 - `api.completeChapter({ chapter_id, book_id, mode, word_count })` — awards XP.
 - `api.getMyStats()` — returns `UserStats`.
 - `api.getMyBooks()` — returns books sorted by `updated_at desc`.
+- `api.updateProfile({ display_name?, avatar_base64? })` — `PATCH /api/auth/update-profile`.
 
 ### `lib/auth.ts`
 
 JWT-based auth stored in `localStorage`. `hydrateAuthFromNative()` copies tokens from Android `SharedPreferences` (written by Capacitor plugins) into `localStorage` on app start.
+
+**`AuthUser` interface fields:**
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `user_id` | `string` | UUID |
+| `email` | `string` | Always present |
+| `role` | `string?` | `"admin"` or `"user"` |
+| `display_name` | `string?` | Optional nickname set by user |
+| `avatar_base64` | `string?` | JPEG base64 data URL, max ~100 KB |
+
+`setAuth(token, user, refreshToken?)` — writes all three to `localStorage`, persists to Android `SharedPreferences`, and dispatches `"auth-change"` event so any component listening (profile page, BottomNav, HeaderAuth) re-reads and re-renders immediately.
 
 ### `lib/backgroundLock.ts`
 
@@ -410,7 +443,23 @@ CRUD for chapters. Includes `GET /api/chapters/{id}/text` returning `text_conten
 
 ### `routers/auth.py`
 
-Login, register, refresh token, get-me.
+Login, register, refresh token, get-me, update-profile.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/auth/signup` | POST | Create account; returns `AuthResponse` |
+| `/api/auth/login` | POST | Verify password; returns `AuthResponse` |
+| `/api/auth/refresh` | POST | Rotate refresh token; returns `AuthResponse` |
+| `/api/auth/me` | GET | Return current user including `display_name` + `avatar_base64` |
+| `/api/auth/update-profile` | PATCH | Update `display_name` and/or `avatar_base64`. Rejects `avatar_base64` strings > 500 KB. Returns `{display_name, avatar_base64}`. |
+
+`AuthResponse` includes `display_name` and `avatar_base64` so fresh profile data is available immediately after login/refresh without a separate `getMe()` call.
+
+**DB columns** (`users` table):
+```sql
+ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_base64 TEXT;
+```
 
 ### `routers/tts.py`
 
@@ -712,4 +761,4 @@ timeRef >= threshold AND scrolledPastRef:
 
 ---
 
-*Last updated: 2026-03-27*
+*Last updated: 2026-03-27 — added profile edit (display name + avatar), Providers section, auth.ts AuthUser fields, auth.py update-profile endpoint.*

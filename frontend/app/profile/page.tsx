@@ -1,11 +1,11 @@
 "use client";
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { getUser, isLoggedIn } from "@/lib/auth";
+import { getUser, isLoggedIn, setAuth, getToken, getRefreshToken, type AuthUser } from "@/lib/auth";
 import { Spinner } from "@/components/ui/Spinner";
 import {
   getLevelInfo,
@@ -184,7 +184,95 @@ function RealmTable({ totalExp }: { totalExp: number }) {
 // ── Profile page ──────────────────────────────────────────────────────────────
 export default function ProfilePage() {
   const router = useRouter();
-  const user = getUser();
+  const queryClient = useQueryClient();
+  // Reactive — re-reads localStorage whenever auth-change fires (same pattern
+  // as BottomNav.tsx). Needed because router.refresh() is a no-op in the
+  // Capacitor static export and getUser() is not reactive on its own.
+  const [user, setUser] = useState<AuthUser | null>(() => getUser());
+
+  // Keep user state in sync with any auth changes (login, token refresh, saves)
+  useEffect(() => {
+    const sync = () => setUser(getUser());
+    window.addEventListener("auth-change", sync);
+    return () => window.removeEventListener("auth-change", sync);
+  }, []);
+
+  const [editOpen, setEditOpen] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editAvatar, setEditAvatar] = useState<string | null>(null); // base64 preview
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function openEdit() {
+    setEditName(user?.display_name ?? "");
+    setEditAvatar(user?.avatar_base64 ?? null);
+    setSaveError(null);
+    setEditOpen(true);
+  }
+
+  function handleImagePick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const raw = ev.target?.result as string;
+      // Resize to max 400×400 using canvas to keep base64 small
+      const img = document.createElement("img");
+      img.onload = () => {
+        const MAX = 400;
+        const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+        const w = Math.round(img.width * scale);
+        const h = Math.round(img.height * scale);
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx?.drawImage(img, 0, 0, w, h);
+        const b64 = canvas.toDataURL("image/jpeg", 0.75);
+        setEditAvatar(b64);
+      };
+      img.src = raw;
+    };
+    reader.readAsDataURL(file);
+    // reset so picking same file again still fires onChange
+    e.target.value = "";
+  }
+
+  async function handleSave() {
+    if (!user) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const fields: { display_name?: string; avatar_base64?: string } = {};
+      const trimName = editName.trim();
+      if (trimName !== (user.display_name ?? "")) fields.display_name = trimName;
+      if (editAvatar !== (user.avatar_base64 ?? null)) fields.avatar_base64 = editAvatar ?? "";
+      if (Object.keys(fields).length === 0) { setEditOpen(false); return; }
+      const result = await api.updateProfile(fields);
+      const token = getToken();
+      const refresh = getRefreshToken();
+      const updatedUser: AuthUser = {
+        ...user,
+        display_name: result.display_name ?? undefined,
+        avatar_base64: result.avatar_base64 ?? undefined,
+      };
+      if (token) {
+        // setAuth writes to localStorage + SharedPreferences and dispatches
+        // auth-change, which will update our useState via the listener above.
+        await setAuth(token, updatedUser, refresh ?? undefined);
+      } else {
+        // Fallback: update state directly if somehow token is gone
+        setUser(updatedUser);
+      }
+      queryClient.invalidateQueries({ queryKey: ["my-stats"] });
+      setEditOpen(false);
+    } catch (err: unknown) {
+      setSaveError(err instanceof Error ? err.message : "Lỗi lưu thông tin");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   useEffect(() => {
     if (!isLoggedIn()) router.push("/login");
@@ -211,8 +299,8 @@ export default function ProfilePage() {
   const progress = getLevelProgress(totalExp);
 
   // Avatar initials
-  const initials = user.email
-    .split("@")[0]
+  const initials = (user.display_name ?? user.email)
+    .split(/[\s@]/)[0]
     .slice(0, 2)
     .toUpperCase();
 
@@ -240,17 +328,39 @@ export default function ProfilePage() {
       {/* Header card */}
       <div className="bg-white dark:bg-gray-800 rounded-3xl border border-gray-100 dark:border-gray-700 p-6 mb-5 shadow-sm">
         <div className="flex items-start gap-4 mb-6">
-          {/* Avatar */}
-          <div
-            className="w-16 h-16 rounded-2xl flex items-center justify-center text-xl font-black text-white shrink-0 shadow-md"
-            style={{ backgroundColor: lvl.color }}
-          >
-            {initials}
+          {/* Avatar + edit button */}
+          <div className="relative shrink-0">
+            {user.avatar_base64 ? (
+              <img
+                src={user.avatar_base64}
+                alt="avatar"
+                className="w-16 h-16 rounded-2xl object-cover shadow-md"
+              />
+            ) : (
+              <div
+                className="w-16 h-16 rounded-2xl flex items-center justify-center text-xl font-black text-white shadow-md"
+                style={{ backgroundColor: lvl.color }}
+              >
+                {initials}
+              </div>
+            )}
+            <button
+              onClick={openEdit}
+              className="absolute -bottom-1.5 -right-1.5 w-6 h-6 rounded-full bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 shadow flex items-center justify-center"
+              aria-label="Chỉnh sửa hồ sơ"
+            >
+              <svg className="w-3 h-3 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 012.828 0l.172.172a2 2 0 010 2.828L12 16H9v-3z" />
+              </svg>
+            </button>
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-lg font-bold text-gray-900 dark:text-gray-100 truncate">
-              {user.email}
+              {user.display_name || user.email}
             </p>
+            {user.display_name && (
+              <p className="text-xs text-gray-400 truncate">{user.email}</p>
+            )}
             <p className="text-sm font-semibold mt-0.5" style={{ color: lvl.color }}>
               {lvl.title}
             </p>
@@ -350,6 +460,109 @@ export default function ProfilePage() {
         </h3>
         <RealmTable totalExp={totalExp} />
       </div>
+
+      {/* Hidden file input for avatar */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleImagePick}
+      />
+
+      {/* Edit profile modal */}
+      {editOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setEditOpen(false); }}
+        >
+          <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl p-6 w-full max-w-sm">
+            <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-5">
+              Chỉnh sửa hồ sơ
+            </h2>
+
+            {/* Avatar preview + pick */}
+            <div className="flex flex-col items-center gap-3 mb-5">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="relative group"
+                aria-label="Chọn ảnh đại diện"
+              >
+                {editAvatar ? (
+                  <img
+                    src={editAvatar}
+                    alt="preview"
+                    className="w-20 h-20 rounded-2xl object-cover shadow"
+                  />
+                ) : (
+                  <div
+                    className="w-20 h-20 rounded-2xl flex items-center justify-center text-2xl font-black text-white shadow"
+                    style={{ backgroundColor: lvl.color }}
+                  >
+                    {initials}
+                  </div>
+                )}
+                <div className="absolute inset-0 rounded-2xl bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                  <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                </div>
+              </button>
+              <span className="text-xs text-gray-400">Nhấn để chọn ảnh</span>
+              {editAvatar && (
+                <button
+                  type="button"
+                  onClick={() => setEditAvatar(null)}
+                  className="text-xs text-red-500 hover:text-red-600"
+                >
+                  Xoá ảnh
+                </button>
+              )}
+            </div>
+
+            {/* Display name input */}
+            <label className="block mb-4">
+              <span className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5 block">
+                Tên hiển thị
+              </span>
+              <input
+                type="text"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                placeholder={user.email}
+                maxLength={50}
+                className="w-full rounded-xl border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 px-4 py-2.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              />
+            </label>
+
+            {saveError && (
+              <p className="text-xs text-red-500 mb-3">{saveError}</p>
+            )}
+
+            <div className="flex gap-2.5">
+              <button
+                type="button"
+                onClick={() => setEditOpen(false)}
+                disabled={saving}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+              >
+                Huỷ
+              </button>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saving}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold bg-indigo-600 hover:bg-indigo-700 text-white transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {saving && <Spinner className="w-4 h-4 text-white" />}
+                Lưu
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

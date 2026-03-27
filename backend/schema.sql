@@ -91,6 +91,10 @@ CREATE TABLE IF NOT EXISTS users (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Profile fields (added via migration; safe to re-run)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_base64 TEXT;
+
 -- Refresh tokens — 90-day expiry, rotated on every use
 CREATE TABLE IF NOT EXISTS refresh_tokens (
     token      TEXT PRIMARY KEY,

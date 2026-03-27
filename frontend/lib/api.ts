@@ -38,6 +38,8 @@ export async function tryRefreshToken(): Promise<boolean | null> {
             user_id: data.user_id ?? user.user_id,
             email: data.email ?? user.email,
             role: data.role ?? user.role,
+            display_name: data.display_name ?? user.display_name,
+            avatar_base64: data.avatar_base64 ?? user.avatar_base64,
           },
           data.refresh_token ?? refreshToken,
         );
@@ -304,7 +306,16 @@ export const api = {
       body: JSON.stringify({ email, password }),
     }),
   getMe: () =>
-    request<{ id: string; email: string; role: string }>("/api/auth/me"),
+    request<{ id: string; email: string; role: string; display_name: string | null; avatar_base64: string | null }>("/api/auth/me"),
+  updateProfile: (fields: { display_name?: string; avatar_base64?: string }) =>
+    request<{ display_name: string | null; avatar_base64: string | null }>(
+      "/api/auth/update-profile",
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(fields),
+      },
+    ),
 
   // Progress
   saveProgress: (data: {

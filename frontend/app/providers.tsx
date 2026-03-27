@@ -61,8 +61,19 @@ export function Providers({ children }: { children: React.ReactNode }) {
           const me = await api.getMe();
           const user = getUser();
           const token = getToken();
-          if (user && token && me.role !== user.role) {
-            await setAuth(token, { ...user, role: me.role });
+          if (user && token) {
+            const needsUpdate =
+              me.role !== user.role ||
+              (me.display_name ?? undefined) !== user.display_name ||
+              (me.avatar_base64 ?? undefined) !== user.avatar_base64;
+            if (needsUpdate) {
+              await setAuth(token, {
+                ...user,
+                role: me.role,
+                display_name: me.display_name ?? undefined,
+                avatar_base64: me.avatar_base64 ?? undefined,
+              });
+            }
           }
         } catch {
           // Best-effort — ignore failures (e.g. server down)

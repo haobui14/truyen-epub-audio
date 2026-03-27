@@ -8,6 +8,8 @@ export interface AuthUser {
   user_id: string;
   email: string;
   role?: string;
+  display_name?: string;
+  avatar_base64?: string;
 }
 
 export function getToken(): string | null {
