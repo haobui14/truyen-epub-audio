@@ -384,11 +384,6 @@ export default function ListenPage() {
   const activeChapterRef = useRef<HTMLButtonElement>(null);
   const chapterListScrolledRef = useRef(false);
 
-  // Tracks whether the current chapter navigation was triggered by auto-advance
-  // (onEnded) vs. manual user action. When true, the queue effect skips clearing
-  // and rebuilding the native queue since it's already populated.
-  const wasAutoAdvanceRef = useRef(false);
-
   // Signals that the next chapter should auto-play. Set synchronously before
   // navigation so the setTrack effect always sees autoPlay=true on chapter
   // advance, regardless of whether searchParams updates before the effect fires
@@ -517,15 +512,6 @@ export default function ListenPage() {
       return;
     const bridge = getTtsBridge();
     if (!bridge) return;
-
-    // When the chapter changed via auto-advance (onEnded), the native service
-    // already has the remaining chapters queued. Clearing and re-queueing
-    // creates a window where the queue is empty, causing premature "done"
-    // events and cascading chapter skips.
-    if (wasAutoAdvanceRef.current) {
-      wasAutoAdvanceRef.current = false;
-      return;
-    }
 
     // Do NOT call clearNextChapter() here. queueAllChapters() replaces the
     // queue atomically, so a prior explicit clear creates a race window where
@@ -671,7 +657,9 @@ export default function ListenPage() {
     // nextChapterText intentionally excluded: it changes async when adjacent chapter
     // text loads, which would re-fire this effect and clear the native queue mid-play,
     // causing premature "done" events and chapter cascade skips.
-  }, [chapterId, voice, rate, pitch, allChapters, currentIndex, queryClient, isPlaying]);
+    // isPlaying intentionally excluded: it is not read in this effect and including it
+    // causes spurious re-runs on every play/pause toggle.
+  }, [chapterId, voice, rate, pitch, allChapters, currentIndex, queryClient]);
 
   // ── Web streaming: prefetch first TTS audio chunks when near end ──
   useEffect(() => {
@@ -801,10 +789,6 @@ export default function ListenPage() {
       onEnded: nextChapter
         ? (nativeChapterId?: string) => {
             if (nativeChapterId) {
-              // Native TTS passed its actual current chapter (via chapter-advance
-              // event — queue still has chapters). Set flag so the queue effect
-              // skips clearing/rebuilding the existing native queue.
-              wasAutoAdvanceRef.current = true;
               autoPlayNextRef.current = true;
               // Use replace (not push) so batched screen-on events don't create
               // N history entries (e.g. ch2→ch3→…→ch12). Each replace overwrites
