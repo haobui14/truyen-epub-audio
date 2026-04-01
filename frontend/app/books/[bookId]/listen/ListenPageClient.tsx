@@ -296,7 +296,7 @@ export default function ListenPage() {
           mode: "listen",
           word_count: currentChapter?.word_count ?? 0,
         })
-        .catch((err) => console.error("[XP] chunk-based award failed:", err));
+        .catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chunkIndex, totalChunks]);
@@ -320,7 +320,7 @@ export default function ListenPage() {
           mode: "listen",
           word_count: ch?.word_count ?? 0,
         })
-        .catch((err) => console.error("[XP] advance award failed:", err));
+        .catch(() => {});
     };
     window.addEventListener("native-tts-chapter-advance", onAdvance);
     return () => window.removeEventListener("native-tts-chapter-advance", onAdvance);
@@ -350,7 +350,7 @@ export default function ListenPage() {
               mode: "listen",
               word_count: ch?.word_count ?? 0,
             })
-            .catch((err) => console.error("[XP] screen-on safety-net award failed:", err));
+            .catch(() => {});
         });
       } catch {
         /* ignore JSON parse errors */
@@ -513,11 +513,6 @@ export default function ListenPage() {
     const bridge = getTtsBridge();
     if (!bridge) return;
 
-    // Do NOT call clearNextChapter() here. queueAllChapters() replaces the
-    // queue atomically, so a prior explicit clear creates a race window where
-    // the queue is empty. If native finishes the last queued chapter during
-    // that window it fires native-tts-done and the player stops.
-
     // Gather the next chapters after the current one.
     // Capped at 10 to prevent native from auto-playing hundreds of chapters
     // in the background while the screen is off, which would cause large
@@ -532,6 +527,13 @@ export default function ListenPage() {
     let cancelled = false;
 
     (async () => {
+      // Yield one microtask so the parent component's effect (useNativeTTSPlayer
+      // reset) runs first. playChunksWithId → playChunks() calls chapterQueue.clear()
+      // synchronously; if we populate the queue before that, it gets wiped.
+      // After this yield all synchronous React effects for this commit have run.
+      await Promise.resolve();
+      if (cancelled) return;
+
       type QueueItem = {
         chunks: string[];
         chapterId: string;
@@ -579,31 +581,22 @@ export default function ListenPage() {
 
       // Phase 1: send immediately available chapters so native can start
       // auto-advancing without waiting for the full fetch below.
-      // Use mergeQueuedChapters (same as Phase 2) so that if native auto-advanced
-      // to the next chapter while the async IndexedDB reads were in progress,
-      // we never re-add the currently-playing chapter to the queue (which would
-      // cause it to replay after finishing). mergeQueue() seeds its dedup set
-      // with currentChapterId before rebuilding, so it is strictly safer than
-      // queueAllChapters() and still replaces stale queue content atomically.
-      const mergePhase1 = (bridge as { mergeQueuedChapters?: (j: string) => void })
-        .mergeQueuedChapters;
+      // mergeQueuedChapters() skips the currently-playing chapter internally,
+      // so it is safe to call at any time — even while native is mid-chapter.
+      // This replenishes the queue on every chapter advance without risk of
+      // re-queueing chapters that are already playing or completed.
       const initialQueue = buildQueue();
       if (initialQueue.length > 0) {
-        if (typeof mergePhase1 === "function") {
-          mergePhase1.call(bridge, JSON.stringify(initialQueue));
-        } else {
-          // Fallback for old APKs that don't have mergeQueuedChapters yet.
-          bridge.queueAllChapters(JSON.stringify(initialQueue));
-        }
+        bridge.mergeQueuedChapters(JSON.stringify(initialQueue));
       }
 
       // Phase 2: fetch uncached chapters from API and queue each one as soon
       // as its text arrives. This ensures the native service always has the
       // next chapter ready before the current one finishes, so it can
       // auto-advance in the background without needing a JS round-trip.
-      // Use mergeQueuedChapters (not queueAllChapters) so we never create an
-      // empty-queue window — the merge preserves the currently-playing chapter
-      // and atomically rebuilds the rest of the queue.
+      // Do NOT gate on navigator.onLine — it is unreliable in Capacitor's
+      // WebView (returns false even when connected). Let each fetch fail
+      // naturally; the catch block already handles network errors gracefully.
       const uncached = remainingChapters.filter((ch) => !chunkMap.has(ch.id));
       let queuedLen = initialQueue.length;
       for (const ch of uncached) {
@@ -618,14 +611,7 @@ export default function ListenPage() {
               // Queue immediately — don't wait for all chapters to be fetched.
               const q = buildQueue();
               if (!cancelled && q.length > queuedLen) {
-                // mergeQueuedChapters: atomic replace without the empty-queue gap
-                const mergeFn = (bridge as { mergeQueuedChapters?: (j: string) => void })
-                  .mergeQueuedChapters;
-                if (typeof mergeFn === "function") {
-                  mergeFn.call(bridge, JSON.stringify(q));
-                } else {
-                  bridge.queueAllChapters(JSON.stringify(q));
-                }
+                bridge.mergeQueuedChapters(JSON.stringify(q));
                 queuedLen = q.length;
               }
             }
@@ -641,13 +627,7 @@ export default function ListenPage() {
       // last incremental update was skipped due to ordering.
       const finalQueue = buildQueue();
       if (finalQueue.length > queuedLen) {
-        const mergeFn = (bridge as { mergeQueuedChapters?: (j: string) => void })
-          .mergeQueuedChapters;
-        if (typeof mergeFn === "function") {
-          mergeFn.call(bridge, JSON.stringify(finalQueue));
-        } else {
-          bridge.queueAllChapters(JSON.stringify(finalQueue));
-        }
+        bridge.mergeQueuedChapters(JSON.stringify(finalQueue));
       }
     })();
 
@@ -657,9 +637,7 @@ export default function ListenPage() {
     // nextChapterText intentionally excluded: it changes async when adjacent chapter
     // text loads, which would re-fire this effect and clear the native queue mid-play,
     // causing premature "done" events and chapter cascade skips.
-    // isPlaying intentionally excluded: it is not read in this effect and including it
-    // causes spurious re-runs on every play/pause toggle.
-  }, [chapterId, voice, rate, pitch, allChapters, currentIndex, queryClient]);
+  }, [chapterId, voice, rate, pitch, allChapters, currentIndex, queryClient, isPlaying]);
 
   // ── Web streaming: prefetch first TTS audio chunks when near end ──
   useEffect(() => {
@@ -789,18 +767,16 @@ export default function ListenPage() {
       onEnded: nextChapter
         ? (nativeChapterId?: string) => {
             if (nativeChapterId) {
+              // Native TTS auto-advanced to this chapter. The queue effect will
+              // fire for the new chapter and call mergeQueuedChapters() to
+              // replenish the queue safely (skipping the in-flight chapter).
               autoPlayNextRef.current = true;
-              // Use replace (not push) so batched screen-on events don't create
-              // N history entries (e.g. ch2→ch3→…→ch12). Each replace overwrites
-              // the previous, leaving only one history entry for the transition.
-              router.replace(
+              router.push(
                 `/listen?id=${bookId}&chapter=${nativeChapterId}&autoplay=1`,
               );
               return;
             }
             // native-tts-done path: queue is exhausted (or web TTS ended).
-            // Do NOT set wasAutoAdvanceRef — the queue is empty and must be
-            // rebuilt for the next chapter.
             const {
               voice: v,
               queryClient: qc,

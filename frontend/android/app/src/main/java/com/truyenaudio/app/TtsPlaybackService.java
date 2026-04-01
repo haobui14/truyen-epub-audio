@@ -30,10 +30,12 @@ import androidx.media.app.NotificationCompat.MediaStyle;
 import androidx.media.session.MediaButtonReceiver;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Queue;
+import java.util.Set;
 
 /**
  * Foreground Service that drives native Android TTS playback.
@@ -131,14 +133,6 @@ public class TtsPlaybackService extends Service {
     // TTS engine
     private TextToSpeech  tts;
     private boolean       ttsReady   = false;
-
-    // Generation counter: incremented every time we start a new chapter/chunk
-    // sequence. UtteranceProgressListener callbacks embed a snapshot of the
-    // counter at dispatch time; if the counter has advanced by the time the
-    // callback runs on mainHandler, the callback belongs to a stale chapter
-    // and is discarded. Prevents phantom onDone/onError from old utterances
-    // arriving after stopPlayback() + playChunks() for a new chapter.
-    private int           playGeneration    = 0;
 
     // Playback state — volatile for cross-thread reads from TtsBridge
     volatile boolean      isPlaying         = false;
@@ -301,29 +295,21 @@ public class TtsPlaybackService extends Service {
             tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
                 @Override
                 public void onStart(String utteranceId) {
+                    // Extract index from utterance id "chunk_N"
                     int idx = parseChunkIndex(utteranceId);
-                    // Capture the generation at dispatch time so the main-thread
-                    // handler can reject callbacks from a superseded chapter.
-                    int gen = playGeneration;
-                    mainHandler.post(() -> { if (gen == playGeneration) onChunkStarted(idx); });
+                    mainHandler.post(() -> onChunkStarted(idx));
                 }
 
                 @Override
                 public void onDone(String utteranceId) {
                     int idx = parseChunkIndex(utteranceId);
-                    int gen = playGeneration;
-                    mainHandler.post(() -> { if (gen == playGeneration) onChunkFinished(idx); });
+                    mainHandler.post(() -> onChunkFinished(idx));
                 }
 
                 @Override
                 public void onError(String utteranceId) {
                     int idx = parseChunkIndex(utteranceId);
-                    int gen = playGeneration;
-                    // On error: skip the failed chunk and move to the next one
-                    // rather than stalling playback.
-                    mainHandler.post(() -> {
-                        if (gen == playGeneration) onChunkFinished(idx);
-                    });
+                    mainHandler.post(() -> onChunkFinished(idx));
                 }
             });
 
@@ -371,17 +357,12 @@ public class TtsPlaybackService extends Service {
             if (nextChapter != null) {
                 // Capture BEFORE startChapter() mutates currentChapterId
                 String completedId = currentChapterId;
-                // newChapterId is what native will be playing after startChapter().
-                // Embed both in the event so JS can navigate to the right chapter
-                // without needing to call getCurrentChapterId() — which races against
-                // the main-thread mutation happening right below.
-                String newChId = (nextChapter.chapterId != null) ? nextChapter.chapterId : "";
+                String newId = nextChapter.chapterId != null ? nextChapter.chapterId : "";
                 synchronized (completedChapterIds) {
                     completedChapterIds.add(completedId);
                 }
                 dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-chapter-advance'," +
-                        "{detail:{completedChapterId:'" + completedId + "'," +
-                        "newChapterId:'" + newChId + "'}}))" );
+                        "{detail:{completedChapterId:'" + completedId + "',newChapterId:'" + newId + "'}}))");
                 startChapter(nextChapter, 0);
             } else {
                 // Entire queue exhausted
@@ -401,7 +382,6 @@ public class TtsPlaybackService extends Service {
         if (tts == null || !ttsReady || currentChunks == null) return;
         if (idx < 0 || idx >= currentChunks.size()) return;
 
-        playGeneration++; // Invalidate any in-flight callbacks from previous utterance
         currentChunkIdx = idx;
         tts.setSpeechRate(currentRate);
         tts.setPitch(currentPitch);
@@ -484,7 +464,6 @@ public class TtsPlaybackService extends Service {
      */
     public void playChunks(List<String> chunks, float rate, float pitch,
                            int startIdx, String title, String chapterId) {
-        playGeneration++; // Discard any pending callbacks from the previous chapter
         currentChunks    = chunks;
         currentRate      = rate;
         currentPitch     = pitch;
@@ -524,14 +503,12 @@ public class TtsPlaybackService extends Service {
         requestAudioFocus();
         updatePlaybackState(true);
         updateNotification();
-        // speakChunk() increments playGeneration and calls tts.speak(), which
-        // triggers onChunkStarted → native-tts-state(playing:true). Do NOT emit
-        // a manual native-tts-state here to avoid a duplicate out-of-order event.
         speakChunk(currentChunkIdx);
+        dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-state'," +
+                "{detail:{playing:true,index:" + currentChunkIdx + "}}))");
     }
 
     public void stopPlayback() {
-        playGeneration++; // Discard any pending callbacks
         mainHandler.removeCallbacks(sleepRunnable);
         mainHandler.removeCallbacks(reassertRunnable);
         isPlaying        = false;
@@ -573,23 +550,19 @@ public class TtsPlaybackService extends Service {
     }
 
     /**
-     * Replaces chapters that are NOT already playing in the queue.
-     * Appends only items whose chapterId is not equal to currentChapterId
-     * and is not already queued. This prevents the clear+addAll race where
-     * a chapter finishes during the window between clear() and addAll().
+     * Atomically rebuilds the upcoming chapter queue from {@code chapters},
+     * skipping the chapter that is currently being spoken and ignoring duplicates.
+     * Unlike {@link #queueAllChapters}, this never re-queues the in-flight chapter,
+     * so it is safe to call at any time — including while native is mid-chapter.
      */
     public void mergeQueue(List<ChapterItem> chapters) {
-        // Rebuild the queue from the new list, preserving order, skipping the
-        // currently-playing chapter and any duplicates within the input list.
-        // Using clear()+re-add is safe here because both this method and
-        // onChunkFinished() always run on the main thread (via mainHandler.post),
-        // so they are serialised and the queue is never observed in the empty
-        // window between clear() and the first add().
+        Set<String> seen = new HashSet<>();
+        seen.add(currentChapterId != null ? currentChapterId : "");
+        seen.add(""); // exclude chapters with no ID
         chapterQueue.clear();
-        java.util.Set<String> added = new java.util.HashSet<>();
-        added.add(currentChapterId); // never re-queue the actively playing chapter
         for (ChapterItem item : chapters) {
-            if (added.add(item.chapterId)) { // add() returns false for duplicates
+            String id = item.chapterId != null ? item.chapterId : "";
+            if (seen.add(id)) { // add() returns false if already present
                 chapterQueue.add(item);
             }
         }

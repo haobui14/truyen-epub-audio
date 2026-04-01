@@ -107,7 +107,7 @@ The most complex page (~700 lines). Key responsibilities:
 4. Call `bridge.mergeQueuedChapters(initialQueue)` — sends available chapters immediately.
 5. **Phase 2**: Fetch remaining from API one-by-one. On each success, call `bridge.mergeQueuedChapters(growingQueue)`.
 6. **Safety-net final call**: ensures last incremental update wasn't skipped.
-7. `mergeQueuedChapters` (not `queueAllChapters`) is used throughout to avoid any empty-queue window.
+7. `mergeQueuedChapters` (not `queueAllChapters`) is used throughout — it skips the currently-playing chapter so the queue is safely replenished on every chapter change without re-queuing in-flight chapters.
 
 ### `app/books/[bookId]/read/ReadPageClient.tsx` — Reading Page
 
@@ -300,8 +300,8 @@ Wraps Capacitor's `KeepAwake` plugin and the `TtsBridge` JavascriptInterface.
 |--------|---------|
 | `playChunksWithId(chunksJson, rate, pitch, startIdx, title, chapterId)` | Start playing |
 | `pausePlayback() / resumePlayback() / stopPlayback()` | Transport control |
-| `queueAllChapters(chaptersJson)` | Replace entire queue (initial load) |
-| `mergeQueuedChapters(chaptersJson)` | Atomic queue rebuild, never drops playing chapter |
+| `queueAllChapters(chaptersJson)` | Replace entire queue (initial load via `playChunks`) |
+| `mergeQueuedChapters(chaptersJson)` | Safe incremental queue rebuild — never re-queues the playing chapter |
 | `getCurrentChapterId()` | Volatile read — safe from JS thread |
 | `getCurrentChunk()` | Current chunk index |
 | `isPlaying()` | Boolean state |
@@ -384,7 +384,7 @@ Android `Service` (foreground) that drives `TextToSpeech`. Survives screen-off b
 
 **Chapter queue** (`LinkedList<ChapterItem>`) holds pre-loaded upcoming chapters for seamless auto-advance without JS involvement.
 
-**`mergeQueue(chapters)`** — replaces the queue from the new list, skipping the currently-playing chapter and any duplicates within the input list. Uses a `HashSet<String>` seeded with `currentChapterId`. Safe because both `mergeQueue` and `onChunkFinished` always run on the main thread.
+**`mergeQueue(chapters)`** — rebuilds the queue from the new list, skipping `currentChapterId` (the chapter currently being spoken) and any duplicates. Uses a `HashSet<String>` seeded with `currentChapterId`. Safe because both `mergeQueue` and `onChunkFinished` always run on the main thread, so they are fully serialized.
 
 **`onChunkFinished(idx)`** flow:
 ```
@@ -415,7 +415,7 @@ pausePlayback()
 resumePlayback()
 stopPlayback()
 queueAllChapters(List<ChapterItem>)   ← replaces queue with clear()+addAll()
-mergeQueue(List<ChapterItem>)         ← safe incremental update
+mergeQueue(List<ChapterItem>)         ← safe incremental update, skips currentChapterId
 clearQueue()
 setSleepTimer(long expireAtMs)
 cancelSleepTimer()

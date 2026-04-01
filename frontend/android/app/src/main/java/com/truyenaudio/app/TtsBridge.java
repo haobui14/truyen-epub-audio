@@ -277,10 +277,9 @@ public class TtsBridge {
     }
 
     /**
-     * Same as queueAllChapters but uses mergeQueue() which never clears the
-     * in-flight chapter, preventing the race where native finishes the current
-     * chapter during the empty-queue window created by clear()+addAll().
-     * Use this for incremental queue updates while playback is in progress.
+     * Like {@link #queueAllChapters} but uses {@code mergeQueue()} internally,
+     * which skips the currently-playing chapter so there is never an empty-queue
+     * window. Use for every incremental queue update while playback is in progress.
      */
     @JavascriptInterface
     public void mergeQueuedChapters(String chaptersJson) {

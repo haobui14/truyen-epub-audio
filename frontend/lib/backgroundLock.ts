@@ -20,9 +20,9 @@ interface TtsBridgeNative {
   /** Queue ALL remaining chapters at once for continuous background playback. */
   queueAllChapters(chaptersJson: string): void;
   /**
-   * Like queueAllChapters but uses mergeQueue() — never clears the currently
-   * playing chapter entry, so there is no empty-queue race window. Use for
-   * incremental queue updates while playback is already in progress.
+   * Like queueAllChapters but uses mergeQueue() internally — skips the
+   * currently-playing chapter so there is never an empty-queue race window.
+   * Use for every incremental queue update while playback is in progress.
    */
   mergeQueuedChapters(chaptersJson: string): void;
   clearNextChapter(): void;
