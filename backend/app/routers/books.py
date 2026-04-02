@@ -276,7 +276,7 @@ async def auto_split_book(
         # Roll back any rows we managed to insert before the failure
         if inserted_ids:
             try:
-                db.table("chapters").delete().in_("id", inserted_ids).execute()
+                db.table("chapters").delete().eq("book_id", book_id).gte("chapter_index", OFFSET).execute()
             except Exception:
                 pass
         raise HTTPException(
@@ -291,7 +291,9 @@ async def auto_split_book(
             await storage_service.delete_path("audio", f"{book_id}/{ch['id']}.mp3")
         except Exception:
             pass
-    db.table("chapters").delete().in_("id", chapter_ids).execute()
+    # Delete old chapters by book_id + chapter_index < OFFSET to avoid
+    # PostgREST "JSON could not be generated" errors from large .in_() lists.
+    db.table("chapters").delete().eq("book_id", book_id).lt("chapter_index", OFFSET).execute()
 
     # Normalize chapter_index back to 0-based now that old rows are gone.
     # We can't do "SET chapter_index = chapter_index - OFFSET" via PostgREST,
