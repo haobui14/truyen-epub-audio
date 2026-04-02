@@ -219,14 +219,23 @@ async def auto_split_book(
     if not book.data:
         raise HTTPException(status_code=404, detail="Book not found")
 
-    # Fetch ALL chapters in reading order.
-    # Supabase PostgREST defaults to 1000 rows; use a high explicit limit so
-    # chapters that sit between two merged items are never silently dropped.
-    chapters_result = db.table("chapters").select(
-        "id,chapter_index,text_content"
-    ).eq("book_id", book_id).order("chapter_index").limit(100_000).execute()
-
-    chapters = chapters_result.data or []
+    # Fetch ALL chapters in reading order using pagination.
+    # PostgREST enforces a server-side max_rows cap (default 1000 on Supabase)
+    # that ignores client-specified limits above it. Paginate to bypass this.
+    PAGE_SIZE = 500
+    chapters: list[dict] = []
+    fetch_offset = 0
+    while True:
+        page = db.table("chapters").select(
+            "id,chapter_index,text_content"
+        ).eq("book_id", book_id).order("chapter_index").range(
+            fetch_offset, fetch_offset + PAGE_SIZE - 1
+        ).execute()
+        batch = page.data or []
+        chapters.extend(batch)
+        if len(batch) < PAGE_SIZE:
+            break
+        fetch_offset += PAGE_SIZE
     old_count = len(chapters)
     if not chapters:
         raise HTTPException(status_code=400, detail="No chapters to split")
@@ -299,9 +308,11 @@ async def auto_split_book(
             await storage_service.delete_path("audio", f"{book_id}/{ch['id']}.mp3")
         except Exception:
             pass
-    # Delete old chapters by book_id + chapter_index < OFFSET to avoid
-    # PostgREST "JSON could not be generated" errors from large .in_() lists.
-    db.table("chapters").delete().eq("book_id", book_id).lt("chapter_index", OFFSET).execute()
+    # Delete only the chapters we actually fetched and processed, in batches of
+    # 100 to stay within URL length limits (each UUID is ~36 chars).
+    DELETE_BATCH = 100
+    for i in range(0, len(chapter_ids), DELETE_BATCH):
+        db.table("chapters").delete().in_("id", chapter_ids[i : i + DELETE_BATCH]).execute()
 
     # Normalize chapter_index back to 0-based now that old rows are gone.
     # We can't do "SET chapter_index = chapter_index - OFFSET" via PostgREST,
