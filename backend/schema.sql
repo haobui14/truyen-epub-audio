@@ -213,6 +213,27 @@ BEGIN
 END;
 $$;
 
+-- Remove every occurrence of a literal string from all chapters of a book
+CREATE OR REPLACE FUNCTION strip_string_from_book_chapters(p_book_id UUID, p_target TEXT)
+RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+    updated_count INTEGER;
+BEGIN
+    UPDATE chapters
+    SET
+        text_content = replace(text_content, p_target, ''),
+        word_count = CASE
+            WHEN trim(replace(text_content, p_target, '')) = '' THEN 0
+            ELSE cardinality(regexp_split_to_array(trim(replace(text_content, p_target, '')), '\s+'))
+        END
+    WHERE book_id = p_book_id
+      AND text_content IS NOT NULL
+      AND position(p_target IN text_content) > 0;
+    GET DIAGNOSTICS updated_count = ROW_COUNT;
+    RETURN updated_count;
+END;
+$$;
+
 -- Resequence all chapters for a book starting from 0 (repair tool)
 CREATE OR REPLACE FUNCTION reindex_all_chapters(p_book_id UUID)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$

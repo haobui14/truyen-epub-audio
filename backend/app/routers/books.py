@@ -222,24 +222,12 @@ async def strip_string_from_chapters(
     if not book.data:
         raise HTTPException(status_code=404, detail="Book not found")
 
-    chapters = db.table("chapters").select("id,text_content").eq("book_id", book_id).execute()
-    updates = []
-    for ch in chapters.data or []:
-        text = ch.get("text_content") or ""
-        if body.target in text:
-            new_text = text.replace(body.target, "")
-            updates.append({
-                "id": ch["id"],
-                "text_content": new_text,
-                "word_count": len(new_text.split()),
-            })
-
-    # Batch upsert in chunks of 100 to avoid large payloads
-    CHUNK = 100
-    for i in range(0, len(updates), CHUNK):
-        db.table("chapters").upsert(updates[i : i + CHUNK]).execute()
-
-    return {"updated_chapters": len(updates)}
+    result = db.rpc("strip_string_from_book_chapters", {
+        "p_book_id": book_id,
+        "p_target": body.target,
+    }).execute()
+    updated_count = result.data if isinstance(result.data, int) else 0
+    return {"updated_chapters": updated_count}
 
 
 @router.post("/{book_id}/auto-split")
