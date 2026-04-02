@@ -203,6 +203,45 @@ async def feature_book(
     return _attach_genres([result.data])[0]
 
 
+class StripStringRequest(BaseModel):
+    target: str
+
+
+@router.post("/{book_id}/strip-string")
+async def strip_string_from_chapters(
+    book_id: str,
+    body: StripStringRequest,
+    _admin: dict = Depends(get_admin_user),
+):
+    """Remove every occurrence of a literal string from all chapters' text_content."""
+    if not body.target:
+        raise HTTPException(status_code=400, detail="target string cannot be empty")
+
+    db = get_client()
+    book = db.table("books").select("id").eq("id", book_id).maybe_single().execute()
+    if not book.data:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    chapters = db.table("chapters").select("id,text_content").eq("book_id", book_id).execute()
+    updates = []
+    for ch in chapters.data or []:
+        text = ch.get("text_content") or ""
+        if body.target in text:
+            new_text = text.replace(body.target, "")
+            updates.append({
+                "id": ch["id"],
+                "text_content": new_text,
+                "word_count": len(new_text.split()),
+            })
+
+    # Batch upsert in chunks of 100 to avoid large payloads
+    CHUNK = 100
+    for i in range(0, len(updates), CHUNK):
+        db.table("chapters").upsert(updates[i : i + CHUNK]).execute()
+
+    return {"updated_chapters": len(updates)}
+
+
 @router.post("/{book_id}/auto-split")
 async def auto_split_book(
     book_id: str,

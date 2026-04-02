@@ -336,6 +336,14 @@ export const api = {
       missing_chapters: Array<{ title: string; chapter_index: number }>;
     }>(`/api/books/${bookId}/auto-split`, { method: "POST" }),
 
+  // Admin: remove a literal string from all chapters' text_content
+  stripStringFromChapters: (bookId: string, target: string) =>
+    request<{ updated_chapters: number }>(`/api/books/${bookId}/strip-string`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target }),
+    }),
+
   // Admin: manual chapter creation
   createChapter: (
     bookId: string,

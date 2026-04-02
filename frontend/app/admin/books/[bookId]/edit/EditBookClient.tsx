@@ -28,6 +28,11 @@ export default function EditBookClient() {
   } | null>(null);
   const [autoSplitError, setAutoSplitError] = useState<string | null>(null);
 
+  const [stripTarget, setStripTarget] = useState("");
+  const [stripRunning, setStripRunning] = useState(false);
+  const [stripResult, setStripResult] = useState<{ updated_chapters: number } | null>(null);
+  const [stripError, setStripError] = useState<string | null>(null);
+
   useEffect(() => {
     const checkAdmin = () => {
       if (!isAdmin()) router.replace("/");
@@ -283,6 +288,57 @@ export default function EditBookClient() {
                 </div>
               )}
             </div>
+          )}
+        </div>
+      </section>
+
+      {/* Strip string */}
+      <section className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-100 dark:border-gray-700">
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+            Xóa chuỗi khỏi tất cả chương
+          </h2>
+        </div>
+        <div className="p-5 space-y-3">
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Nhập chuỗi cần xóa (khớp chính xác) khỏi nội dung văn bản của mọi chương trong truyện.
+          </p>
+          <textarea
+            rows={3}
+            value={stripTarget}
+            onChange={(e) => { setStripTarget(e.target.value); setStripResult(null); setStripError(null); }}
+            placeholder="Nhập chuỗi cần xóa…"
+            className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-sm text-gray-900 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
+          />
+          <button
+            type="button"
+            disabled={stripRunning || !stripTarget}
+            onClick={async () => {
+              setStripRunning(true);
+              setStripResult(null);
+              setStripError(null);
+              try {
+                const result = await api.stripStringFromChapters(bookId, stripTarget);
+                setStripResult(result);
+                queryClient.invalidateQueries({ queryKey: ["chapters", bookId] });
+              } catch (err) {
+                setStripError(err instanceof Error ? err.message : "Lỗi không xác định");
+              } finally {
+                setStripRunning(false);
+              }
+            }}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-indigo-600 dark:text-indigo-400 border border-indigo-300 dark:border-indigo-700 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/30 disabled:opacity-60 transition-colors"
+          >
+            {stripRunning && <Spinner className="w-4 h-4" />}
+            {stripRunning ? "Đang xóa…" : "Xóa chuỗi"}
+          </button>
+          {stripError && (
+            <p className="text-xs text-red-600 dark:text-red-400">{stripError}</p>
+          )}
+          {stripResult && (
+            <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+              Hoàn thành: đã cập nhật {stripResult.updated_chapters} chương.
+            </p>
           )}
         </div>
       </section>
