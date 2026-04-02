@@ -262,6 +262,14 @@ async def auto_split_book(
         for i, p in enumerate(parts)
     ]
 
+    # Clean up any orphaned offset-indexed chapters from a previous failed split
+    # attempt. Without this, re-running auto-split hits a unique constraint on
+    # (book_id, chapter_index) because those rows were never normalized/deleted.
+    try:
+        db.table("chapters").delete().eq("book_id", book_id).gte("chapter_index", OFFSET).execute()
+    except Exception:
+        pass
+
     # INSERT new rows first. If this fails (e.g. DB timeout) the old chapters
     # are still intact and the book is not left empty.
     # Batch size is kept at 1 to avoid Supabase statement timeouts when
