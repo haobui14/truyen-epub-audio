@@ -125,6 +125,7 @@ async def update_book(
         updates["story_status"] = story_status
 
     if cover and cover.filename:
+        content_type = cover.content_type or ""
         if content_type not in VALID_COVER_TYPES:
             raise HTTPException(status_code=400, detail="Cover must be JPEG, PNG, or WebP")
         cover_data = await cover.read()
