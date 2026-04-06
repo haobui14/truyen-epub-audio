@@ -697,15 +697,21 @@ public class TtsPlaybackService extends Service {
     private void maybePrefetch() {
         if (prefetching) return;
         if (ioExecutor == null || ioExecutor.isShutdown()) return;
-        if (!chapterQueue.isEmpty()) return; // next chapter already ready
 
-        // Skip chapters already in queue or currently playing
+        // Always advance pendingHead past chapters already in the queue or currently
+        // playing, even when we don't start a fetch. This is critical when JS pre-loads
+        // several chapters via mergeQueuedChapters: those chapters are in chapterQueue
+        // but pendingPlaylist still starts at index 0. Without this loop, pendingHead
+        // would stay at 0 after those chapters are consumed, causing Java to re-fetch
+        // already-played chapters instead of continuing forward.
         while (pendingHead < pendingPlaylist.size()) {
             String id = pendingPlaylist.get(pendingHead).chapterId;
             if (!isAlreadyQueued(id)) break;
             pendingHead++;
         }
-        if (pendingHead >= pendingPlaylist.size()) return;
+
+        if (!chapterQueue.isEmpty()) return; // next chapter already ready in queue
+        if (pendingHead >= pendingPlaylist.size()) return; // no more chapters to fetch
 
         ChapterMeta meta = pendingPlaylist.get(pendingHead);
         pendingHead++;
