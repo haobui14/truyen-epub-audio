@@ -331,6 +331,40 @@ public class TtsBridge {
     }
 
     /**
+     * Provides Java with an ordered playlist of upcoming chapter IDs so it can
+     * self-fetch chapter text while the WebView is suspended (screen off).
+     * This enables unlimited uninterrupted background playback regardless of
+     * book length, with only one chapter held in memory at a time.
+     *
+     * @param chaptersMetaJson JSON array of {@code {id, title, rate, pitch}} objects
+     * @param apiBase          base URL of the API (e.g. "https://api.truyenaudio.com")
+     * @param token            Bearer token for authenticated requests
+     */
+    @JavascriptInterface
+    public void setPendingChapters(String chaptersMetaJson, String apiBase, String token) {
+        mainHandler.post(() -> {
+            if (service == null) return;
+            try {
+                JSONArray arr = new JSONArray(chaptersMetaJson);
+                List<TtsPlaybackService.ChapterMeta> list = new ArrayList<>(arr.length());
+                for (int i = 0; i < arr.length(); i++) {
+                    JSONObject obj   = arr.getJSONObject(i);
+                    String     id    = obj.optString("id", "");
+                    String     title = obj.optString("title", "");
+                    float      rate  = (float) obj.optDouble("rate",  1.0);
+                    float      pitch = (float) obj.optDouble("pitch", 1.0);
+                    if (!id.isEmpty()) {
+                        list.add(new TtsPlaybackService.ChapterMeta(id, title, rate, pitch));
+                    }
+                }
+                service.setPendingPlaylist(list, apiBase, token);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        });
+    }
+
+    /**
      * Returns a JSON array of chapter IDs that were completed by native
      * auto-advance (e.g. while the screen was off) since the last call,
      * then clears the internal list.  Called by JS on screen-on to award

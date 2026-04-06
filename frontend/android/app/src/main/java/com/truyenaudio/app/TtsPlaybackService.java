@@ -29,13 +29,24 @@ import androidx.core.app.NotificationCompat;
 import androidx.media.app.NotificationCompat.MediaStyle;
 import androidx.media.session.MediaButtonReceiver;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 /**
  * Foreground Service that drives native Android TTS playback.
@@ -77,6 +88,21 @@ public class TtsPlaybackService extends Service {
 
         ChapterItem(List<String> chunks, String chapterId, String title, float rate, float pitch) {
             this.chunks    = chunks;
+            this.chapterId = chapterId;
+            this.title     = title;
+            this.rate      = rate;
+            this.pitch     = pitch;
+        }
+    }
+
+    /** Lightweight chapter descriptor used for the self-fetch pending playlist. */
+    public static class ChapterMeta {
+        String chapterId;
+        String title;
+        float  rate;
+        float  pitch;
+
+        ChapterMeta(String chapterId, String title, float rate, float pitch) {
             this.chapterId = chapterId;
             this.title     = title;
             this.rate      = rate;
@@ -150,6 +176,18 @@ public class TtsPlaybackService extends Service {
     // Chapter IDs that were completed by native auto-advance (screen-off XP recovery).
     // Guarded by its own lock so the @JavascriptInterface thread can read/clear safely.
     private final List<String> completedChapterIds = new ArrayList<>();
+
+    // Self-fetch: Java fetches upcoming chapter text while screen is off so the
+    // native queue never empties regardless of book length.
+    // pendingPlaylist is set by setPendingPlaylist(); pendingHead tracks next to fetch.
+    // All fields guarded by main thread (ioExecutor callbacks post back via mainHandler).
+    private List<ChapterMeta>  pendingPlaylist = Collections.emptyList();
+    private int                pendingHead     = 0;
+    private String             selfFetchBase   = "";
+    private String             selfFetchToken  = "";
+    private volatile boolean   prefetching     = false;  // fetch in flight
+    private boolean            awaitingFetch   = false;  // queue empty, waiting for fetch
+    private ExecutorService    ioExecutor;
 
     // Pending playback buffered while TTS engine is still initialising
     private ChapterItem   pendingItem;
@@ -238,6 +276,10 @@ public class TtsPlaybackService extends Service {
 
     @Override
     public void onDestroy() {
+        if (ioExecutor != null) {
+            ioExecutor.shutdownNow();
+            ioExecutor = null;
+        }
         mainHandler.removeCallbacksAndMessages(null);
         abandonAudioFocus();
         if (silentPlayer != null) {
@@ -365,13 +407,23 @@ public class TtsPlaybackService extends Service {
                         "{detail:{completedChapterId:'" + completedId + "',newChapterId:'" + newId + "'}}))");
                 startChapter(nextChapter, 0);
             } else {
-                // Entire queue exhausted
-                isPlaying = false;
-                dispatchJs("window.dispatchEvent(new Event('native-tts-done'))");
-                dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-state'," +
-                        "{detail:{playing:false,index:" + currentChunkIdx + "}}))");
-                updateNotification();
-                abandonAudioFocus();
+                // Entire queue exhausted — check if self-fetch can supply more
+                if (prefetching) {
+                    // Fetch in flight — wait for fetchAndEnqueue to call startChapter
+                    awaitingFetch = true;
+                } else if (pendingHead < pendingPlaylist.size()) {
+                    // Missed a prefetch (defensive) — kick one off now
+                    awaitingFetch = true;
+                    maybePrefetch();
+                } else {
+                    // Truly done
+                    isPlaying = false;
+                    dispatchJs("window.dispatchEvent(new Event('native-tts-done'))");
+                    dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-state'," +
+                            "{detail:{playing:false,index:" + currentChunkIdx + "}}))");
+                    updateNotification();
+                    abandonAudioFocus();
+                }
             }
         }
     }
@@ -517,6 +569,10 @@ public class TtsPlaybackService extends Service {
         currentChapterId = "";
         pendingItem      = null;
         chapterQueue.clear();
+        // Reset self-fetch state so a stale in-flight fetch discards its result
+        pendingPlaylist = Collections.emptyList();
+        pendingHead     = 0;
+        awaitingFetch   = false;
         if (tts != null) tts.stop();
         updatePlaybackState(false);
         if (mediaSession != null) mediaSession.setActive(false);
@@ -598,6 +654,23 @@ public class TtsPlaybackService extends Service {
         mainHandler.removeCallbacks(sleepRunnable);
     }
 
+    /**
+     * Provides the service with an ordered list of upcoming chapters and API
+     * credentials. Java will self-fetch each chapter's text just before it is
+     * needed so the native queue never exhausts even while the screen is off.
+     * Safe to call at any time — resets the pending playlist atomically.
+     */
+    public void setPendingPlaylist(List<ChapterMeta> playlist, String apiBase, String token) {
+        pendingPlaylist = playlist != null ? playlist : Collections.emptyList();
+        pendingHead     = 0;
+        selfFetchBase   = apiBase != null ? apiBase : "";
+        selfFetchToken  = token  != null ? token  : "";
+        if (ioExecutor == null || ioExecutor.isShutdown()) {
+            ioExecutor = Executors.newSingleThreadExecutor();
+        }
+        maybePrefetch();
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     private void pauseInternal() {
@@ -614,6 +687,164 @@ public class TtsPlaybackService extends Service {
                 "{detail:{playing:false,index:" + currentChunkIdx + "}}))");
     }
 
+    // ── Self-fetch helpers (always on main thread except ioExecutor lambda) ──
+
+    /**
+     * Fetch the next chapter in {@code pendingPlaylist} if the queue is empty
+     * and no fetch is already in flight. Skips chapters already queued or
+     * currently playing. Called on main thread.
+     */
+    private void maybePrefetch() {
+        if (prefetching) return;
+        if (ioExecutor == null || ioExecutor.isShutdown()) return;
+        if (!chapterQueue.isEmpty()) return; // next chapter already ready
+
+        // Skip chapters already in queue or currently playing
+        while (pendingHead < pendingPlaylist.size()) {
+            String id = pendingPlaylist.get(pendingHead).chapterId;
+            if (!isAlreadyQueued(id)) break;
+            pendingHead++;
+        }
+        if (pendingHead >= pendingPlaylist.size()) return;
+
+        ChapterMeta meta = pendingPlaylist.get(pendingHead);
+        pendingHead++;
+        prefetching = true;
+
+        final String id    = meta.chapterId;
+        final String title = meta.title;
+        final float  fRate  = meta.rate;
+        final float  fPitch = meta.pitch;
+        final String base  = selfFetchBase;
+        final String tok   = selfFetchToken;
+        ioExecutor.execute(() -> fetchAndEnqueue(id, title, fRate, fPitch, base, tok));
+    }
+
+    private boolean isAlreadyQueued(String id) {
+        if (id == null || id.isEmpty()) return true;
+        if (id.equals(currentChapterId)) return true;
+        for (ChapterItem item : chapterQueue) {
+            if (id.equals(item.chapterId)) return true;
+        }
+        return false;
+    }
+
+    /** Called on ioExecutor thread; posts result back to main thread. */
+    private void fetchAndEnqueue(String chapterId, String title,
+                                 float rate, float pitch,
+                                 String base, String token) {
+        try {
+            String url  = base + "/api/chapters/" + chapterId + "/text";
+            String body = doHttpGet(url, token);
+            JSONObject json = new JSONObject(body);
+            String text = json.optString("text_content", "");
+            List<String> chunks = splitChunksJava(text, 20, 4000);
+
+            if (chunks.isEmpty()) {
+                // Empty chapter — skip and try the next
+                mainHandler.post(() -> {
+                    prefetching = false;
+                    if (awaitingFetch) {
+                        awaitingFetch = false;
+                        maybePrefetch();
+                        if (!prefetching) {
+                            // No more to fetch — fire done
+                            isPlaying = false;
+                            dispatchJs("window.dispatchEvent(new Event('native-tts-done'))");
+                            dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-state'," +
+                                    "{detail:{playing:false,index:" + currentChunkIdx + "}}))");
+                            updateNotification();
+                            abandonAudioFocus();
+                        }
+                    } else {
+                        maybePrefetch();
+                    }
+                });
+                return;
+            }
+
+            ChapterItem item = new ChapterItem(chunks, chapterId, title, rate, pitch);
+            mainHandler.post(() -> {
+                prefetching = false;
+                // Guard: playback was stopped while the fetch was in flight
+                if (!isPlaying && !awaitingFetch) return;
+                if (awaitingFetch) {
+                    awaitingFetch = false;
+                    // Queue was empty waiting for this chapter — advance now
+                    String completedId = currentChapterId;
+                    synchronized (completedChapterIds) {
+                        completedChapterIds.add(completedId);
+                    }
+                    dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-chapter-advance'," +
+                            "{detail:{completedChapterId:'" + completedId +
+                            "',newChapterId:'" + chapterId + "'}}))");
+                    startChapter(item, 0);
+                } else {
+                    // Add to queue for seamless advance later
+                    chapterQueue.add(item);
+                    maybePrefetch();
+                }
+            });
+        } catch (Exception e) {
+            mainHandler.post(() -> {
+                prefetching = false;
+                if (awaitingFetch) {
+                    awaitingFetch = false;
+                    // Network error while we needed this chapter — fire done
+                    isPlaying = false;
+                    dispatchJs("window.dispatchEvent(new Event('native-tts-done'))");
+                    dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-state'," +
+                            "{detail:{playing:false,index:" + currentChunkIdx + "}}))");
+                    updateNotification();
+                    abandonAudioFocus();
+                }
+            });
+        }
+    }
+
+    private String doHttpGet(String urlStr, String token) throws IOException {
+        URL url = new URL(urlStr);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("GET");
+        conn.setConnectTimeout(15_000);
+        conn.setReadTimeout(30_000);
+        if (token != null && !token.isEmpty()) {
+            conn.setRequestProperty("Authorization", "Bearer " + token);
+        }
+        conn.setRequestProperty("Accept", "application/json");
+        int code = conn.getResponseCode();
+        if (code != 200) throw new IOException("HTTP " + code);
+        BufferedReader reader = new BufferedReader(
+                new InputStreamReader(conn.getInputStream(), "UTF-8"));
+        StringBuilder sb = new StringBuilder();
+        String line;
+        while ((line = reader.readLine()) != null) sb.append(line);
+        reader.close();
+        return sb.toString();
+    }
+
+    /** Java port of frontend/lib/textChunks.ts splitIntoChunks. */
+    private List<String> splitChunksJava(String text, int targetCount, int hardMaxLen) {
+        if (text == null || text.isEmpty()) return Collections.emptyList();
+        String[] sentences = text.split("(?<=[.!?\\n])");
+        int softMaxLen = Math.max((int) Math.ceil((double) text.length() / targetCount), 50);
+        int maxLen = Math.min(softMaxLen, hardMaxLen);
+        List<String> chunks  = new ArrayList<>();
+        StringBuilder cur = new StringBuilder();
+        for (String s : sentences) {
+            if (cur.length() + s.length() > maxLen && cur.length() > 0) {
+                String trimmed = cur.toString().trim();
+                if (!trimmed.isEmpty()) chunks.add(trimmed);
+                cur = new StringBuilder(s);
+            } else {
+                cur.append(s);
+            }
+        }
+        String last = cur.toString().trim();
+        if (!last.isEmpty()) chunks.add(last);
+        return chunks;
+    }
+
     private void startChapter(ChapterItem item, int startIdx) {
         currentChunks    = item.chunks;
         currentRate      = item.rate;
@@ -626,6 +857,7 @@ public class TtsPlaybackService extends Service {
         updatePlaybackState(true);
         updateNotification();
         speakChunk(startIdx);
+        maybePrefetch(); // Keep one chapter ahead in the self-fetch queue
     }
 
     private void startForegroundNow() {

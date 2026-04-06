@@ -4,8 +4,21 @@ import { isNativePlatform } from "@/lib/capacitor";
 interface TtsBridgeNative {
   startService(): void;
   stopService(): void;
-  playChunks(chunksJson: string, rate: number, pitch: number, startIdx: number, title: string): void;
-  playChunksWithId(chunksJson: string, rate: number, pitch: number, startIdx: number, title: string, chapterId: string): void;
+  playChunks(
+    chunksJson: string,
+    rate: number,
+    pitch: number,
+    startIdx: number,
+    title: string,
+  ): void;
+  playChunksWithId(
+    chunksJson: string,
+    rate: number,
+    pitch: number,
+    startIdx: number,
+    title: string,
+    chapterId: string,
+  ): void;
   pausePlayback(): void;
   resumePlayback(): void;
   stopPlayback(): void;
@@ -16,7 +29,13 @@ interface TtsBridgeNative {
   getCurrentChapterId(): string;
   isPlaying(): boolean;
   /** Queue next chapter for seamless background auto-advance. */
-  queueNextChapter(chunksJson: string, chapterId: string, title: string, rate: number, pitch: number): void;
+  queueNextChapter(
+    chunksJson: string,
+    chapterId: string,
+    title: string,
+    rate: number,
+    pitch: number,
+  ): void;
   /** Queue ALL remaining chapters at once for continuous background playback. */
   queueAllChapters(chaptersJson: string): void;
   /**
@@ -37,6 +56,20 @@ interface TtsBridgeNative {
    * WebView JS was throttled (screen off).
    */
   getCompletedChapterIds(): string;
+  /**
+   * Hand Java an ordered playlist of upcoming chapters so it can self-fetch
+   * each chapter's text while the WebView is suspended (screen off).
+   * Enables unlimited uninterrupted background playback with minimal memory use.
+   *
+   * @param chaptersMetaJson JSON array of {id, title, rate, pitch} objects
+   * @param apiBase          base URL of the API server
+   * @param token            Bearer token for authenticated requests
+   */
+  setPendingChapters(
+    chaptersMetaJson: string,
+    apiBase: string,
+    token: string,
+  ): void;
 }
 
 export function getTtsBridge(): TtsBridgeNative | undefined {
