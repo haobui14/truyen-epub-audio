@@ -135,6 +135,16 @@ export function useSpeechPlayer(
   voiceRef.current = voiceName ?? "vi-VN-HoaiMyNeural";
   const onEndedRef = useRef(onEnded);
   onEndedRef.current = onEnded;
+
+  // Guard: set stoppedRef synchronously during render when chapterId changes,
+  // BEFORE any effects or audio event callbacks run. This closes the race window
+  // where the old chapter's audio fires `onended` after onEndedRef has already
+  // been updated to the new chapter's callback (which would skip ahead).
+  const prevChapterIdRef = useRef(chapterId);
+  if (prevChapterIdRef.current !== chapterId) {
+    prevChapterIdRef.current = chapterId;
+    stoppedRef.current = true;
+  }
   const initialChunkRef = useRef(initialChunkIndex ?? 0);
   initialChunkRef.current = initialChunkIndex ?? 0;
 
@@ -207,6 +217,7 @@ export function useSpeechPlayer(
         updateProgress();
       };
       audio.onended = () => {
+        if (stoppedRef.current) return; // guard: chapter changed before audio finished
         stoppedRef.current = true;
         setIsPlaying(false);
         setIsBuffering(false);
@@ -305,6 +316,12 @@ export function useSpeechPlayer(
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
+
+    // If already playing a full-audio cached chapter and text arrives late (same
+    // chapter, isLoadingText true→false), skip the restart entirely. Pausing and
+    // re-fetching the same blob would cause a noticeable interruption with no benefit
+    // since full-mode doesn't need the text to play.
+    if (modeRef.current === "full" && !stoppedRef.current) return;
 
     // Cancel inflight fetches for the previous chapter
     abortRef.current?.abort();
