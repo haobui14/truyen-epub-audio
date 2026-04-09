@@ -122,6 +122,10 @@ export function useSpeechPlayer(
   // "full" = playing cached single blob; "streaming" = chunk-by-chunk
   const modeRef = useRef<"streaming" | "full">("streaming");
   const fullBlobUrlRef = useRef<string | null>(null);
+  // Tracks which chapterId is currently active in full-audio mode.
+  // Used by Fix 3 to distinguish "same chapter, text arrived late" from
+  // "new chapter that happens to find stoppedRef still false at effect time".
+  const fullModeChapterIdRef = useRef<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const chunksRef = useRef<string[]>([]);
@@ -321,7 +325,15 @@ export function useSpeechPlayer(
     // chapter, isLoadingText true→false), skip the restart entirely. Pausing and
     // re-fetching the same blob would cause a noticeable interruption with no benefit
     // since full-mode doesn't need the text to play.
-    if (modeRef.current === "full" && !stoppedRef.current) return;
+    // Guard is precise: only skip when fullModeChapterIdRef matches the current
+    // chapterId — this prevents the guard from accidentally firing for a NEW chapter
+    // whose effect runs while stoppedRef is still false on Android screen-off timing.
+    if (
+      modeRef.current === "full" &&
+      !stoppedRef.current &&
+      fullModeChapterIdRef.current === chapterId
+    )
+      return;
 
     // Cancel inflight fetches for the previous chapter
     abortRef.current?.abort();
@@ -349,6 +361,7 @@ export function useSpeechPlayer(
       if (cachedUrl) {
         // ── FULL MODE ────────────────────────────────────────────────
         fullBlobUrlRef.current = cachedUrl;
+        fullModeChapterIdRef.current = chapterId;
         setupFullAudio(audio, cachedUrl, !!autoPlay);
       } else {
         // ── STREAMING MODE ───────────────────────────────────────────
@@ -424,6 +437,7 @@ export function useSpeechPlayer(
     getCachedAudioUrl(chapterId, voiceRef.current).then((cachedUrl) => {
       if (cachedUrl) {
         fullBlobUrlRef.current = cachedUrl;
+        fullModeChapterIdRef.current = chapterId;
         setupFullAudio(audio, cachedUrl, wasPlaying);
       } else {
         modeRef.current = "streaming";
