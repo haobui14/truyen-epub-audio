@@ -183,9 +183,6 @@ export function useNativeTTSPlayer(
       setIsBuffering(false);
       setChunkIndex(0);
       chunkRef.current = 0;
-      // Do NOT release the background lock here — the next chapter's autoPlay
-      // needs the service alive so sInstance is non-null and ttsReady is true.
-      // The lock is released on unmount or when isActive becomes false.
 
       // If the service auto-advanced, onChapterAdvance already called onEnded.
       // Don't call it again to avoid double navigation.
@@ -193,6 +190,14 @@ export function useNativeTTSPlayer(
         onEndedRef.current?.();
       }
       chapterAdvancedRef.current = false;
+
+      // If there is no onEnded callback (i.e. this is the last chapter),
+      // playback is truly over — release the foreground service and KeepAwake.
+      // When there IS an onEnded (next chapter exists), keep the lock so the
+      // service stays alive for seamless autoPlay on the next chapter.
+      if (!onEndedRef.current) {
+        releaseBackgroundLock();
+      }
     };
 
     const onState = (e: Event) => {

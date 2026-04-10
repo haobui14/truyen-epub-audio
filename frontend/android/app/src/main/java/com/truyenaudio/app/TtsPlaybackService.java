@@ -188,6 +188,9 @@ public class TtsPlaybackService extends Service {
     private volatile boolean   prefetching     = false;  // fetch in flight
     private boolean            awaitingFetch   = false;  // queue empty, waiting for fetch
     private ExecutorService    ioExecutor;
+    // Incremented every time playChunks() is called so in-flight fetches started
+    // before playChunks() clear the queue can detect they are stale and discard.
+    private int                fetchGeneration = 0;
 
     // Pending playback buffered while TTS engine is still initialising
     private ChapterItem   pendingItem;
@@ -523,6 +526,16 @@ public class TtsPlaybackService extends Service {
         currentChapterId = (chapterId != null) ? chapterId : "";
         chapterQueue.clear();
 
+        // Invalidate any self-fetch that was started before this playChunks() call
+        // (e.g. an eager maybePrefetch() triggered by setPendingPlaylist() that ran
+        // just before playChunks and left pendingHead advanced past chapters that got
+        // cleared from the queue).  Reset pendingHead so the next maybePrefetch()
+        // re-scans from the start of pendingPlaylist and picks up ch2 correctly.
+        fetchGeneration++;
+        prefetching   = false;
+        awaitingFetch = false;
+        pendingHead   = 0;
+
         setMetadata(currentTitle);
         if (mediaSession != null) mediaSession.setActive(true);
 
@@ -542,6 +555,10 @@ public class TtsPlaybackService extends Service {
         updatePlaybackState(true);
         updateNotification();
         speakChunk(startIdx);
+        // Kick off self-fetch immediately so the next chapter is ready before this
+        // one ends.  The queue was just cleared above so maybePrefetch() will fetch
+        // from pendingHead=0 (the very next chapter in pendingPlaylist).
+        maybePrefetch();
     }
 
     public void pausePlayback() {
@@ -569,7 +586,9 @@ public class TtsPlaybackService extends Service {
         currentChapterId = "";
         pendingItem      = null;
         chapterQueue.clear();
-        // Reset self-fetch state so a stale in-flight fetch discards its result
+        // Invalidate any in-flight fetch and reset self-fetch state
+        fetchGeneration++;
+        prefetching     = false;
         pendingPlaylist = Collections.emptyList();
         pendingHead     = 0;
         awaitingFetch   = false;
@@ -661,6 +680,11 @@ public class TtsPlaybackService extends Service {
      * Safe to call at any time — resets the pending playlist atomically.
      */
     public void setPendingPlaylist(List<ChapterMeta> playlist, String apiBase, String token) {
+        // Invalidate any in-flight self-fetch started with the old playlist
+        // so its stale result isn't added to the queue.
+        fetchGeneration++;
+        prefetching = false;
+
         pendingPlaylist = playlist != null ? playlist : Collections.emptyList();
         pendingHead     = 0;
         selfFetchBase   = apiBase != null ? apiBase : "";
@@ -698,12 +722,9 @@ public class TtsPlaybackService extends Service {
         if (prefetching) return;
         if (ioExecutor == null || ioExecutor.isShutdown()) return;
 
-        // Always advance pendingHead past chapters already in the queue or currently
-        // playing, even when we don't start a fetch. This is critical when JS pre-loads
-        // several chapters via mergeQueuedChapters: those chapters are in chapterQueue
-        // but pendingPlaylist still starts at index 0. Without this loop, pendingHead
-        // would stay at 0 after those chapters are consumed, causing Java to re-fetch
-        // already-played chapters instead of continuing forward.
+        // Advance pendingHead past chapters that are already in the queue or playing.
+        // After playChunks() clears the queue and resets pendingHead=0, this loop
+        // will NOT advance (nothing is queued yet) so we correctly fetch from ch2.
         while (pendingHead < pendingPlaylist.size()) {
             String id = pendingPlaylist.get(pendingHead).chapterId;
             if (!isAlreadyQueued(id)) break;
@@ -723,7 +744,10 @@ public class TtsPlaybackService extends Service {
         final float  fPitch = meta.pitch;
         final String base  = selfFetchBase;
         final String tok   = selfFetchToken;
-        ioExecutor.execute(() -> fetchAndEnqueue(id, title, fRate, fPitch, base, tok));
+        // Capture current generation so the callback can detect if playChunks()
+        // was called while the fetch was in flight and discard the stale result.
+        final int    gen   = fetchGeneration;
+        ioExecutor.execute(() -> fetchAndEnqueue(id, title, fRate, fPitch, base, tok, gen));
     }
 
     private boolean isAlreadyQueued(String id) {
@@ -738,7 +762,7 @@ public class TtsPlaybackService extends Service {
     /** Called on ioExecutor thread; posts result back to main thread. */
     private void fetchAndEnqueue(String chapterId, String title,
                                  float rate, float pitch,
-                                 String base, String token) {
+                                 String base, String token, int gen) {
         try {
             String url  = base + "/api/chapters/" + chapterId + "/text";
             String body = doHttpGet(url, token);
@@ -749,6 +773,7 @@ public class TtsPlaybackService extends Service {
             if (chunks.isEmpty()) {
                 // Empty chapter — skip and try the next
                 mainHandler.post(() -> {
+                    if (gen != fetchGeneration) return; // stale — playChunks() was called
                     prefetching = false;
                     if (awaitingFetch) {
                         awaitingFetch = false;
@@ -771,6 +796,7 @@ public class TtsPlaybackService extends Service {
 
             ChapterItem item = new ChapterItem(chunks, chapterId, title, rate, pitch);
             mainHandler.post(() -> {
+                if (gen != fetchGeneration) return; // stale — playChunks() was called
                 prefetching = false;
                 // Guard: playback was stopped while the fetch was in flight
                 if (!isPlaying && !awaitingFetch) return;
@@ -793,19 +819,89 @@ public class TtsPlaybackService extends Service {
             });
         } catch (Exception e) {
             mainHandler.post(() -> {
+                if (gen != fetchGeneration) return; // stale — playChunks() was called
                 prefetching = false;
                 if (awaitingFetch) {
                     awaitingFetch = false;
-                    // Network error while we needed this chapter — fire done
-                    isPlaying = false;
-                    dispatchJs("window.dispatchEvent(new Event('native-tts-done'))");
-                    dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-state'," +
-                            "{detail:{playing:false,index:" + currentChunkIdx + "}}))");
-                    updateNotification();
-                    abandonAudioFocus();
+                    // Network error while we needed this chapter urgently.
+                    // Retry once after a short delay before giving up.
+                    retryFetchOnce(chapterId, title, rate, pitch, base, token);
                 }
+                // If not awaitingFetch, the fetch was speculative — the error is
+                // silently ignored; maybePrefetch() will retry when needed.
             });
         }
+    }
+
+    /**
+     * Retry a failed chapter fetch once after a short delay.
+     * Called on the main thread when a fetch fails and awaitingFetch was true.
+     * On second failure, fires native-tts-done so JS can handle the error.
+     */
+    private void retryFetchOnce(String chapterId, String title,
+                                float rate, float pitch,
+                                String base, String token) {
+        if (ioExecutor == null || ioExecutor.isShutdown()) {
+            fireDone();
+            return;
+        }
+        prefetching = true;
+        awaitingFetch = true;
+        final int gen = fetchGeneration;
+        mainHandler.postDelayed(() -> {
+            if (!prefetching || gen != fetchGeneration) return;
+            if (ioExecutor == null || ioExecutor.isShutdown()) {
+                prefetching = false; awaitingFetch = false;
+                fireDone();
+                return;
+            }
+            ioExecutor.execute(() -> {
+                try {
+                    String url  = base + "/api/chapters/" + chapterId + "/text";
+                    String body = doHttpGet(url, token);
+                    JSONObject json = new JSONObject(body);
+                    String text = json.optString("text_content", "");
+                    List<String> chunks = splitChunksJava(text, 20, 4000);
+                    if (chunks.isEmpty()) {
+                        mainHandler.post(() -> {
+                            if (gen != fetchGeneration) return;
+                            prefetching = false; awaitingFetch = false;
+                            maybePrefetch();
+                            if (!prefetching) fireDone();
+                        });
+                        return;
+                    }
+                    ChapterItem item = new ChapterItem(chunks, chapterId, title, rate, pitch);
+                    mainHandler.post(() -> {
+                        if (gen != fetchGeneration) return;
+                        prefetching = false;
+                        if (!isPlaying && !awaitingFetch) return;
+                        awaitingFetch = false;
+                        String completedId = currentChapterId;
+                        synchronized (completedChapterIds) { completedChapterIds.add(completedId); }
+                        dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-chapter-advance'," +
+                                "{detail:{completedChapterId:'" + completedId +
+                                "',newChapterId:'" + chapterId + "'}}))");
+                        startChapter(item, 0);
+                    });
+                } catch (Exception e2) {
+                    mainHandler.post(() -> {
+                        if (gen != fetchGeneration) return;
+                        prefetching = false; awaitingFetch = false;
+                        fireDone();
+                    });
+                }
+            });
+        }, 3_000); // retry after 3 s
+    }
+
+    private void fireDone() {
+        isPlaying = false;
+        dispatchJs("window.dispatchEvent(new Event('native-tts-done'))");
+        dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-state'," +
+                "{detail:{playing:false,index:" + currentChunkIdx + "}}))");
+        updateNotification();
+        abandonAudioFocus();
     }
 
     private String doHttpGet(String urlStr, String token) throws IOException {
@@ -857,6 +953,12 @@ public class TtsPlaybackService extends Service {
         currentPitch     = item.pitch;
         currentChapterId = (item.chapterId != null) ? item.chapterId : "";
         if (item.title != null && !item.title.isEmpty()) currentTitle = item.title;
+
+        // Ensure isPlaying is true — it could be false if AUDIOFOCUS_LOSS fired
+        // while awaitingFetch was true (pauseInternal sets isPlaying=false).
+        // Without this, onChunkFinished would bail on the !isPlaying guard.
+        isPlaying = true;
+        requestAudioFocus();
 
         setMetadata(currentTitle);
         if (mediaSession != null) mediaSession.setActive(true);

@@ -45,6 +45,13 @@ public class TtsBridge {
     private String       pendingTitle      = "";
     private String       pendingChapterId  = "";
 
+    // Pending queue / playlist data saved when service is not yet bound.
+    // Replayed in onServiceConnected immediately after the play command.
+    private List<TtsPlaybackService.ChapterItem> pendingMergeItems = null;
+    private List<TtsPlaybackService.ChapterMeta> pendingPlaylistMeta = null;
+    private String pendingPlaylistBase  = "";
+    private String pendingPlaylistToken = "";
+
     // ── Service connection ────────────────────────────────────────────────────
 
     private final ServiceConnection connection = new ServiceConnection() {
@@ -58,6 +65,20 @@ public class TtsBridge {
                 service.playChunks(pendingChunks, pendingRate, pendingPitch,
                         pendingStartIdx, pendingTitle, pendingChapterId);
                 pendingChunks = null;
+            }
+            // Replay pending queue / playlist data
+            if (service != null) {
+                if (pendingMergeItems != null) {
+                    service.mergeQueue(pendingMergeItems);
+                    pendingMergeItems = null;
+                }
+                if (pendingPlaylistMeta != null) {
+                    service.setPendingPlaylist(pendingPlaylistMeta,
+                            pendingPlaylistBase, pendingPlaylistToken);
+                    pendingPlaylistMeta  = null;
+                    pendingPlaylistBase  = "";
+                    pendingPlaylistToken = "";
+                }
             }
         }
 
@@ -284,7 +305,6 @@ public class TtsBridge {
     @JavascriptInterface
     public void mergeQueuedChapters(String chaptersJson) {
         mainHandler.post(() -> {
-            if (service == null) return;
             try {
                 JSONArray arr = new JSONArray(chaptersJson);
                 List<TtsPlaybackService.ChapterItem> list = new ArrayList<>(arr.length());
@@ -301,6 +321,11 @@ public class TtsBridge {
                     float  pitch     = (float) obj.optDouble("pitch", 1.0);
                     list.add(new TtsPlaybackService.ChapterItem(
                             chunks, chapterId, title, rate, pitch));
+                }
+                if (service == null) {
+                    // Service not bound yet — buffer so onServiceConnected can replay
+                    pendingMergeItems = list;
+                    return;
                 }
                 service.mergeQueue(list);
             } catch (Exception e) {
@@ -343,7 +368,6 @@ public class TtsBridge {
     @JavascriptInterface
     public void setPendingChapters(String chaptersMetaJson, String apiBase, String token) {
         mainHandler.post(() -> {
-            if (service == null) return;
             try {
                 JSONArray arr = new JSONArray(chaptersMetaJson);
                 List<TtsPlaybackService.ChapterMeta> list = new ArrayList<>(arr.length());
@@ -356,6 +380,13 @@ public class TtsBridge {
                     if (!id.isEmpty()) {
                         list.add(new TtsPlaybackService.ChapterMeta(id, title, rate, pitch));
                     }
+                }
+                if (service == null) {
+                    // Service not bound yet — buffer so onServiceConnected can replay
+                    pendingPlaylistMeta  = list;
+                    pendingPlaylistBase  = apiBase  != null ? apiBase  : "";
+                    pendingPlaylistToken = token    != null ? token    : "";
+                    return;
                 }
                 service.setPendingPlaylist(list, apiBase, token);
             } catch (Exception e) {

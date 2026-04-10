@@ -600,7 +600,7 @@ export default function ListenPage() {
     return () => {
       cancelled = true;
     };
-  }, [chapterId, voice, rate, pitch, allChapters, currentIndex, queryClient]);
+  }, [chapterId, voice, rate, pitch, allChapters, currentIndex, queryClient, chapterTextContent]);
 
   // ── Web streaming: prefetch first TTS audio chunks when near end ──
   useEffect(() => {
