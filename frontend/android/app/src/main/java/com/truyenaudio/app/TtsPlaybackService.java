@@ -763,12 +763,19 @@ public class TtsPlaybackService extends Service {
                 chapterQueue.add(item);
             }
         }
-        Log.d(TAG, "mergeQueue: added=" + chapterQueue.size() + " grace=" + graceActive);
-        // If we were in the grace period waiting for chapters, resolve immediately
-        if (graceActive && !chapterQueue.isEmpty()) {
-            graceActive = false;
-            mainHandler.removeCallbacks(graceExpiredRunnable);
-            mainHandler.post(graceExpiredRunnable);
+        Log.d(TAG, "mergeQueue: added=" + chapterQueue.size() + " grace=" + graceActive + " awaitingFetch=" + awaitingFetch);
+        if (!chapterQueue.isEmpty()) {
+            if (graceActive) {
+                // Grace period was waiting for chapters — resolve immediately
+                graceActive = false;
+                mainHandler.removeCallbacks(graceExpiredRunnable);
+                mainHandler.post(graceExpiredRunnable);
+            } else if (awaitingFetch && !prefetching) {
+                // Chapter finished with empty queue and self-fetch was discarded
+                // (e.g. setPendingPlaylist bumped fetchGeneration). Queue is now
+                // populated — start the next chapter immediately.
+                mainHandler.post(graceExpiredRunnable);
+            }
         }
     }
 
@@ -839,6 +846,11 @@ public class TtsPlaybackService extends Service {
             }
             // else: maybePrefetch() above may not have started yet; let the
             // grace timer continue — it will re-check when it fires.
+        } else if (awaitingFetch && !prefetching && !chapterQueue.isEmpty()) {
+            // setPendingPlaylist invalidated the in-flight self-fetch (prefetching=false),
+            // but mergeQueue() already populated the queue before this call.
+            // Nobody else will trigger the next chapter — do it now.
+            mainHandler.post(graceExpiredRunnable);
         }
     }
 
