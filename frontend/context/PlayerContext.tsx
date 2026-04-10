@@ -247,24 +247,10 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
     cancelTimer: cancelSleepTimer,
   } = useSleepTimer(handleSleepExpire);
 
-  // ── Native media controls: prev/next chapter (dispatched from native → JS) ──
-  // Play/pause/toggle are now handled entirely in native Java (no JS round-trip),
-  // so we only listen for skip events that need chapter navigation logic.
-  useEffect(() => {
-    if (!isNativePlatform()) return;
-    const onPrev = () => {
-      playerStateRef.current.seekChunk(-1);
-    };
-    const onNext = () => {
-      playerStateRef.current.seekChunk(1);
-    };
-    window.addEventListener("native-media-prev", onPrev);
-    window.addEventListener("native-media-next", onNext);
-    return () => {
-      window.removeEventListener("native-media-prev", onPrev);
-      window.removeEventListener("native-media-next", onNext);
-    };
-  }, []);
+  // ── Native media controls: prev/next chapter are now handled entirely in
+  // Java (TtsPlaybackService.skipToNextChapter / restartCurrentChapter) so
+  // they work even when the screen is off and the WebView is suspended.
+  // No JS event listener needed for these anymore.
 
   // Update notification title when track changes.
   // Also fires when book title loads so the notification stays current.
