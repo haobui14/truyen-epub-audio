@@ -197,7 +197,7 @@ public class TtsPlaybackService extends Service {
 
     // Grace period: when a chapter ends and nothing is ready yet, wait before
     // firing done — gives the JS queue-seeding effect + self-fetch time to arrive.
-    private static final long GRACE_PERIOD_MS = 8_000;
+    private static final long GRACE_PERIOD_MS = 1_500;
     private boolean graceActive = false;
     private final Runnable graceExpiredRunnable = () -> {
         graceActive = false;
@@ -753,17 +753,24 @@ public class TtsPlaybackService extends Service {
      * so it is safe to call at any time — including while native is mid-chapter.
      */
     public void mergeQueue(List<ChapterItem> chapters) {
-        Set<String> seen = new HashSet<>();
-        seen.add(currentChapterId != null ? currentChapterId : "");
-        seen.add(""); // exclude chapters with no ID
-        chapterQueue.clear();
+        // Build set of IDs already in the queue + currently playing
+        Set<String> existing = new HashSet<>();
+        existing.add(currentChapterId != null ? currentChapterId : "");
+        existing.add(""); // exclude chapters with no ID
+        for (ChapterItem item : chapterQueue) {
+            String id = item.chapterId != null ? item.chapterId : "";
+            existing.add(id);
+        }
+        // Only ADD items not already queued — never clear self-fetched chapters
+        int added = 0;
         for (ChapterItem item : chapters) {
             String id = item.chapterId != null ? item.chapterId : "";
-            if (seen.add(id)) { // add() returns false if already present
+            if (!id.isEmpty() && existing.add(id)) {
                 chapterQueue.add(item);
+                added++;
             }
         }
-        Log.d(TAG, "mergeQueue: added=" + chapterQueue.size() + " grace=" + graceActive + " awaitingFetch=" + awaitingFetch);
+        Log.d(TAG, "mergeQueue: added=" + added + " total=" + chapterQueue.size() + " grace=" + graceActive + " awaitingFetch=" + awaitingFetch);
         if (!chapterQueue.isEmpty()) {
             if (graceActive) {
                 // Grace period was waiting for chapters — resolve immediately
@@ -890,7 +897,7 @@ public class TtsPlaybackService extends Service {
             pendingHead++;
         }
 
-        if (!chapterQueue.isEmpty()) return; // next chapter already ready in queue
+        if (chapterQueue.size() >= 50) return; // keep 50 chapters buffered ahead
         if (pendingHead >= pendingPlaylist.size()) return; // no more chapters to fetch
 
         ChapterMeta meta = pendingPlaylist.get(pendingHead);
@@ -978,8 +985,12 @@ public class TtsPlaybackService extends Service {
                             "',newChapterId:'" + chapterId + "'}}))");
                     startChapter(item, 0);
                 } else {
-                    // Add to queue for seamless advance later
-                    chapterQueue.add(item);
+                    // Add to queue for seamless advance later — skip if already
+                    // queued (could happen if mergeQueue pushed the same chapter
+                    // from JS cache while this fetch was in flight).
+                    if (!isAlreadyQueued(chapterId)) {
+                        chapterQueue.add(item);
+                    }
                     maybePrefetch();
                 }
             });

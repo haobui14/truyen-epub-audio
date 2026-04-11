@@ -520,18 +520,39 @@ export default function ListenPage() {
 
     if (remainingChapters.length === 0) return;
 
+    // ── CRITICAL: call setPendingChapters SYNCHRONOUSLY so Java has the full
+    // playlist even if the WebView is suspended (screen off) before the async
+    // IndexedDB scanning below completes.  Without this, turning the screen off
+    // right after pressing play leaves Java with an empty queue and no playlist
+    // to self-fetch from, so playback stops after the first chapter.
+    // playChunks() (triggered by useNativeTTSPlayer in a parent effect) preserves
+    // pendingPlaylist, so even if it runs after this call, the playlist survives.
+    if (typeof bridge.setPendingChapters === "function") {
+      const token = getToken() ?? "";
+      const meta = remainingChapters.map((ch) => ({
+        id: ch.id,
+        title: ch.title ?? "",
+        rate,
+        pitch,
+      }));
+      bridge.setPendingChapters(JSON.stringify(meta), API_URL, token);
+    }
+
     let cancelled = false;
 
     (async () => {
-      // Yield one microtask so playChunks() (which clears chapterQueue) runs first.
-      await Promise.resolve();
+      // Wait for the useNativeTTSPlayer effect (in a parent component) to fire
+      // and call playChunksWithId — which clears chapterQueue on the Java side.
+      // React runs child effects before parent effects, so our bridge calls
+      // (mergeQueuedChapters) would otherwise be posted to Java's mainHandler
+      // BEFORE playChunks, causing playChunks to clear the queue we just
+      // populated.  A short setTimeout ensures our call is enqueued AFTER
+      // playChunks on the Java main thread.
+      await new Promise((r) => setTimeout(r, 50));
       if (cancelled) return;
 
-      // Phase 1: scan ALL remaining chapters for locally-cached text and push
-      // them immediately so native can auto-advance without any network fetch.
-      // Cap at 30 chapters (~6+ hours) to keep Java memory bounded.
-      // Downloaded chapters are stored in IndexedDB (getCachedChapterText) — see
-      // Phase 2 comment for how uncached chapters are handled.
+      // Push locally-cached chapter text so native can auto-advance without
+      // any network fetch. Cap at 50 chapters to keep Java memory bounded.
       type QueueItem = {
         chunks: string[];
         chapterId: string;
@@ -540,7 +561,7 @@ export default function ListenPage() {
         pitch: number;
       };
       const cachedItems: QueueItem[] = [];
-      const MAX_IMMEDIATE = 30;
+      const MAX_IMMEDIATE = 50;
       for (const ch of remainingChapters) {
         if (cachedItems.length >= MAX_IMMEDIATE) break;
         let text: string | null = null;
@@ -575,32 +596,18 @@ export default function ListenPage() {
       if (cachedItems.length > 0) {
         bridge.mergeQueuedChapters(JSON.stringify(cachedItems));
       }
-
-      // Phase 2: hand Java the full ordered playlist so it can self-fetch the
-      // rest while the screen is off. Java fetches one chapter ahead at a time,
-      // so memory usage is constant regardless of book length.
-      // Java's isAlreadyQueued() skips chapters already pushed in Phase 1, so
-      // it's safe to pass ALL remaining chapters here. For chapters beyond the
-      // Phase 1 cap that are also downloaded, Java will fetch them from the API
-      // (works online). Offline, playback continues for the Phase 1 chapters
-      // then stops — full offline support for >30 chapters requires a Java-to-JS
-      // callback mechanism not yet implemented.
-      if (typeof bridge.setPendingChapters === "function") {
-        const token = getToken() ?? "";
-        const meta = remainingChapters.map((ch) => ({
-          id: ch.id,
-          title: ch.title ?? "",
-          rate,
-          pitch,
-        }));
-        bridge.setPendingChapters(JSON.stringify(meta), API_URL, token);
-      }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [chapterId, voice, rate, pitch, allChapters, currentIndex, queryClient, chapterTextContent]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chapterId, voice, rate, pitch, allChapters, currentIndex, queryClient]);
+  // chapterTextContent intentionally excluded: the queue logic only looks at
+  // OTHER chapters' text (via queryClient / IndexedDB), not the current one.
+  // Including it would cancel and restart the async queue-building whenever
+  // the current chapter's text loads, wasting work and leaving the native
+  // queue empty during the re-run window.
 
   // ── Web streaming: prefetch first TTS audio chunks when near end ──
   useEffect(() => {
