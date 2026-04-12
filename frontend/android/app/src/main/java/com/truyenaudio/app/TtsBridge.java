@@ -201,6 +201,14 @@ public class TtsBridge {
 
     @JavascriptInterface
     public void stopPlayback() {
+        // Immediately mark the service as not playing so that bridge.isPlaying()
+        // returns false right away — before the mainHandler.post below executes.
+        // Without this, useNativeTTSPlayer reads isPlaying=true immediately after
+        // the JS call, triggering the nativeIsAhead guard and preventing manual
+        // chapter navigation from stopping native playback.
+        TtsPlaybackService svc = service;
+        if (svc != null) svc.isPlaying = false;
+
         mainHandler.post(() -> {
             pendingChunks = null;
             if (service != null) service.stopPlayback();

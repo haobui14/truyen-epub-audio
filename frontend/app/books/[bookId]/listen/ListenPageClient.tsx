@@ -283,6 +283,13 @@ export default function ListenPage() {
   const navigateTo = useCallback(
     (chapter: typeof currentChapter, autoplay = false) => {
       if (chapter) {
+        // For user-initiated navigation (autoplay=false), stop native immediately
+        // so that useNativeTTSPlayer's nativeIsAhead guard sees isPlaying=false and
+        // allows the new chapter to start.  Auto-advance paths (autoplay=true) must
+        // NOT stop native — the service is already playing the next chapter.
+        if (!autoplay && isNativePlatform()) {
+          getTtsBridge()?.stopPlayback();
+        }
         const url = `/listen?id=${bookId}&chapter=${chapter.id}${autoplay ? "&autoplay=1" : ""}`;
         router.push(url);
       }
@@ -291,7 +298,7 @@ export default function ListenPage() {
   );
 
   const queryClient = useQueryClient();
-  const { setTrack, chunkIndex, totalChunks, voice, rate, pitch, isPlaying } =
+  const { setTrack, chunkIndex, totalChunks, voice, rate, pitch } =
     usePlayerContext();
 
   const { reportProgress } = useProgressSync({

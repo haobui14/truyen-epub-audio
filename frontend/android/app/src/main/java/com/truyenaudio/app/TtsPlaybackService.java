@@ -259,6 +259,7 @@ public class TtsPlaybackService extends Service {
                 switch (focusChange) {
                     case AudioManager.AUDIOFOCUS_LOSS:
                         // Permanent loss — pause and give up focus
+                        Log.d(TAG, "AudioFocus: LOSS (permanent), isPlaying=" + isPlaying);
                         hasFocus = false;
                         pausedByTransientLoss = false;
                         pauseInternal();
@@ -269,10 +270,12 @@ public class TtsPlaybackService extends Service {
                         // Without this, a notification sound between chunks kills
                         // playback because pauseInternal() sets isPlaying=false
                         // and onChunkFinished bails on the !isPlaying guard.
+                        Log.d(TAG, "AudioFocus: LOSS_TRANSIENT, isPlaying=" + isPlaying);
                         if (isPlaying) pausedByTransientLoss = true;
                         pauseInternal();
                         break;
                     case AudioManager.AUDIOFOCUS_GAIN:
+                        Log.d(TAG, "AudioFocus: GAIN, pausedByTransient=" + pausedByTransientLoss);
                         hasFocus = true;
                         if (pausedByTransientLoss) {
                             pausedByTransientLoss = false;
@@ -478,7 +481,9 @@ public class TtsPlaybackService extends Service {
                     + " queue=" + chapterQueue.size()
                     + " prefetchActive=" + prefetchActive
                     + " pendingHead=" + pendingHead + "/" + pendingPlaylist.size()
-                    + " awaiting=" + awaitingFetch);
+                    + " awaiting=" + awaitingFetch
+                    + " selfFetchBase=" + (selfFetchBase.isEmpty() ? "EMPTY" : "set")
+                    + " prefetchVer=" + prefetchVersion);
             ChapterItem nextChapter = chapterQueue.poll();
             if (nextChapter != null) {
                 Log.d(TAG, "→ advance to " + nextChapter.chapterId);
@@ -508,9 +513,31 @@ public class TtsPlaybackService extends Service {
                 // Kick prefetch in case it's not already running
                 kickPrefetch();
             } else {
-                // Nothing left to play — fire done
-                Log.d(TAG, "→ fireDone (nothing left)");
-                fireDone();
+                // FAILSAFE: Before giving up, check if there are ANY un-queued
+                // chapters left in the playlist that we may have inadvertently
+                // skipped (e.g. because the prefetch chain was killed by a
+                // prefetchVersion bump from setPendingPlaylist racing with
+                // playChunks). If so, rescan from the beginning.
+                boolean hasMore = false;
+                for (int i = 0; i < pendingPlaylist.size(); i++) {
+                    if (!isAlreadyQueued(pendingPlaylist.get(i).chapterId)) {
+                        hasMore = true;
+                        pendingHead = i;
+                        break;
+                    }
+                }
+                if (hasMore) {
+                    Log.d(TAG, "→ FAILSAFE: found un-fetched chapter at pendingHead=" + pendingHead
+                            + "/" + pendingPlaylist.size() + ", retrying prefetch");
+                    awaitingFetch = true;
+                    prefetchActive = false; // force kickPrefetch to start
+                    kickPrefetch();
+                } else {
+                    // Nothing left to play — fire done
+                    Log.d(TAG, "→ fireDone (nothing left, playlist=" + pendingPlaylist.size()
+                            + " selfFetchBase=" + (selfFetchBase.isEmpty() ? "EMPTY" : "set") + ")");
+                    fireDone();
+                }
             }
         }
     }
@@ -529,12 +556,19 @@ public class TtsPlaybackService extends Service {
         // Creating/releasing a MediaPlayer at chapter boundaries when the screen
         // is off can cause AudioSession interference, delaying or preventing
         // the TTS engine from starting. Only use it for user-initiated plays.
-        if (!autoAdvancing) {
+        // Also skip when the screen is off — creating a MediaPlayer every chunk
+        // while backgrounded can interfere with TTS AudioSession on some devices.
+        if (!autoAdvancing && isScreenOn()) {
             playFakeSilence();
         }
         // Re-assert our session immediately + with delays to beat TTS engine's
         // async session activation, and kick off the periodic loop.
-        reassertMediaSession();
+        // Only do this when screen is on — when backgrounded, the TTS engine's
+        // session management doesn't matter and the constant re-assertion loop
+        // (every 3s) wastes CPU and can interfere with audio focus.
+        if (isScreenOn()) {
+            reassertMediaSession();
+        }
 
         Bundle params = new Bundle();
         // Use utterance id "chunk_N" so the progress listener can echo index back
@@ -620,7 +654,9 @@ public class TtsPlaybackService extends Service {
                            int startIdx, String title, String chapterId) {
         Log.d(TAG, "playChunks ch=" + chapterId + " chunks=" + (chunks != null ? chunks.size() : 0)
                 + " start=" + startIdx + " pendingPlaylist=" + pendingPlaylist.size()
-                + " prefetchActive=" + prefetchActive);
+                + " prefetchActive=" + prefetchActive
+                + " selfFetchBase=" + (selfFetchBase.isEmpty() ? "EMPTY" : "set")
+                + " prefetchVer=" + prefetchVersion);
         currentChunks    = chunks;
         currentRate      = rate;
         currentPitch     = pitch;
@@ -632,7 +668,13 @@ public class TtsPlaybackService extends Service {
         prefetchVersion++;
         prefetchActive = false;
         awaitingFetch  = false;
-        pendingHead    = 0;
+        // DON'T reset pendingHead to 0 here — setPendingPlaylist (which
+        // runs AFTER this on the mainHandler due to JS effect ordering)
+        // will set the proper pendingHead. Resetting here would cause the
+        // prefetch chain started below to re-fetch chapters that were
+        // already queued, only to have setPendingPlaylist kill the chain
+        // and start over anyway.
+        // pendingHead = 0;  (removed — was causing version bump wars)
 
         // Drain the buffer of any mergeQueue calls that arrived before this
         // playChunks call (i.e. before the chapter text finished loading in JS).
@@ -690,6 +732,11 @@ public class TtsPlaybackService extends Service {
     }
 
     public void stopPlayback() {
+        Log.d(TAG, "stopPlayback called, ch=" + currentChapterId
+                + " queue=" + chapterQueue.size()
+                + " isPlaying=" + isPlaying);
+        // Log stack trace so we can see WHO called stopPlayback
+        Log.d(TAG, "stopPlayback stacktrace: " + android.util.Log.getStackTraceString(new Throwable()));
         mainHandler.removeCallbacks(sleepRunnable);
         mainHandler.removeCallbacks(reassertRunnable);
         mainHandler.removeCallbacks(watchdogRunnable);
@@ -847,8 +894,16 @@ public class TtsPlaybackService extends Service {
                 added++;
             }
         }
+        // Log details of what was added and what was skipped for diagnostics
+        StringBuilder addedIds = new StringBuilder();
+        for (ChapterItem item : chapters) {
+            String id = item.chapterId != null ? item.chapterId : "";
+            if (addedIds.length() > 0) addedIds.append(",");
+            addedIds.append(id.length() > 8 ? id.substring(0, 8) : id);
+        }
         Log.d(TAG, "mergeQueue: added=" + added + " total=" + chapterQueue.size()
-                + " awaitingFetch=" + awaitingFetch);
+                + " awaitingFetch=" + awaitingFetch
+                + " offered=" + chapters.size() + " ids=" + addedIds);
         if (added > 0 && awaitingFetch && !chapterQueue.isEmpty()) {
             // Chapter finished with empty queue — deliver the first merged chapter now
             awaitingFetch = false;
@@ -910,7 +965,10 @@ public class TtsPlaybackService extends Service {
      */
     public void setPendingPlaylist(List<ChapterMeta> playlist, String apiBase, String token) {
         Log.d(TAG, "setPendingPlaylist: size=" + (playlist != null ? playlist.size() : 0)
-                + " queue=" + chapterQueue.size() + " awaitingFetch=" + awaitingFetch);
+                + " queue=" + chapterQueue.size() + " awaitingFetch=" + awaitingFetch
+                + " apiBase=" + (apiBase != null && !apiBase.isEmpty() ? apiBase.substring(0, Math.min(30, apiBase.length())) : "EMPTY")
+                + " hasToken=" + (token != null && !token.isEmpty())
+                + " prefetchVer=" + prefetchVersion);
         pendingPlaylist = playlist != null ? playlist : Collections.emptyList();
         pendingHead     = 0;
         selfFetchBase   = apiBase != null ? apiBase : "";
@@ -948,6 +1006,9 @@ public class TtsPlaybackService extends Service {
     // ── Private helpers ───────────────────────────────────────────────────────
 
     private void pauseInternal() {
+        Log.d(TAG, "pauseInternal called, isPlaying=" + isPlaying
+                + " pausedByTransient=" + pausedByTransientLoss
+                + " ch=" + currentChapterId);
         if (!isPlaying) return;
         isPlaying = false;
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
@@ -1139,9 +1200,21 @@ public class TtsPlaybackService extends Service {
         return false;
     }
 
+    /** Returns true if the device screen is interactively on. */
+    private boolean isScreenOn() {
+        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        return pm != null && pm.isInteractive();
+    }
+
     /** Called on ioExecutor thread; posts result back to main thread. */
     private void fireDone() {
-        Log.d(TAG, "fireDone: ch=" + currentChapterId);
+        Log.d(TAG, "fireDone: ch=" + currentChapterId
+                + " queue=" + chapterQueue.size()
+                + " pendingPlaylist=" + pendingPlaylist.size()
+                + " pendingHead=" + pendingHead
+                + " selfFetchBase=" + (selfFetchBase.isEmpty() ? "EMPTY" : "set")
+                + " prefetchActive=" + prefetchActive
+                + " prefetchVer=" + prefetchVersion);
         isPlaying = false;
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         dispatchJs("window.dispatchEvent(new Event('native-tts-done'))");
@@ -1202,6 +1275,11 @@ public class TtsPlaybackService extends Service {
     }
 
     private void startChapter(ChapterItem item, int startIdx) {
+        Log.d(TAG, "startChapter ch=" + (item.chapterId != null ? item.chapterId : "null")
+                + " chunks=" + (item.chunks != null ? item.chunks.size() : 0)
+                + " queue=" + chapterQueue.size()
+                + " pendingHead=" + pendingHead + "/" + pendingPlaylist.size()
+                + " prefetchVer=" + prefetchVersion);
         currentChunks    = item.chunks;
         currentRate      = item.rate;
         currentPitch     = item.pitch;
