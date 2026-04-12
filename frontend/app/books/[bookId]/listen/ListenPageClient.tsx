@@ -111,6 +111,8 @@ export default function ListenPage() {
 
   // Fetch text for the current chapter — on native checks IndexedDB first,
   // then falls back to IndexedDB again if the API call fails.
+  // Auto-caches to IndexedDB on native so Java's mergeQueuedChapters can
+  // populate the screen-off queue without any network fetches.
   const { data: chapterText, isLoading: isLoadingText } = useQuery({
     queryKey: ["chapterText", chapterId],
     queryFn: async () => {
@@ -119,7 +121,13 @@ export default function ListenPage() {
         if (cached) return { id: chapterId!, text_content: cached };
       }
       try {
-        return await api.getChapterText(chapterId!);
+        const data = await api.getChapterText(chapterId!);
+        // Persist to IndexedDB so Java can find it in mergeQueuedChapters
+        // even after the app is restarted or React Query cache is cold.
+        if (isNativePlatform()) {
+          cacheChapterText(chapterId!, data.text_content).catch(() => {});
+        }
+        return data;
       } catch {
         // Offline or API error — try local cache
         const cached = await getCachedChapterText(chapterId!);
@@ -170,40 +178,98 @@ export default function ListenPage() {
   const nextChapter =
     allChapters.find((c) => c.chapter_index === currentIndex + 1) ?? null;
 
-  // Preload adjacent chapter texts so navigation fires the player effect only once.
-  // Includes offline fallback (IndexedDB) so queuing works even without network.
+  // Preload adjacent + upcoming chapter texts.
+  // On native, each successful API fetch is persisted to IndexedDB so Java's
+  // mergeQueuedChapters has real data to queue — enabling seamless screen-off
+  // playback without any network dependency inside the Java service.
   const prevChapterId = prevChapter?.id ?? null;
   const nextChapterId = nextChapter?.id ?? null;
-  useQuery({
-    queryKey: ["chapterText", prevChapterId],
-    queryFn: async () => {
+  const next2Chapter =
+    allChapters.find((c) => c.chapter_index === currentIndex + 2) ?? null;
+  const next3Chapter =
+    allChapters.find((c) => c.chapter_index === currentIndex + 3) ?? null;
+  const next4Chapter =
+    allChapters.find((c) => c.chapter_index === currentIndex + 4) ?? null;
+  const next5Chapter =
+    allChapters.find((c) => c.chapter_index === currentIndex + 5) ?? null;
+  const next6Chapter =
+    allChapters.find((c) => c.chapter_index === currentIndex + 6) ?? null;
+  const next2ChapterId = next2Chapter?.id ?? null;
+  const next3ChapterId = next3Chapter?.id ?? null;
+  const next4ChapterId = next4Chapter?.id ?? null;
+  const next5ChapterId = next5Chapter?.id ?? null;
+  const next6ChapterId = next6Chapter?.id ?? null;
+
+  // Helper: fetch from API, auto-cache on native, fall back to IndexedDB.
+  const fetchAndCacheText = useCallback(
+    async (id: string) => {
+      if (isNativePlatform()) {
+        const cached = await getCachedChapterText(id);
+        if (cached) return { id, text_content: cached };
+      }
       try {
-        return await api.getChapterText(prevChapterId!);
+        const data = await api.getChapterText(id);
+        if (isNativePlatform()) {
+          cacheChapterText(id, data.text_content).catch(() => {});
+        }
+        return data;
       } catch {
-        const cached = await getCachedChapterText(prevChapterId!);
-        if (cached) return { id: prevChapterId!, text_content: cached };
+        const cached = await getCachedChapterText(id);
+        if (cached) return { id, text_content: cached };
         throw new Error("offline");
       }
     },
+    [],
+  );
+
+  useQuery({
+    queryKey: ["chapterText", prevChapterId],
+    queryFn: () => fetchAndCacheText(prevChapterId!),
     enabled: !!prevChapterId,
     staleTime: Infinity,
   });
   const { data: nextChapterTextData } = useQuery({
     queryKey: ["chapterText", nextChapterId],
-    queryFn: async () => {
-      try {
-        return await api.getChapterText(nextChapterId!);
-      } catch {
-        const cached = await getCachedChapterText(nextChapterId!);
-        if (cached) return { id: nextChapterId!, text_content: cached };
-        throw new Error("offline");
-      }
-    },
+    queryFn: () => fetchAndCacheText(nextChapterId!),
     enabled: !!nextChapterId,
     staleTime: Infinity,
   });
+  // N+2 through N+6: preload and cache so Java's queue stays deep enough that
+  // the self-fetch never becomes urgent during normal screen-off playback.
+  // Capturing the data lets the queue seeding effect re-run incrementally as
+  // texts become available, delivering them to the Java queue right away.
+  const { data: next2ChapterTextData } = useQuery({
+    queryKey: ["chapterText", next2ChapterId],
+    queryFn: () => fetchAndCacheText(next2ChapterId!),
+    enabled: !!next2ChapterId,
+    staleTime: Infinity,
+  });
+  const { data: next3ChapterTextData } = useQuery({
+    queryKey: ["chapterText", next3ChapterId],
+    queryFn: () => fetchAndCacheText(next3ChapterId!),
+    enabled: !!next3ChapterId,
+    staleTime: Infinity,
+  });
+  const { data: next4ChapterTextData } = useQuery({
+    queryKey: ["chapterText", next4ChapterId],
+    queryFn: () => fetchAndCacheText(next4ChapterId!),
+    enabled: !!next4ChapterId,
+    staleTime: Infinity,
+  });
+  const { data: next5ChapterTextData } = useQuery({
+    queryKey: ["chapterText", next5ChapterId],
+    queryFn: () => fetchAndCacheText(next5ChapterId!),
+    enabled: !!next5ChapterId,
+    staleTime: Infinity,
+  });
+  const { data: next6ChapterTextData } = useQuery({
+    queryKey: ["chapterText", next6ChapterId],
+    queryFn: () => fetchAndCacheText(next6ChapterId!),
+    enabled: !!next6ChapterId,
+    staleTime: Infinity,
+  });
 
-  const neighborChapters = [-2, -1, 0, 1, 2]
+  const neighborChapters = [-2, -1, 0, 1, 2, 3]
     .map((offset) =>
       allChapters.find((c) => c.chapter_index === currentIndex + offset),
     )
@@ -498,12 +564,49 @@ export default function ListenPage() {
   }, [voice, allChapters, bookId, chapterId, router]);
 
   // ── Native TTS: seed the Java queue and hand it the full chapter playlist ──
-  // Phase 1: immediately push up to 5 locally-cached chapters via mergeQueuedChapters
-  // so native can auto-advance right away without waiting for network.
-  // Phase 2: hand Java the full ordered metadata list — it will self-fetch each
-  // chapter's text just before it is needed, keeping memory use constant and
-  // enabling unlimited uninterrupted screen-off playback for any book length.
+  //
+  // Effect A: setPendingChapters — runs ONCE per chapter (chapterId / allChapters).
+  //   Synchronously gives Java the full ordered chapter list so its self-fetch
+  //   can run even if the WebView is suspended before the texts below load.
+  //   Intentionally does NOT depend on preload text data to avoid killing the
+  //   Java self-fetch chain every time a single preload query completes.
+  //
+  // Effect B: mergeQueuedChapters — runs whenever a preload text becomes available.
+  //   Sends the actual chunk data so Java can auto-advance without any network
+  //   fetch. The Java side buffers calls that arrive before playChunks runs
+  //   (race-condition safety) so the chapters are never lost.
   const nextChapterText = nextChapterTextData?.text_content ?? null;
+
+  // Effect A: hand Java the full chapter playlist (self-fetch metadata only)
+  useEffect(() => {
+    if (
+      !voice.startsWith("native:") ||
+      allChapters.length === 0 ||
+      currentIndex < 0
+    )
+      return;
+    const bridge = getTtsBridge();
+    if (!bridge || typeof bridge.setPendingChapters !== "function") return;
+
+    const remainingChapters = allChapters
+      .filter((c) => c.chapter_index > currentIndex && c.status === "ready")
+      .sort((a, b) => a.chapter_index - b.chapter_index);
+
+    if (remainingChapters.length === 0) return;
+
+    const token = getToken() ?? "";
+    const meta = remainingChapters.map((ch) => ({
+      id: ch.id,
+      title: ch.title ?? "",
+      rate,
+      pitch,
+    }));
+    bridge.setPendingChapters(JSON.stringify(meta), API_URL, token);
+  }, [voice, allChapters, currentIndex, chapterId, rate, pitch]);
+
+  // Effect B: push chapter text chunks into the Java queue as they become available.
+  // Runs once initially and again each time a preload text loads so the queue
+  // is topped up incrementally without waiting for all texts to arrive.
   useEffect(() => {
     if (
       !voice.startsWith("native:") ||
@@ -514,45 +617,27 @@ export default function ListenPage() {
     const bridge = getTtsBridge();
     if (!bridge) return;
 
+    // Only scan the chapters we actively preload (first 15 ahead).
+    // Scanning ALL remaining chapters means 99+ sequential IndexedDB awaits
+    // which gets cancelled by the next dep change before the call fires.
     const remainingChapters = allChapters
       .filter((c) => c.chapter_index > currentIndex && c.status === "ready")
-      .sort((a, b) => a.chapter_index - b.chapter_index);
+      .sort((a, b) => a.chapter_index - b.chapter_index)
+      .slice(0, 15);
 
     if (remainingChapters.length === 0) return;
-
-    // ── CRITICAL: call setPendingChapters SYNCHRONOUSLY so Java has the full
-    // playlist even if the WebView is suspended (screen off) before the async
-    // IndexedDB scanning below completes.  Without this, turning the screen off
-    // right after pressing play leaves Java with an empty queue and no playlist
-    // to self-fetch from, so playback stops after the first chapter.
-    // playChunks() (triggered by useNativeTTSPlayer in a parent effect) preserves
-    // pendingPlaylist, so even if it runs after this call, the playlist survives.
-    if (typeof bridge.setPendingChapters === "function") {
-      const token = getToken() ?? "";
-      const meta = remainingChapters.map((ch) => ({
-        id: ch.id,
-        title: ch.title ?? "",
-        rate,
-        pitch,
-      }));
-      bridge.setPendingChapters(JSON.stringify(meta), API_URL, token);
-    }
 
     let cancelled = false;
 
     (async () => {
-      // Wait for the useNativeTTSPlayer effect (in a parent component) to fire
-      // and call playChunksWithId — which clears chapterQueue on the Java side.
-      // React runs child effects before parent effects, so our bridge calls
-      // (mergeQueuedChapters) would otherwise be posted to Java's mainHandler
-      // BEFORE playChunks, causing playChunks to clear the queue we just
-      // populated.  A short setTimeout ensures our call is enqueued AFTER
-      // playChunks on the Java main thread.
+      // The Java pendingMergeBuffer now handles the race where mergeQueuedChapters
+      // arrives before playChunks. We still delay slightly (50ms) to give the
+      // bridge call time to post to the mainHandler queue AFTER playChunksWithId
+      // when chapter text is already cached (instant load). For slow networks,
+      // playChunks will have already run before our 50ms fires, so timing is safe.
       await new Promise((r) => setTimeout(r, 50));
       if (cancelled) return;
 
-      // Push locally-cached chapter text so native can auto-advance without
-      // any network fetch. Cap at 50 chapters to keep Java memory bounded.
       type QueueItem = {
         chunks: string[];
         chapterId: string;
@@ -561,10 +646,15 @@ export default function ListenPage() {
         pitch: number;
       };
       const cachedItems: QueueItem[] = [];
-      const MAX_IMMEDIATE = 50;
+
       for (const ch of remainingChapters) {
-        if (cachedItems.length >= MAX_IMMEDIATE) break;
+        // Bail out inside the loop — each getCachedChapterText is an IndexedDB
+        // await that yields to the event loop. A new dep change can set cancelled
+        // while we're mid-loop; checking here prevents a stale mergeQueuedChapters.
+        if (cancelled) return;
+
         let text: string | null = null;
+        // 1. React Query cache (synchronous, no await needed)
         const qcData = queryClient.getQueryData<{ text_content: string }>([
           "chapterText",
           ch.id,
@@ -572,12 +662,16 @@ export default function ListenPage() {
         if (qcData?.text_content) {
           text = qcData.text_content;
         } else {
+          // 2. IndexedDB (async)
           try {
             text = await getCachedChapterText(ch.id);
           } catch {
-            /* not in IndexedDB */
+            /* not cached */
           }
         }
+
+        if (cancelled) return;
+
         if (text) {
           const chunks = splitChunks(text);
           if (chunks.length > 0) {
@@ -602,12 +696,16 @@ export default function ListenPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chapterId, voice, rate, pitch, allChapters, currentIndex, queryClient]);
-  // chapterTextContent intentionally excluded: the queue logic only looks at
-  // OTHER chapters' text (via queryClient / IndexedDB), not the current one.
-  // Including it would cancel and restart the async queue-building whenever
-  // the current chapter's text loads, wasting work and leaving the native
-  // queue empty during the re-run window.
+  }, [
+    chapterId, voice, rate, pitch, allChapters, currentIndex, queryClient,
+    // Re-run as each preload text arrives so the queue is topped up incrementally.
+    nextChapterTextData?.text_content,
+    next2ChapterTextData?.text_content,
+    next3ChapterTextData?.text_content,
+    next4ChapterTextData?.text_content,
+    next5ChapterTextData?.text_content,
+    next6ChapterTextData?.text_content,
+  ]);
 
   // ── Web streaming: prefetch first TTS audio chunks when near end ──
   useEffect(() => {

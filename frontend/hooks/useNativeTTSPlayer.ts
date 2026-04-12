@@ -258,13 +258,25 @@ export function useNativeTTSPlayer(
     // the queued native-tts-chapter-advance event (which would otherwise
     // cause wasAutoAdvanced=false → stopPlayback → startNativePlayback(0)
     // → replay from chunk 0 on lockscreen resume).
+    //
+    // Additionally: if native is actively playing a DIFFERENT chapter (it has
+    // auto-advanced further than JS while screen was off, and the visibilitychange
+    // handler navigated JS to an intermediate chapter that native already passed),
+    // do NOT stop it. The next visibilitychange cycle will sync JS to wherever
+    // native currently is. Stopping here would kill playback that's working fine.
     if (isActive && !wasAutoAdvanced) {
       const bridge = getTtsBridge();
       const nativeChId = bridge?.getCurrentChapterId?.() ?? "";
-      const nativeAlreadyPlaying =
-        nativeChId === chapterId && (bridge?.isPlaying?.() ?? false);
-      if (!nativeAlreadyPlaying) {
-        bridge?.stopPlayback();
+      const nativePlaying = bridge?.isPlaying?.() ?? false;
+      // Native is ahead: actively playing a chapter other than this one.
+      // Let it continue — don't stop and don't restart.
+      const nativeIsAhead =
+        nativePlaying && nativeChId !== "" && nativeChId !== chapterId;
+      if (!nativeIsAhead) {
+        const nativeAlreadyPlaying = nativeChId === chapterId && nativePlaying;
+        if (!nativeAlreadyPlaying) {
+          bridge?.stopPlayback();
+        }
       }
     }
 
@@ -326,12 +338,13 @@ export function useNativeTTSPlayer(
     chunkRef.current = startIdx;
 
     if (autoPlay && chunksRef.current.length > 0) {
-      // Guard: if native is already playing this chapter (e.g., the
-      // visibility-change navigation fired before the native-tts-chapter-advance
-      // event), sync JS state instead of restarting from startIdx.
       const bridge = getTtsBridge();
       const nativeChId = bridge?.getCurrentChapterId?.() ?? "";
-      if (nativeChId === chapterId && (bridge?.isPlaying?.() ?? false)) {
+      const nativePlaying = bridge?.isPlaying?.() ?? false;
+
+      if (nativeChId === chapterId && nativePlaying) {
+        // Native is already playing this chapter (e.g. visibility-change navigation
+        // fired before the chapter-advance event) — sync JS state, don't restart.
         const idx = bridge!.getCurrentChunk();
         const safeIdx = idx >= 0 ? idx : 0;
         setChunkIndex(safeIdx);
@@ -339,10 +352,17 @@ export function useNativeTTSPlayer(
         playingRef.current = true;
         setIsPlaying(true);
         setIsBuffering(false);
+      } else if (nativePlaying && nativeChId !== "" && nativeChId !== chapterId) {
+        // Native is ahead — playing a chapter JS hasn't caught up to yet.
+        // Don't call startNativePlayback (it would interrupt what's playing).
+        // The visibilitychange handler will navigate JS to the correct chapter.
+        playingRef.current = false;
+        setIsPlaying(false);
+        setIsBuffering(false);
       } else {
+        // Native is idle or on the same chapter but not playing — start fresh.
         setIsBuffering(true);
         acquireBackgroundLock();
-        // Start native playback immediately — no microtask defer
         startNativePlayback(startIdx);
       }
     } else {

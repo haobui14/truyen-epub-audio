@@ -181,6 +181,13 @@ public class TtsPlaybackService extends Service {
     // Chapter queue for seamless auto-advance
     private final Queue<ChapterItem> chapterQueue = new LinkedList<>();
 
+    // Buffer for mergeQueue calls that arrive BEFORE playChunks runs.
+    // mergeQueuedChapters (from JS) is often posted to mainHandler before
+    // playChunksWithId because the chapter text loads asynchronously and
+    // playChunks clears the queue. We save the items here and re-apply
+    // them immediately after playChunks clears the queue.
+    private List<ChapterItem> pendingMergeBuffer = null;
+
     // Chapter IDs that were completed by native auto-advance (screen-off XP recovery).
     // Guarded by its own lock so the @JavascriptInterface thread can read/clear safely.
     private final List<String> completedChapterIds = new ArrayList<>();
@@ -215,6 +222,15 @@ public class TtsPlaybackService extends Service {
         if (watchdogRetries > MAX_WATCHDOG_RETRIES) {
             Log.e(TAG, "WATCHDOG: max retries exceeded, reinitialising TTS");
             watchdogRetries = 0;
+            // Save the current chapter so initTts() replays it after reinit.
+            // Without this, pendingItem is null after reinit and playback stops
+            // permanently — the primary cause of screen-off chapter stall.
+            if (currentChunks != null && currentChunkIdx >= 0) {
+                pendingItem = new ChapterItem(
+                        new ArrayList<>(currentChunks),
+                        currentChapterId, currentTitle, currentRate, currentPitch);
+                pendingStartIdx = currentChunkIdx;
+            }
             if (tts != null) { tts.stop(); tts.shutdown(); tts = null; ttsReady = false; }
             initTts();
             return;
@@ -483,7 +499,7 @@ public class TtsPlaybackService extends Service {
                 final String nId = newId;
                 mainHandler.post(() -> dispatchJs(
                         "window.dispatchEvent(new CustomEvent('native-tts-chapter-advance'," +
-                        "{detail:{completedChapterId:'" + cId + "',newChapterId:'" + nId + "}}))"));
+                        "{detail:{completedChapterId:'" + cId + "',newChapterId:'" + nId + "'}}))"));
             } else if (prefetchActive || pendingHead < pendingPlaylist.size()) {
                 // A fetch is in flight or more chapters can be fetched — wait for it.
                 // The prefetch callback will call startChapter when it has a result.
@@ -525,6 +541,12 @@ public class TtsPlaybackService extends Service {
         int result = tts.speak(currentChunks.get(idx), TextToSpeech.QUEUE_FLUSH, params, "chunk_" + idx);
         if (result != TextToSpeech.SUCCESS) {
             Log.e(TAG, "tts.speak() FAILED result=" + result + " chunk=" + idx + " ch=" + currentChapterId);
+            // Fast retry: don't wait the full WATCHDOG_MS — kick the watchdog
+            // immediately (1 s grace) so a failing TTS engine recovers quickly
+            // rather than leaving an 8-second silence on each retry attempt.
+            mainHandler.removeCallbacks(watchdogRunnable);
+            mainHandler.postDelayed(watchdogRunnable, 1_000);
+            return;
         }
         // Watchdog: if onStart doesn't fire within WATCHDOG_MS, retry
         mainHandler.removeCallbacks(watchdogRunnable);
@@ -612,6 +634,18 @@ public class TtsPlaybackService extends Service {
         awaitingFetch  = false;
         pendingHead    = 0;
 
+        // Drain the buffer of any mergeQueue calls that arrived before this
+        // playChunks call (i.e. before the chapter text finished loading in JS).
+        // We apply AFTER the prefetch reset so mergeQueue's awaitingFetch path
+        // cannot accidentally trigger startChapter while we're in playChunks.
+        if (pendingMergeBuffer != null) {
+            List<ChapterItem> buf = pendingMergeBuffer;
+            pendingMergeBuffer = null;
+            Log.d(TAG, "playChunks: draining pendingMergeBuffer size=" + buf.size());
+            // currentChunks != null now so mergeQueue won't re-buffer
+            mergeQueue(buf);
+        }
+
         setMetadata(currentTitle);
         if (mediaSession != null) mediaSession.setActive(true);
 
@@ -667,6 +701,7 @@ public class TtsPlaybackService extends Service {
         currentChunkIdx  = -1;
         currentChapterId = "";
         pendingItem      = null;
+        pendingMergeBuffer = null;
         chapterQueue.clear();
         // Cancel prefetch chain but KEEP pendingPlaylist so playChunks → kickPrefetch
         // can re-use it immediately.
@@ -772,8 +807,29 @@ public class TtsPlaybackService extends Service {
      * skipping the chapter that is currently being spoken and ignoring duplicates.
      * Unlike {@link #queueAllChapters}, this never re-queues the in-flight chapter,
      * so it is safe to call at any time — including while native is mid-chapter.
+     *
+     * <p>Race-condition safety: if called before {@link #playChunks} has run for the
+     * current chapter (i.e. the chapter text was still loading when the 50 ms JS
+     * timer fired), the items are buffered in {@code pendingMergeBuffer}.
+     * {@link #playChunks} drains the buffer immediately after clearing the queue so
+     * the chapters are never lost.</p>
      */
     public void mergeQueue(List<ChapterItem> chapters) {
+        // If playChunks hasn't been called yet (no current chapter), buffer the
+        // items. playChunks() will drain this buffer right after clearing the queue,
+        // so the chapters survive the clear even when mergeQueue arrives first.
+        if (currentChunks == null && !isPlaying) {
+            Log.d(TAG, "mergeQueue: buffering " + chapters.size()
+                    + " items (playChunks not yet called)");
+            if (pendingMergeBuffer == null) {
+                pendingMergeBuffer = new ArrayList<>(chapters);
+            } else {
+                // Accumulate — JS may call us multiple times as preload texts arrive
+                pendingMergeBuffer.addAll(chapters);
+            }
+            return;
+        }
+
         // Build set of IDs already in the queue + currently playing
         Set<String> existing = new HashSet<>();
         existing.add(currentChapterId != null ? currentChapterId : "");
@@ -968,19 +1024,22 @@ public class TtsPlaybackService extends Service {
         ChapterMeta meta = pendingPlaylist.get(pendingHead);
         pendingHead++;
 
-        final String id    = meta.chapterId;
-        final String title = meta.title;
-        final float  fRate  = meta.rate;
-        final float  fPitch = meta.pitch;
-        final String base  = selfFetchBase;
-        final String tok   = selfFetchToken;
+        final String  id      = meta.chapterId;
+        final String  title   = meta.title;
+        final float   fRate   = meta.rate;
+        final float   fPitch  = meta.pitch;
+        final String  base    = selfFetchBase;
+        final String  tok     = selfFetchToken;
+        // Capture urgency at schedule time so the lambda uses the right value
+        // even if awaitingFetch changes before the IO thread runs.
+        final boolean urgent  = awaitingFetch;
 
-        Log.d(TAG, "doPrefetchStep: fetching ch=" + id + " ver=" + version);
+        Log.d(TAG, "doPrefetchStep: fetching ch=" + id + " ver=" + version + " urgent=" + urgent);
 
         ioExecutor.execute(() -> {
             try {
                 String url  = base + "/api/chapters/" + id + "/text";
-                String body = doHttpGet(url, tok);
+                String body = doHttpGet(url, tok, urgent);
                 JSONObject json = new JSONObject(body);
                 String text = json.optString("text_content", "");
                 List<String> chunks = splitChunksJava(text, 20, 4000);
@@ -1038,15 +1097,20 @@ public class TtsPlaybackService extends Service {
                         return;
                     }
                     if (awaitingFetch) {
-                        // Retry after 3 seconds — chapter is needed urgently
-                        Log.d(TAG, "doPrefetchStep: retrying ch=" + id + " in 3s (awaiting)");
+                        // Player is stalled waiting for this chapter.
+                        // Retry very quickly so each Railway cold-start attempt
+                        // fails fast (12 s read timeout) and retries immediately.
+                        // Railway typically warms up in 20-40 s total, so with
+                        // ~13 s per cycle (12 s timeout + 500 ms wait) we recover
+                        // in 2-3 attempts (26-39 s) instead of 2 × 33 s = 66 s.
+                        Log.d(TAG, "doPrefetchStep: retrying ch=" + id + " in 500ms (awaiting)");
                         pendingHead--; // re-try same chapter
                         mainHandler.postDelayed(() -> {
                             if (version != prefetchVersion) {
                                 return;
                             }
                             doPrefetchStep(version);
-                        }, 3_000);
+                        }, 500);
                     } else {
                         // Non-urgent failure — retry after 5s so the queue keeps
                         // filling even when a single fetch hiccups (e.g. transient
@@ -1087,12 +1151,19 @@ public class TtsPlaybackService extends Service {
         abandonAudioFocus();
     }
 
-    private String doHttpGet(String urlStr, String token) throws IOException {
+    /**
+     * @param urgent true when the player is waiting for this result (awaitingFetch).
+     *               Use shorter timeouts so we fail fast and retry rather than
+     *               stalling 30+ seconds per attempt on a cold Railway server.
+     */
+    private String doHttpGet(String urlStr, String token, boolean urgent) throws IOException {
         URL url = new URL(urlStr);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("GET");
-        conn.setConnectTimeout(15_000);
-        conn.setReadTimeout(30_000);
+        // Urgent (chapter needed now): short timeout → fast retry loop
+        // Non-urgent (prefetching ahead): longer timeout is fine
+        conn.setConnectTimeout(urgent ? 8_000 : 15_000);
+        conn.setReadTimeout(urgent ? 12_000 : 30_000);
         if (token != null && !token.isEmpty()) {
             conn.setRequestProperty("Authorization", "Bearer " + token);
         }
