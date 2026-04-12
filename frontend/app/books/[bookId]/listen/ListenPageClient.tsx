@@ -595,8 +595,10 @@ export default function ListenPage() {
     const bridge = getTtsBridge();
     if (!bridge || typeof bridge.setPendingChapters !== "function") return;
 
+    // No status filter: native device TTS needs text content, not server audio.
+    // Chapters with status "converting" or "error" may still have text available.
     const remainingChapters = allChapters
-      .filter((c) => c.chapter_index > currentIndex && c.status === "ready")
+      .filter((c) => c.chapter_index > currentIndex)
       .sort((a, b) => a.chapter_index - b.chapter_index);
 
     if (remainingChapters.length === 0) return;
@@ -624,13 +626,13 @@ export default function ListenPage() {
     const bridge = getTtsBridge();
     if (!bridge) return;
 
-    // Only scan the chapters we actively preload (first 15 ahead).
-    // Scanning ALL remaining chapters means 99+ sequential IndexedDB awaits
-    // which gets cancelled by the next dep change before the call fires.
+    // Scan up to 50 chapters ahead (matches Java's chapterQueue cap of 50).
+    // No status filter: native device TTS only needs text content, not server audio.
+    // Chapters with status "converting" or "error" may still have text in IndexedDB.
     const remainingChapters = allChapters
-      .filter((c) => c.chapter_index > currentIndex && c.status === "ready")
+      .filter((c) => c.chapter_index > currentIndex)
       .sort((a, b) => a.chapter_index - b.chapter_index)
-      .slice(0, 15);
+      .slice(0, 50);
 
     if (remainingChapters.length === 0) return;
 
