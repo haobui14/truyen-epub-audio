@@ -46,6 +46,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import android.util.Log;
+import com.truyenaudio.app.BuildConfig;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -53,15 +54,62 @@ import org.json.JSONObject;
 /**
  * Foreground Service that drives native Android TTS playback.
  *
- * Architecture
- * ────────────
- * • Bound via LocalBinder so TtsBridge gets a direct service reference.
- * • All state mutations run on the main thread (mainHandler.post) even when
- *   called back from UtteranceProgressListener (which runs on an internal thread).
- * • volatile fields are used for values read from the WebView JS thread without
- *   going through mainHandler: currentChapterId, currentChunkIdx, isPlaying.
- * • JS events are sent via a static JsEvaluator callback set by TtsBridge so
- *   the service never holds a direct WebView reference.
+ * <h2>Architecture</h2>
+ * <ul>
+ * <li>Bound via LocalBinder so TtsBridge gets a direct service reference.</li>
+ * <li>All state mutations run on the main thread (mainHandler.post) even when
+ *     called back from UtteranceProgressListener (which runs on an internal
+ *     thread).</li>
+ * <li>volatile fields are used for values read from the WebView JS thread
+ *     without going through mainHandler: currentChapterId, currentChunkIdx,
+ *     isPlaying.</li>
+ * <li>JS events are sent via a static JsEvaluator callback set by TtsBridge so
+ *     the service never holds a direct WebView reference.</li>
+ * </ul>
+ *
+ * <h2>State machine (summary)</h2>
+ * <pre>
+ *  idle ──play──▶ playing ──pause──▶ paused
+ *   ▲               │                    │
+ *   │      chapter-end (queue empty)     │
+ *   │               ▼                    │
+ *   │        awaitingFetch ◀─────────────┤ resume
+ *   │               │                    │
+ *   │   playlist exhausted               │
+ *   │               ▼                    │
+ *   │    fire 'native-tts-done'          │
+ *   └──────────── idle ◀─────────────────┘
+ * </pre>
+ * Full diagram, state inventory, event flow, and the numbered invariants (I1–I7)
+ * referenced throughout this file live in {@code docs/android-player.md}.
+ *
+ * <h2>Key invariants (edit carefully)</h2>
+ * <ol>
+ *   <li><b>I1</b>: {@code awaitingFetch} ⇒ ({@code chapterQueue.isEmpty()} ∨
+ *       {@code !isPlaying}). The three awaitingFetch-delivery sites
+ *       ({@link #mergeQueue}, {@link #setPendingPlaylist}, the
+ *       {@link #doPrefetchStep} success path) gate on {@code isPlaying} so a
+ *       user pause during the awaitingFetch window isn't overridden.</li>
+ *   <li><b>I2</b>: {@code prefetchActive} ⇒ a fetch task is pending on
+ *       ioExecutor. {@code prefetchVersion++} is the ONLY sanctioned way to
+ *       invalidate an in-flight fetch.</li>
+ *   <li><b>I3</b>: {@code autoAdvancing=true} only inside
+ *       {@link #deliverAutoAdvance}'s call to {@link #startChapter} — suppresses
+ *       playFakeSilence + MediaSession re-assertion at chapter boundaries.</li>
+ *   <li><b>I7</b>: After {@code chapterQueue.clear()}, {@code pendingHead}
+ *       MUST be re-scanned (see {@link #rescanPendingHead}) — otherwise the
+ *       skip-loop leaves it stale at a forward offset and
+ *       {@link #doPrefetchStep} fetches the wrong chapter (50-chapter jump).</li>
+ * </ol>
+ *
+ * <h2>Helpers</h2>
+ * <ul>
+ *   <li>{@link #deliverAutoAdvance(ChapterItem, String)} — single entry point
+ *       for auto-advance chapter transitions (5 call sites).</li>
+ *   <li>{@link #dispatchChapterAdvance(String, String)} — emits the JS event.</li>
+ *   <li>{@link #rescanPendingHead()} — used by {@link #doPrefetchStep} skip-loop
+ *       and the {@link #onChunkFinished} FAILSAFE.</li>
+ * </ul>
  */
 public class TtsPlaybackService extends Service {
 
@@ -343,6 +391,22 @@ public class TtsPlaybackService extends Service {
         return START_STICKY;
     }
 
+    /**
+     * Called when the user swipes the app away from Recents. A started
+     * foreground service otherwise keeps running — so without this, audio
+     * would continue after the user intentionally closed the app. Stop
+     * playback and tear the service down; cold-start sync on next launch
+     * will start fresh from the last saved chapter/chunk.
+     */
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        Log.d(TAG, "onTaskRemoved — user swiped app away, stopping service");
+        stopPlayback();
+        stopForeground(true);
+        stopSelf();
+        super.onTaskRemoved(rootIntent);
+    }
+
     @Override
     public void onDestroy() {
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
@@ -487,57 +551,32 @@ public class TtsPlaybackService extends Service {
             ChapterItem nextChapter = chapterQueue.poll();
             if (nextChapter != null) {
                 Log.d(TAG, "→ advance to " + nextChapter.chapterId);
-                String completedId = currentChapterId;
-                String newId = nextChapter.chapterId != null ? nextChapter.chapterId : "";
-                synchronized (completedChapterIds) {
-                    completedChapterIds.add(completedId);
-                }
-                // Start playing FIRST, then notify JS — dispatchJs uses
-                // webView.evaluateJavascript which can stall/defer when WebView is
-                // paused (screen off). Doing it after startChapter ensures TTS
-                // is already speaking before any WebView interaction.
-                autoAdvancing = true;
-                startChapter(nextChapter, 0);
-                autoAdvancing = false;
-                // Deferred JS notification — fire-and-forget
-                final String cId = completedId;
-                final String nId = newId;
-                mainHandler.post(() -> dispatchJs(
-                        "window.dispatchEvent(new CustomEvent('native-tts-chapter-advance'," +
-                        "{detail:{completedChapterId:'" + cId + "',newChapterId:'" + nId + "'}}))"));
+                deliverAutoAdvance(nextChapter, currentChapterId);
             } else if (prefetchActive || pendingHead < pendingPlaylist.size()) {
                 // A fetch is in flight or more chapters can be fetched — wait for it.
                 // The prefetch callback will call startChapter when it has a result.
                 Log.d(TAG, "→ awaitingFetch (prefetch=" + prefetchActive + " pending=" + pendingHead + "/" + pendingPlaylist.size() + ")");
+                // I1 entry: queue is empty (just polled null) — OK to wait.
+                assertInvariant("I1 (onChunkFinished: queue empty when awaitingFetch=true)",
+                        chapterQueue.isEmpty());
                 awaitingFetch = true;
                 // Kick prefetch in case it's not already running
                 kickPrefetch();
             } else {
-                // FAILSAFE: Before giving up, check if there are ANY un-queued
-                // chapters left in the playlist that we may have inadvertently
-                // skipped (e.g. because the prefetch chain was killed by a
+                // FAILSAFE: queue empty, prefetch idle, and pendingHead says the
+                // playlist is exhausted — but the playlist may still contain
+                // un-queued chapters (prefetch chain was killed by a
                 // prefetchVersion bump from setPendingPlaylist racing with
-                // playChunks). If so, rescan from the beginning.
-                boolean hasMore = false;
-                for (int i = 0; i < pendingPlaylist.size(); i++) {
-                    if (!isAlreadyQueued(pendingPlaylist.get(i).chapterId)) {
-                        hasMore = true;
-                        pendingHead = i;
-                        break;
-                    }
-                }
-                if (hasMore) {
-                    Log.d(TAG, "→ FAILSAFE: found un-fetched chapter at pendingHead=" + pendingHead
-                            + "/" + pendingPlaylist.size() + ", retrying prefetch");
-                    awaitingFetch = true;
-                    prefetchActive = false; // force kickPrefetch to start
-                    kickPrefetch();
-                } else {
-                    // Nothing left to play — fire done
-                    Log.d(TAG, "→ fireDone (nothing left, playlist=" + pendingPlaylist.size()
-                            + " selfFetchBase=" + (selfFetchBase.isEmpty() ? "EMPTY" : "set") + ")");
-                    fireDone();
-                }
+                // playChunks). rescanPendingHead + kickPrefetch re-scans from 0;
+                // doPrefetchStep's skip-loop will advance past truly-queued
+                // entries, and its exhausted-branch will fire done if nothing
+                // is left. See invariant I7.
+                rescanPendingHead();
+                Log.d(TAG, "→ FAILSAFE: rescanned pendingHead=" + pendingHead
+                        + "/" + pendingPlaylist.size() + ", retrying prefetch");
+                awaitingFetch = true;
+                prefetchActive = false; // force kickPrefetch to start
+                kickPrefetch();
             }
         }
     }
@@ -777,20 +816,7 @@ public class TtsPlaybackService extends Service {
 
         ChapterItem next = chapterQueue.poll();
         if (next != null) {
-            String completedId = currentChapterId;
-            String newId = next.chapterId != null ? next.chapterId : "";
-            synchronized (completedChapterIds) {
-                completedChapterIds.add(completedId);
-            }
-            // Start playing FIRST, then notify JS (deferred)
-            autoAdvancing = true;
-            startChapter(next, 0);
-            autoAdvancing = false;
-            final String cId = completedId;
-            final String nId = newId;
-            mainHandler.post(() -> dispatchJs(
-                    "window.dispatchEvent(new CustomEvent('native-tts-chapter-advance'," +
-                    "{detail:{completedChapterId:'" + cId + "',newChapterId:'" + nId + "'}}))"));
+            deliverAutoAdvance(next, currentChapterId);
         } else if (prefetchActive || pendingHead < pendingPlaylist.size()) {
             String completedId = currentChapterId;
             synchronized (completedChapterIds) {
@@ -904,29 +930,13 @@ public class TtsPlaybackService extends Service {
         Log.d(TAG, "mergeQueue: added=" + added + " total=" + chapterQueue.size()
                 + " awaitingFetch=" + awaitingFetch
                 + " offered=" + chapters.size() + " ids=" + addedIds);
+        // See invariant I1: deliver iff awaitingFetch && queue non-empty && isPlaying.
+        // !isPlaying means user paused during the awaitingFetch window — leave the
+        // item queued; resumePlayback → chunk-finish path picks it up naturally.
         if (added > 0 && awaitingFetch && !chapterQueue.isEmpty() && isPlaying) {
-            // Chapter finished with empty queue — deliver the first merged chapter now.
-            // Skip when !isPlaying: user paused during the awaitingFetch window and
-            // auto-starting here would override their pause. The queued item waits;
-            // resumePlayback → chunk-finish path will pick it up naturally.
             awaitingFetch = false;
             ChapterItem next = chapterQueue.poll();
-            if (next != null) {
-                String completedId = currentChapterId;
-                synchronized (completedChapterIds) {
-                    completedChapterIds.add(completedId);
-                }
-                // Start playing FIRST, then notify JS (deferred)
-                autoAdvancing = true;
-                startChapter(next, 0);
-                autoAdvancing = false;
-                final String cId = completedId;
-                final String nId = next.chapterId;
-                mainHandler.post(() -> dispatchJs(
-                        "window.dispatchEvent(new CustomEvent('native-tts-chapter-advance'," +
-                        "{detail:{completedChapterId:'" + cId +
-                        "',newChapterId:'" + nId + "'}}))"));
-            }
+            if (next != null) deliverAutoAdvance(next, currentChapterId);
         }
     }
 
@@ -984,27 +994,11 @@ public class TtsPlaybackService extends Service {
         prefetchActive = false;
         kickPrefetch();
 
-        // If chapter ended while waiting for playlist, deliver now.
-        // Skip when !isPlaying: user paused during awaitingFetch; auto-starting
-        // would override their pause.
+        // See invariant I1: deliver iff awaitingFetch && queue non-empty && isPlaying.
         if (awaitingFetch && !chapterQueue.isEmpty() && isPlaying) {
             awaitingFetch = false;
             ChapterItem next = chapterQueue.poll();
-            if (next != null) {
-                String completedId = currentChapterId;
-                synchronized (completedChapterIds) {
-                    completedChapterIds.add(completedId);
-                }
-                autoAdvancing = true;
-                startChapter(next, 0);
-                autoAdvancing = false;
-                final String cId = completedId;
-                final String nId = next.chapterId;
-                mainHandler.post(() -> dispatchJs(
-                        "window.dispatchEvent(new CustomEvent('native-tts-chapter-advance'," +
-                        "{detail:{completedChapterId:'" + cId +
-                        "',newChapterId:'" + nId + "'}}))"));
-            }
+            if (next != null) deliverAutoAdvance(next, currentChapterId);
         }
     }
 
@@ -1042,6 +1036,10 @@ public class TtsPlaybackService extends Service {
             // so the loop picks up any new state (e.g. queue emptied).
             return;
         }
+        // I2: prefetchActive ⇒ ioExecutor has a pending task. doPrefetchStep
+        // will exit and flip prefetchActive=false if ioExecutor is null/shutdown.
+        assertInvariant("I2 (kickPrefetch: ioExecutor alive)",
+                ioExecutor != null && !ioExecutor.isShutdown());
         prefetchActive = true;
         int ver = prefetchVersion; // capture
         Log.d(TAG, "kickPrefetch: ver=" + ver + " queue=" + chapterQueue.size()
@@ -1063,6 +1061,9 @@ public class TtsPlaybackService extends Service {
             prefetchActive = false;
             return;
         }
+
+        // See invariant I7: queue-cleared-but-pendingHead-stale rescue.
+        rescanPendingHead();
 
         // Skip chapters already queued or currently playing
         while (pendingHead < pendingPlaylist.size()) {
@@ -1126,28 +1127,17 @@ public class TtsPlaybackService extends Service {
                     ChapterItem item = new ChapterItem(chunks, id, title, fRate, fPitch);
 
                     if (awaitingFetch && isPlaying) {
-                        // Chapter ended and queue was empty — play this immediately.
-                        // Reset prefetchActive BEFORE startChapter so that
-                        // startChapter → kickPrefetch() can start a fresh chain.
-                        // Skip when !isPlaying: user paused; queue the item and
-                        // continue the chain so resumePlayback can pick it up.
+                        // See invariant I1: deliver iff awaitingFetch && isPlaying.
+                        // Reset prefetchActive BEFORE delivering so the
+                        // startChapter → kickPrefetch can start a fresh chain.
+                        // !isPlaying means user paused — queue the item
+                        // and continue the prefetch chain normally.
                         awaitingFetch = false;
                         prefetchActive = false;
                         Log.d(TAG, "doPrefetchStep: delivering ch=" + id + " to awaiting player");
-                        String completedId = currentChapterId;
-                        synchronized (completedChapterIds) {
-                            completedChapterIds.add(completedId);
-                        }
-                        // Start playing FIRST, then notify JS (deferred)
-                        autoAdvancing = true;
-                        startChapter(item, 0);
-                        autoAdvancing = false;
-                        final String cId = completedId;
-                        mainHandler.post(() -> dispatchJs(
-                                "window.dispatchEvent(new CustomEvent('native-tts-chapter-advance'," +
-                                "{detail:{completedChapterId:'" + cId +
-                                "',newChapterId:'" + id + "'}}))"));
-                        // startChapter calls kickPrefetch, which will continue the chain
+                        deliverAutoAdvance(item, currentChapterId);
+                        // startChapter (inside deliverAutoAdvance) calls kickPrefetch,
+                        // which will continue the chain.
                     } else {
                         if (!isAlreadyQueued(id)) {
                             chapterQueue.add(item);
@@ -1279,6 +1269,80 @@ public class TtsPlaybackService extends Service {
         String last = cur.toString().trim();
         if (!last.isEmpty()) chunks.add(last);
         return chunks;
+    }
+
+    /**
+     * Consume one queued/fetched chapter as an auto-advance transition.
+     * Records {@code completedId} in {@code completedChapterIds}, wraps
+     * {@code startChapter} in {@code autoAdvancing=true} (suppresses
+     * playFakeSilence + MediaSession re-assertion at chapter boundaries),
+     * and posts a deferred {@code native-tts-chapter-advance} event to JS.
+     *
+     * <p>Callers (see docs/android-player.md for full nav map):
+     * <ul>
+     *  <li>{@code onChunkFinished} chapter-done — normal auto-advance from queue</li>
+     *  <li>{@code mergeQueue} / {@code setPendingPlaylist} / {@code doPrefetchStep}
+     *      awaitingFetch branches — delivery when player is waiting</li>
+     *  <li>{@code skipToNextChapter} — user hardware skip</li>
+     * </ul>
+     *
+     * <p>See invariant I3 in docs/android-player.md: {@code autoAdvancing=true}
+     * is only legitimate inside this helper's call to {@code startChapter}.
+     */
+    private void deliverAutoAdvance(ChapterItem next, String completedId) {
+        // I3: autoAdvancing must start false here — enforces single-caller entry.
+        assertInvariant("I3 (deliverAutoAdvance: not already auto-advancing)",
+                !autoAdvancing);
+        String safeCompletedId = completedId != null ? completedId : "";
+        String safeNewId = next.chapterId != null ? next.chapterId : "";
+        synchronized (completedChapterIds) {
+            completedChapterIds.add(safeCompletedId);
+        }
+        autoAdvancing = true;
+        startChapter(next, 0);
+        autoAdvancing = false;
+        // Deferred JS notification — fire-and-forget. dispatchJs uses
+        // webView.evaluateJavascript which can stall/defer when WebView is
+        // paused (screen off). Posting after startChapter ensures TTS is
+        // already speaking before any WebView interaction.
+        mainHandler.post(() -> dispatchChapterAdvance(safeCompletedId, safeNewId));
+    }
+
+    /**
+     * Fire {@code native-tts-chapter-advance} to JS. Single source of truth
+     * for the event payload format; all callers go through here.
+     */
+    private void dispatchChapterAdvance(String completedChapterId, String newChapterId) {
+        dispatchJs(
+                "window.dispatchEvent(new CustomEvent('native-tts-chapter-advance'," +
+                "{detail:{completedChapterId:'" + completedChapterId +
+                "',newChapterId:'" + newChapterId + "'}}))");
+    }
+
+    /**
+     * Reset {@code pendingHead=0} if the queue has been drained behind our
+     * back (e.g. {@code playChunks} cleared it) while pendingHead points
+     * dozens of entries ahead. The subsequent skip-loop in
+     * {@code doPrefetchStep} re-advances past already-queued chapters and
+     * the currentChapter via {@code isAlreadyQueued}. See invariant I7.
+     */
+    private void rescanPendingHead() {
+        if (chapterQueue.isEmpty() && pendingHead > 0) {
+            pendingHead = 0;
+        }
+    }
+
+    /**
+     * Debug-only runtime check for an invariant documented in
+     * docs/android-player.md. Logs a loud error with a stack trace if the
+     * invariant is violated — catches future edits that silently break
+     * assumptions. No-op in release builds.
+     */
+    private void assertInvariant(String name, boolean condition) {
+        if (BuildConfig.DEBUG && !condition) {
+            Log.wtf(TAG, "Invariant violated: " + name,
+                    new RuntimeException("invariant-stack"));
+        }
     }
 
     private void startChapter(ChapterItem item, int startIdx) {

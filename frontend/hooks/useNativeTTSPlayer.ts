@@ -31,10 +31,36 @@ export function useNativeTTSAvailable() {
 
 /**
  * Plays book chapter text using the device's native TTS engine via the
- * Android TtsPlaybackService. The entire chunk loop runs in native Java,
- * so playback continues even when the WebView is suspended (screen off).
+ * Android TtsPlaybackService. The chunk loop runs entirely in Java so
+ * playback continues when the WebView is suspended (screen off).
  *
- * JS only sends chunks to native and listens for progress events.
+ * ## Responsibilities
+ * 1. Push chunks to native (`startNativePlayback` → `bridge.playChunksWithId`).
+ * 2. Listen to `native-tts-*` events and sync JS state (`isPlaying`,
+ *    `chunkIndex`, `ttsError`) + call `onEnded` for chapter advance / done.
+ * 3. Reset appropriately when `chapterId` / `text` / `isActive` changes —
+ *    see the reset effect's four-way branch (invariants I4, I5).
+ *
+ * ## Native events handled
+ * | Event                       | Handler             | Action                            |
+ * |-----------------------------|---------------------|-----------------------------------|
+ * | `native-tts-chunk`          | `onChunk`           | setChunkIndex if on this chapter |
+ * | `native-tts-state`          | `onState`           | Sync isPlaying, chunkIndex        |
+ * | `native-tts-chapter-advance`| `onChapterAdvance`  | dedup + `onEnded(newChapterId)`   |
+ * | `native-tts-done`           | `onDone`            | clear state, maybe release lock   |
+ * | `native-tts-error`          | `onNativeError`     | setTtsError                       |
+ *
+ * ## Coordination refs (none is purely cosmetic)
+ * - `chapterAdvancedRef` — set by `onChapterAdvance`, read by reset effect
+ *   to preserve native playback during auto-advance-triggered route change.
+ * - `lastAdvancedChapterRef` — dedup for batched advance events on WebView
+ *   resume (all queued events fire in one microtask).
+ * - `chapterIdRef`, `chapterTitleRef`, `chunksRef`, `chunkRef`, `playingRef`,
+ *   `rateRef`, `pitchRef`, `onEndedRef` — mirror of React state/props for
+ *   use inside stable callbacks.
+ *
+ * See `docs/android-player.md` for the full state machine, invariants, and
+ * navigation flow map.
  */
 export function useNativeTTSPlayer(
   bookId: string,
@@ -252,31 +278,36 @@ export function useNativeTTSPlayer(
     // advance events are not accidentally suppressed.
     lastAdvancedChapterRef.current = undefined;
 
-    // If the native service auto-advanced to this chapter, DON'T stop it.
-    // Also skip the stop if native is already playing this chapter — this
-    // guards against the visibility-change router.replace racing ahead of
-    // the queued native-tts-chapter-advance event (which would otherwise
-    // cause wasAutoAdvanced=false → stopPlayback → startNativePlayback(0)
-    // → replay from chunk 0 on lockscreen resume).
-    //
-    // Additionally: if native is actively playing a DIFFERENT chapter (it has
-    // auto-advanced further than JS while screen was off, and the visibilitychange
-    // handler navigated JS to an intermediate chapter that native already passed),
-    // do NOT stop it. The next visibilitychange cycle will sync JS to wherever
-    // native currently is. Stopping here would kill playback that's working fine.
+    // Decide whether to stop native at this chapter transition. There are four
+    // possible native states at this point — only one warrants stopping.
+    // See docs/android-player.md invariants I4, I5. Stale-session (I6) is
+    // handled separately by ListenPageClient's stale-session guard effect.
     if (isActive && !wasAutoAdvanced) {
       const bridge = getTtsBridge();
       const nativeChId = bridge?.getCurrentChapterId?.() ?? "";
       const nativePlaying = bridge?.isPlaying?.() ?? false;
-      // Native is ahead: actively playing a chapter other than this one.
-      // Let it continue — don't stop and don't restart.
+
+      const nativeAlreadyPlaying =
+        nativeChId === chapterId && nativePlaying;
       const nativeIsAhead =
         nativePlaying && nativeChId !== "" && nativeChId !== chapterId;
-      if (!nativeIsAhead) {
-        const nativeAlreadyPlaying = nativeChId === chapterId && nativePlaying;
-        if (!nativeAlreadyPlaying) {
-          bridge?.stopPlayback();
-        }
+
+      if (nativeAlreadyPlaying) {
+        // I4 (lockscreen-resume): native is on THIS chapter and playing.
+        // visibilitychange / cold-start just synced JS here; stopping would
+        // cause the autoPlay branch below to restart from chunk 0.
+      } else if (nativeIsAhead) {
+        // I5 (cascade-catches-up): native advanced further than JS in the
+        // tiny race between visibilitychange's router.replace and this
+        // effect. Queued native-tts-chapter-advance events will catch JS up.
+        // A stale-session variant of this (native playing a long-dead
+        // chapter) is caught earlier by ListenPageClient's stale-session
+        // guard — by the time we reach this effect, nativeIsAhead means a
+        // legitimate cascade.
+      } else {
+        // Normal fresh-start path: native idle, or was on same chapter but
+        // paused. Stop to clear any stale state; autoPlay branch starts fresh.
+        bridge?.stopPlayback();
       }
     }
 

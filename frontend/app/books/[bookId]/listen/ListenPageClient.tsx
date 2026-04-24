@@ -1,4 +1,36 @@
 "use client";
+/**
+ * ListenPageClient — the /listen route.
+ *
+ * ## Native-TTS navigation effects (declaration order = React effect-order)
+ *
+ * 1. `visibilitychange` handler — registered if voice is native:. Fires on
+ *    tab-visibility transitions; if native is on a different chapter,
+ *    `router.replace(…autoplay=1)` to native's chapter.
+ *
+ * 2. Cold-start sync — runs once per mount after allChapters loads. Same
+ *    logic as above but handles the case where the WebView was OS-killed and
+ *    reloaded with a stale URL. Sets `coldStartReplacingRef` if replacing so
+ *    the stale-session guard below skips one render.
+ *
+ * 3. Stale-session guard — runs on `[chapterId, voice, autoPlay]` changes.
+ *    When URL lacks `autoplay=1` AND native is on a different chapter, calls
+ *    `bridge.stopPlayback()` so a leftover native session doesn't fire a
+ *    chapter-advance event that drags JS forward. See invariant I6.
+ *
+ * 4. Effect A (`setPendingChapters`) — hands Java the full upcoming-chapter
+ *    playlist (id + title + rate + pitch per chapter). Self-fetch metadata
+ *    only; no text. Re-fires on chapterId/rate/pitch changes.
+ *
+ * 5. Effect B (`mergeQueuedChapters`) — pushes pre-loaded chapter TEXT chunks
+ *    into Java's chapterQueue as preload queries complete. Java dedupes
+ *    existing entries.
+ *
+ * ## See also
+ * - docs/android-player.md — full state machine, event map, invariants
+ * - useNativeTTSPlayer — JS hook that handles native-tts-* events
+ * - TtsPlaybackService — the Java foreground service
+ */
 import {
   useCallback,
   useEffect,
@@ -468,6 +500,11 @@ export default function ListenPage() {
   const nativeInitSyncDoneRef = useRef(false);
   // Set when cold-start sync schedules a router.replace so the stale-session
   // guard below skips the render cycle in which the URL hasn't committed yet.
+  // Load-bearing: cold-start-sync and stale-session-guard observe identical
+  // native state (native playing a chapter ≠ chapterId) but want opposite
+  // outcomes (sync JS to native vs. stop native). The ref is the only signal
+  // that distinguishes "cold-start sync just scheduled the replace" from
+  // "user landed here via a Link while a stale session was playing".
   const coldStartReplacingRef = useRef(false);
 
   const chapterTextContent = chapterText?.text_content ?? null;
@@ -488,71 +525,24 @@ export default function ListenPage() {
     getAllCachedChapterIds().then((ids) => setCachedIds(new Set(ids)));
   }, []);
 
-  // ── Sync JS with native service on app resume (screen on / tab visible) ──
-  // When the WebView is suspended (screen off), native auto-advances chapters
-  // but JS events don't fire. On resume, check what native is actually playing
-  // and navigate to it if it differs from the current JS chapter.
-  // Also save every chapter played to local DB and trigger server sync.
-  useEffect(() => {
-    if (!voice.startsWith("native:")) return;
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState !== "visible") return;
-      const bridge = getTtsBridge();
-      if (!bridge || typeof bridge.getCurrentChapterId !== "function") return;
-      const nativeChapterId = bridge.getCurrentChapterId();
-      if (nativeChapterId && nativeChapterId !== chapterId) {
-        // Native advanced to a different chapter — save it to local DB first
-        const targetChapter = allChapters.find((c) => c.id === nativeChapterId);
-        if (targetChapter) {
-          const nativeChunk = bridge.getCurrentChunk();
-          saveLocalBookProgress({
-            book_id: bookId,
-            chapter_id: nativeChapterId,
-            chapter_index: targetChapter.chapter_index,
-            progress_value: nativeChunk >= 0 ? nativeChunk : 0,
-          });
-
-          localStorage.setItem(`listen-chapter:${bookId}`, nativeChapterId);
-          syncBookProgressToServer(bookId).catch(() => {});
-
-          // Native advanced while screen was off — always autoplay on resume.
-          // Native can only auto-advance when isPlaying=true, so if it is now
-          // stopped (queue exhausted) the user was still actively listening and
-          // expects playback to continue. Omitting &autoplay=1 would leave the
-          // player paused and setTrack won't re-fire for the same chapterId.
-          const url = `/listen?id=${bookId}&chapter=${nativeChapterId}&autoplay=1`;
-          router.replace(url);
-        }
-      } else {
-        // Same chapter or no native chapter — still sync to server
-        syncBookProgressToServer(bookId).catch(() => {});
-      }
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
-  }, [voice, chapterId, bookId, allChapters, router]);
-
-  // ── Initial native sync on cold start ──
-  // visibilitychange only fires on state *transitions*. If the OS killed the
-  // WebView while TtsPlaybackService kept running, the document is already
-  // visible when the page reloads and no visibilitychange event fires.
-  // Run the same sync logic once, as soon as allChapters finishes loading.
-  useEffect(() => {
-    if (!voice.startsWith("native:") || allChapters.length === 0) return;
-    if (nativeInitSyncDoneRef.current) return;
-    nativeInitSyncDoneRef.current = true;
-
+  // ── Shared native-sync helper ────────────────────────────────────────────
+  // If native is playing a chapter different from JS's current chapterId,
+  // persist the native chapter's progress locally + server-side, then
+  // router.replace to the native chapter with autoplay=1. Returns true if a
+  // replace was issued so the caller can track the in-flight redirect.
+  //
+  // Used by BOTH:
+  //   - visibilitychange handler (screen-off resume cascade)
+  //   - cold-start sync (WebView was OS-killed, service survived)
+  // See docs/android-player.md §4 nav entry points.
+  const syncJsToNativeChapter = useCallback((): boolean => {
     const bridge = getTtsBridge();
-    if (!bridge || typeof bridge.getCurrentChapterId !== "function") return;
+    if (!bridge || typeof bridge.getCurrentChapterId !== "function") return false;
     const nativeChapterId = bridge.getCurrentChapterId();
-    if (!nativeChapterId || nativeChapterId === chapterId) return;
+    if (!nativeChapterId || nativeChapterId === chapterId) return false;
 
     const targetChapter = allChapters.find((c) => c.id === nativeChapterId);
-    if (!targetChapter) return;
+    if (!targetChapter) return false;
 
     const nativeChunk = bridge.getCurrentChunk();
     saveLocalBookProgress({
@@ -564,15 +554,50 @@ export default function ListenPage() {
     localStorage.setItem(`listen-chapter:${bookId}`, nativeChapterId);
     syncBookProgressToServer(bookId).catch(() => {});
 
-    // Same reasoning as the visibilitychange handler above: native advanced
-    // while the WebView was not running, so the user was actively listening —
-    // always resume with autoplay regardless of the current isPlaying state.
-    coldStartReplacingRef.current = true;
+    // Always autoplay on sync: native was actively listening before the
+    // WebView was suspended/killed, and the user expects playback to continue.
+    // Omitting &autoplay=1 would leave the player paused since setTrack won't
+    // re-fire for the same chapterId.
     router.replace(
       `/listen?id=${bookId}&chapter=${nativeChapterId}&autoplay=1`,
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [voice, allChapters, bookId, chapterId, router]);
+    return true;
+  }, [chapterId, allChapters, bookId, router]);
+
+  // ── visibilitychange: sync on screen-on/tab-visible transitions ──
+  // When the WebView is suspended (screen off), native auto-advances chapters
+  // but JS events may be throttled. On resume, reconcile JS with native.
+  useEffect(() => {
+    if (!voice.startsWith("native:")) return;
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      const replaced = syncJsToNativeChapter();
+      if (!replaced) {
+        // Same chapter or no native chapter — still sync progress to server
+        syncBookProgressToServer(bookId).catch(() => {});
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [voice, bookId, syncJsToNativeChapter]);
+
+  // ── Cold-start sync: run once when allChapters loads ──
+  // visibilitychange only fires on state *transitions*. If the OS killed the
+  // WebView while TtsPlaybackService kept running, the document is already
+  // visible on page load so no visibilitychange event fires.
+  useEffect(() => {
+    if (!voice.startsWith("native:") || allChapters.length === 0) return;
+    if (nativeInitSyncDoneRef.current) return;
+    nativeInitSyncDoneRef.current = true;
+    const replaced = syncJsToNativeChapter();
+    if (replaced) {
+      // Stale-session guard (below) will otherwise see the pre-replace state
+      // and stop native before the replace commits. Skip the guard for one render.
+      coldStartReplacingRef.current = true;
+    }
+  }, [voice, allChapters, syncJsToNativeChapter]);
 
   // ── Stale-session guard ─────────────────────────────────────────────────
   // Arrive at /listen via a path that bypasses navigateTo (e.g. a Link on the

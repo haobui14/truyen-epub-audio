@@ -1,4 +1,17 @@
 "use client";
+/**
+ * PlayerContext — single player instance that survives route changes.
+ *
+ * Lives in the root layout, so the player hooks (`useSpeechPlayer`,
+ * `useNativeTTSPlayer`) are never remounted when the user navigates between
+ * `/listen`, `/book`, `/read`, etc. This is what keeps audio playing during
+ * navigation.
+ *
+ * Routes playback to web (edge-tts via backend) or native (Android TTS via
+ * `useNativeTTSPlayer`) based on the voice prefix (`native:*` = native).
+ *
+ * See `docs/android-player.md` for the native TTS architecture.
+ */
 import {
   createContext,
   useContext,
