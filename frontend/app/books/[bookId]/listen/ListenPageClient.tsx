@@ -466,6 +466,9 @@ export default function ListenPage() {
   // Guards the one-shot cold-start native sync so it only runs once per mount
   // even though its effect dependencies include allChapters (which updates later).
   const nativeInitSyncDoneRef = useRef(false);
+  // Set when cold-start sync schedules a router.replace so the stale-session
+  // guard below skips the render cycle in which the URL hasn't committed yet.
+  const coldStartReplacingRef = useRef(false);
 
   const chapterTextContent = chapterText?.text_content ?? null;
   const chunks = useMemo(
@@ -564,11 +567,44 @@ export default function ListenPage() {
     // Same reasoning as the visibilitychange handler above: native advanced
     // while the WebView was not running, so the user was actively listening —
     // always resume with autoplay regardless of the current isPlaying state.
+    coldStartReplacingRef.current = true;
     router.replace(
       `/listen?id=${bookId}&chapter=${nativeChapterId}&autoplay=1`,
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voice, allChapters, bookId, chapterId, router]);
+
+  // ── Stale-session guard ─────────────────────────────────────────────────
+  // Arrive at /listen via a path that bypasses navigateTo (e.g. a Link on the
+  // book detail page, MiniPlayer, chapter list) while a leftover native
+  // session is still playing a different chapter — stop it before its next
+  // auto-advance fires a chapter-advance event that would drag JS forward to
+  // whatever chapter native happens to be on (can be dozens ahead).
+  //
+  // Skipped when autoplay=1 is in the URL: those come from legitimate sync
+  // paths (visibilitychange handler, cold-start sync, onEnded post-navigation)
+  // where native is intentionally ahead and must continue playing.
+  //
+  // Also skipped during a cold-start sync redirect — cold-start sync schedules
+  // a router.replace to the chapter native is actually on, but its replace has
+  // not committed by the time this effect runs. Stopping native now would kill
+  // the seamless OS-kill resume. The flag clears after one render so subsequent
+  // user navs are still caught.
+  useEffect(() => {
+    if (!voice.startsWith("native:") || !chapterId) return;
+    if (autoPlay) return;
+    if (coldStartReplacingRef.current) {
+      coldStartReplacingRef.current = false;
+      return;
+    }
+    const bridge = getTtsBridge();
+    if (!bridge) return;
+    const nativeChId = bridge.getCurrentChapterId?.() ?? "";
+    const nativePlaying = bridge.isPlaying?.() ?? false;
+    if (nativePlaying && nativeChId && nativeChId !== chapterId) {
+      bridge.stopPlayback();
+    }
+  }, [chapterId, voice, autoPlay]);
 
   // ── Native TTS: seed the Java queue and hand it the full chapter playlist ──
   //

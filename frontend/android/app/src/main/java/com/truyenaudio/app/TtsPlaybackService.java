@@ -904,8 +904,11 @@ public class TtsPlaybackService extends Service {
         Log.d(TAG, "mergeQueue: added=" + added + " total=" + chapterQueue.size()
                 + " awaitingFetch=" + awaitingFetch
                 + " offered=" + chapters.size() + " ids=" + addedIds);
-        if (added > 0 && awaitingFetch && !chapterQueue.isEmpty()) {
-            // Chapter finished with empty queue — deliver the first merged chapter now
+        if (added > 0 && awaitingFetch && !chapterQueue.isEmpty() && isPlaying) {
+            // Chapter finished with empty queue — deliver the first merged chapter now.
+            // Skip when !isPlaying: user paused during the awaitingFetch window and
+            // auto-starting here would override their pause. The queued item waits;
+            // resumePlayback → chunk-finish path will pick it up naturally.
             awaitingFetch = false;
             ChapterItem next = chapterQueue.poll();
             if (next != null) {
@@ -981,8 +984,10 @@ public class TtsPlaybackService extends Service {
         prefetchActive = false;
         kickPrefetch();
 
-        // If chapter ended while waiting for playlist, deliver now
-        if (awaitingFetch && !chapterQueue.isEmpty()) {
+        // If chapter ended while waiting for playlist, deliver now.
+        // Skip when !isPlaying: user paused during awaitingFetch; auto-starting
+        // would override their pause.
+        if (awaitingFetch && !chapterQueue.isEmpty() && isPlaying) {
             awaitingFetch = false;
             ChapterItem next = chapterQueue.poll();
             if (next != null) {
@@ -1120,10 +1125,12 @@ public class TtsPlaybackService extends Service {
 
                     ChapterItem item = new ChapterItem(chunks, id, title, fRate, fPitch);
 
-                    if (awaitingFetch) {
+                    if (awaitingFetch && isPlaying) {
                         // Chapter ended and queue was empty — play this immediately.
                         // Reset prefetchActive BEFORE startChapter so that
                         // startChapter → kickPrefetch() can start a fresh chain.
+                        // Skip when !isPlaying: user paused; queue the item and
+                        // continue the chain so resumePlayback can pick it up.
                         awaitingFetch = false;
                         prefetchActive = false;
                         Log.d(TAG, "doPrefetchStep: delivering ch=" + id + " to awaiting player");
