@@ -43,8 +43,31 @@
 
 | Engine | Voice prefix | Where it runs | Offline? |
 |--------|-------------|---------------|----------|
-| Web TTS (backend Azure) | `vi-VN-HoaiMyNeural`, `vi-VN-NamMinhNeural`, `gtts` | Backend → MP3 stream | Only if audio cached in Cache API |
+| Web TTS (backend edge-tts) | `vi-VN-HoaiMyNeural`, `vi-VN-NamMinhNeural`, `gtts` | Backend → MP3 stream | Only if audio cached in Cache API |
 | Native TTS | `native:vi-VN-default` | Android `TextToSpeech` engine | Always (device TTS is offline) |
+
+### Visual system — "Lacquered ink"
+
+Dark-only premium theme inspired by Vietnamese xianxia aesthetics. Tokens live
+in `frontend/app/globals.css` under `@theme` (Tailwind v4 design-tokens):
+
+- **Surfaces**: `--color-ink` (deepest base) → `--color-surface` →
+  `--color-raised` → `--color-raised-hi`. Hairlines: `--color-hairline` and
+  `--color-hairline-soft`.
+- **Text**: `--color-text` / `text-dim` / `text-mute` / `text-faint`.
+- **Accents**: `--color-accent` = jade (primary CTAs, focus), `--color-gold`
+  (XP/sleep timer/loading), `--color-vermillion` (admin chrome, seal moments,
+  destructive).
+- **Fonts**: `--font-display` Cormorant Garamond, `--font-sans` Inter,
+  `--font-mono` JetBrains Mono. Loaded via `next/font/google` in
+  `app/layout.tsx`.
+- **`<html class="dark">` is forced** — light mode is intentionally not supported.
+  The `dark:` Tailwind variant still works (kept for incremental migration),
+  but new code should rely on the tokens directly.
+
+`components/ui/AppChrome.tsx` exposes `<AppHeader>` / `<AppMain>` / `<AppFooter>`
+which read `usePathname()` and hide the global chrome on `/listen*` and
+`/read*` ("immersive" routes) so the player and reader own the full viewport.
 
 ---
 
@@ -62,6 +85,8 @@ Wraps the entire app tree. Runs once on mount:
 6. **Progress flush** — flushes the offline progress queue on mount and whenever `online` fires.
 
 Also renders `NativeUrlRestorer` — saves the current URL to `localStorage` on every route change, restores it after Android process-death (detected via `sessionStorage` being empty on cold start).
+
+**Tri-state `tryRefreshToken()`** (`lib/api.ts`): returns `true` on success, `false` only on explicit auth rejection (4xx), `null` on transient failures (5xx / 408 / 429 / network error). Callers must NOT call `clearAuth()` on `null` — that was the cause of the spurious-logout bug where a Supabase blip during refresh looked like a revoked token and signed the user out. The backend's `/api/auth/refresh` and `/api/auth/login` mirror this contract — unknown DB exceptions return 503 instead of 401.
 
 ### `app/page.tsx` — Home / Library
 
@@ -102,16 +127,28 @@ The most complex page (~700 lines). Key responsibilities:
 
 **Queue effect logic** (native only, runs whenever `chapterId` changes):
 1. Guard: if `wasAutoAdvanceRef.current` is true, the native queue is already valid — skip.
-2. Gather up to 10 chapters after `currentIndex` (by `chapter_index`).
+2. Gather up to 50 chapters after `currentIndex` (by `chapter_index`). The 50-chapter buffer covers ≥1 hour of screen-off playback before native must self-fetch.
 3. **Phase 1**: For each, check React Query cache then IndexedDB. Collect all hits.
 4. Call `bridge.mergeQueuedChapters(initialQueue)` — sends available chapters immediately.
 5. **Phase 2**: Fetch remaining from API one-by-one. On each success, call `bridge.mergeQueuedChapters(growingQueue)`.
 6. **Safety-net final call**: ensures last incremental update wasn't skipped.
 7. `mergeQueuedChapters` (not `queueAllChapters`) is used throughout — it skips the currently-playing chapter so the queue is safely replenished on every chapter change without re-queuing in-flight chapters.
 
+**Stale-session guard** (cross-book navigation): when the user jumps from Book A's listen page to Book B's listen page via a `Link` (book detail "Nghe ngay", chapter list, mini-player), the listen page does NOT remount — only `bookId`/`chapterId` change. Without intervention the Java service would keep auto-advancing through Book A's `setPendingChapters` playlist while JS thinks it's on Book B. The guard at `[chapterId, voice, autoPlay]` calls `bridge.stopPlayback()` AND wipes both queues — `clearNextChapter()` and `setPendingChapters("[]", "", "")`. Effect A re-seeds with Book B's chapters as soon as `allChapters` resolves.
+
+**Player UI** is a full rewrite of `components/player/SpeechPlayer.tsx` matching the design's PlayerScreen artboard:
+- Centered hero cover with breathing border halo (animated when playing) and the vermillion `讀` seal stamp rotated -3°.
+- 20-segment chunk-dot progress strip, clickable to seek; mono time/chunk readout.
+- Five-button transport row centred on a 76px jade play button with the design's halo (`shadow-[0_0_0_6px_oklch(0.74_0.11_165/0.12),0_0_40px_var(--color-accent-glow)]`).
+- Three Speed/Voice/Sleep chips, each opening an inline panel for presets and custom values.
+- Cover height capped at `min(180px, 32vh)` so the play button stays above the fold on Android phones (412×892).
+
 ### `app/books/[bookId]/read/ReadPageClient.tsx` — Reading Page
 
-- Text reader with font size controls and chapter navigation.
+- Text reader with font size controls, font family picker, theme presets, and custom color pickers.
+- The whole page is one continuous themed surface — the outer wrapper escapes `AppMain`'s padding via `-mx-4 sm:-mx-6 -my-2` and applies `effectiveTheme.bg` edge-to-edge. The reading content has no separate card; top bar, hero, body, listen-handoff card, and bottom strip all inherit the same bg so changing the reader theme repaints the entire viewport.
+- Hero matches the design's centered chapter header: `CHƯƠNG THỨ N` mono eyebrow → display-font title → hairline+`❖` ornament. First paragraph renders with a 3.2× drop cap in jade.
+- Listen-handoff card ("Chuyển sang nghe?") docks above the bottom nav and routes to `/listen` at the same chapter.
 - Uses `useProgressSync` to save scroll progress.
 - Embeds `useReadingXp` hook to award XP for genuine reading (see §9).
 
@@ -183,6 +220,8 @@ ListenPageClient.setTrack(PlayerTrack)
 
 **Voice switching**: switching between backend ↔ native voices stops current playback first (both engines mustn't fight). Switching between two backend voices just restarts the current chunk.
 
+**Logout = stop the player**: `PlayerContext` listens for `auth-change` events. When `isLoggedIn()` becomes false (manual logout, or auto-logout on a confirmed bad refresh token), it calls `bridge.stopPlayback() / clearNextChapter() / cancelSleepTimer()`, releases the background lock, pauses the web player, and clears the track. Without this, the Android foreground service kept playing in its own process after the WebView signed out.
+
 **PlayerContext values exposed:**
 
 | Value | Source |
@@ -247,10 +286,6 @@ Silently downloads full chapter MP3 from `/api/tts/chapter-audio/{id}` into the 
 ### `hooks/useSleepTimer.ts`
 
 Sleep timer backed by an **absolute expiry timestamp** (not a countdown). Uses `visibilitychange` to recalculate remaining seconds on screen-on (setTimeout is throttled when screen is off). Notifies the Java service via `bridge.setSleepTimer(expireAtMs)` so the service can stop playback entirely in Java even when JS is fully suspended.
-
-### `hooks/useDarkMode.ts`
-
-Reads/writes dark mode preference in `localStorage`. Applies `dark` class to `<html>`.
 
 ### `hooks/useNativeTTSVoices` / `useNativeTTSAvailable`
 
@@ -761,4 +796,4 @@ timeRef >= threshold AND scrolledPastRef:
 
 ---
 
-*Last updated: 2026-03-27 — added profile edit (display name + avatar), Providers section, auth.ts AuthUser fields, auth.py update-profile endpoint.*
+*Last updated: 2026-04-29 — visual system overhaul (lacquered-ink @theme tokens, three new fonts, AppChrome immersive routes, dark-only forced); SpeechPlayer rewrite to design's PlayerScreen; reader collapsed into one continuous themed surface; stale-session guard now wipes Java queues on cross-book nav; tri-state `tryRefreshToken` + 503 transient handling on backend; logout-stops-player listener in PlayerContext; "Hồi" → "Chương" in player and reader chrome; useDarkMode/DarkModeToggle removed.*
