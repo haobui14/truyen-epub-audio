@@ -171,7 +171,11 @@ async def login(body: AuthRequest):
         error_msg = str(e).lower()
         if "not found" in error_msg or "does not exist" in error_msg:
             raise HTTPException(status_code=500, detail="Database schema not initialized. Run the SQL migrations.")
-        raise HTTPException(status_code=401, detail="Lỗi đăng nhập")
+        # Unknown failure (DB unreachable, query timeout, transient Supabase
+        # outage). Don't return 401 — the frontend would show "wrong password"
+        # for what is really a backend hiccup. 503 lets the UI show a
+        # try-again message.
+        raise HTTPException(status_code=503, detail="Đăng nhập tạm thời không khả dụng")
 
 
 @router.post("/refresh", response_model=AuthResponse)
@@ -219,7 +223,11 @@ async def refresh(body: RefreshRequest):
         error_msg = str(e).lower()
         if "not found" in error_msg or "does not exist" in error_msg:
             raise HTTPException(status_code=500, detail="Database schema not initialized. Run the SQL migrations.")
-        raise HTTPException(status_code=401, detail="Token refresh failed")
+        # Unknown failure (DB unreachable, query timeout, transient Supabase
+        # outage). Don't return 401 — the client treats that as "token rejected"
+        # and signs the user out. 503 keeps the session intact so the user can
+        # retry once the backend recovers.
+        raise HTTPException(status_code=503, detail="Token refresh temporarily unavailable")
 
 
 @router.get("/me")

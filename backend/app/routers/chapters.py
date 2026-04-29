@@ -130,7 +130,7 @@ async def delete_chapter(
     # Delete audio file from storage (best effort)
     await storage_service.delete_path("audio", f"{book_id}/{chapter_id}.mp3")
 
-    # Delete the chapter row (cascades to audio_files)
+    # Delete the chapter row
     db.table("chapters").delete().eq("id", chapter_id).execute()
 
     # Re-index all chapters after the deleted one in a single query
@@ -275,7 +275,7 @@ async def bulk_delete_chapters(
         except Exception:
             pass
 
-    # Delete all chapter rows at once (cascades to audio_files)
+    # Delete all chapter rows at once
     db.table("chapters").delete().in_("id", body.chapter_ids).execute()
 
     # Re-index remaining chapters per book with a single SQL function each

@@ -163,7 +163,7 @@ async def delete_book(book_id: str, _admin: dict = Depends(get_admin_user)):
     await storage_service.delete_folder("covers", book_id)
     await storage_service.delete_folder("epub-uploads", book_id)
 
-    # Delete from DB (cascades to chapters + audio_files)
+    # Delete from DB (cascades to chapters)
     db.table("books").delete().eq("id", book_id).execute()
     return {"message": "Book deleted"}
 

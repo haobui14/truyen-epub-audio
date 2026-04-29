@@ -65,10 +65,10 @@ export default function UploadPage() {
   return (
     <div className="max-w-lg mx-auto">
       {/* Breadcrumb */}
-      <nav className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mb-6">
+      <nav className="flex items-center gap-2 text-sm text-text-mute dark:text-text-mute mb-6">
         <Link
           href="/"
-          className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+          className="hover:text-accent dark:hover:text-accent transition-colors"
         >
           Thư viện
         </Link>
@@ -85,16 +85,16 @@ export default function UploadPage() {
             d="M9 5l7 7-7 7"
           />
         </svg>
-        <span className="text-gray-900 dark:text-gray-100 font-medium">
+        <span className="text-text dark:text-text font-medium">
           Tải lên
         </span>
       </nav>
 
-      <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm p-6 sm:p-8">
+      <div className="bg-surface dark:bg-raised rounded-2xl border border-hairline-soft dark:border-hairline shadow-sm p-6 sm:p-8">
         <div className="text-center mb-6">
-          <div className="inline-flex items-center justify-center w-12 h-12 bg-indigo-100 dark:bg-indigo-950 rounded-xl mb-3">
+          <div className="inline-flex items-center justify-center w-12 h-12 bg-accent/15 dark:bg-accent/15 rounded-xl mb-3">
             <svg
-              className="w-6 h-6 text-indigo-600 dark:text-indigo-400"
+              className="w-6 h-6 text-accent dark:text-accent"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -107,10 +107,10 @@ export default function UploadPage() {
               />
             </svg>
           </div>
-          <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">
+          <h1 className="text-xl font-bold text-text dark:text-text">
             Tải lên truyện
           </h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+          <p className="text-sm text-text-mute dark:text-text-mute mt-1">
             Hỗ trợ EPUB, PDF (kể cả ảnh scan) và TXT
           </p>
         </div>
@@ -120,9 +120,9 @@ export default function UploadPage() {
 
           {/* Cover image picker */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            <label className="block text-sm font-medium text-text-dim dark:text-text-faint mb-2">
               Ảnh bìa{" "}
-              <span className="text-gray-400 font-normal">(tùy chọn)</span>
+              <span className="text-text-mute font-normal">(tùy chọn)</span>
             </label>
             <div className="flex items-center gap-4">
               {coverPreview ? (
@@ -130,7 +130,7 @@ export default function UploadPage() {
                   <img
                     src={coverPreview}
                     alt="Cover preview"
-                    className="w-full h-full object-cover rounded-lg border border-gray-200 dark:border-gray-700"
+                    className="w-full h-full object-cover rounded-lg border border-hairline-soft dark:border-hairline"
                   />
                   <button
                     type="button"
@@ -138,7 +138,7 @@ export default function UploadPage() {
                       setCover(null);
                       setCoverPreview(null);
                     }}
-                    className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors"
+                    className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-vermillion text-white rounded-full flex items-center justify-center hover:bg-vermillion transition-colors"
                   >
                     <svg
                       className="w-3 h-3"
@@ -150,9 +150,9 @@ export default function UploadPage() {
                   </button>
                 </div>
               ) : (
-                <div className="w-16 h-20 shrink-0 rounded-lg border-2 border-dashed border-gray-300 dark:border-gray-600 flex items-center justify-center bg-gray-50 dark:bg-gray-900">
+                <div className="w-16 h-20 shrink-0 rounded-lg border-2 border-dashed border-hairline dark:border-hairline flex items-center justify-center bg-ink dark:bg-surface">
                   <svg
-                    className="w-6 h-6 text-gray-400"
+                    className="w-6 h-6 text-text-mute"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -167,7 +167,7 @@ export default function UploadPage() {
                 </div>
               )}
               <label className="flex-1 cursor-pointer">
-                <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-gray-300 dark:border-gray-600 hover:border-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors text-sm text-gray-600 dark:text-gray-400">
+                <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-hairline dark:border-hairline hover:border-accent/40 hover:bg-accent/15 dark:hover:bg-accent/30 transition-colors text-sm text-text-dim dark:text-text-mute">
                   <svg
                     className="w-4 h-4"
                     fill="none"
@@ -195,10 +195,10 @@ export default function UploadPage() {
           </div>
 
           {file && (
-            <div className="flex items-center gap-3 p-3 bg-indigo-50 dark:bg-indigo-950/50 rounded-xl border border-indigo-100 dark:border-indigo-900 animate-in">
-              <div className="w-9 h-9 bg-indigo-100 dark:bg-indigo-900 rounded-lg flex items-center justify-center shrink-0">
+            <div className="flex items-center gap-3 p-3 bg-accent/15 dark:bg-accent/50 rounded-xl border border-accent/30 dark:border-accent/40 animate-in">
+              <div className="w-9 h-9 bg-accent/15 dark:bg-accent/25 rounded-lg flex items-center justify-center shrink-0">
                 <svg
-                  className="w-4.5 h-4.5 text-indigo-600 dark:text-indigo-400"
+                  className="w-4.5 h-4.5 text-accent dark:text-accent"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -212,10 +212,10 @@ export default function UploadPage() {
                 </svg>
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-indigo-900 dark:text-indigo-200 truncate">
+                <p className="text-sm font-medium text-accent-dim dark:text-accent truncate">
                   {file.name}
                 </p>
-                <p className="text-xs text-indigo-500">
+                <p className="text-xs text-accent">
                   {(file.size / 1024 / 1024).toFixed(1)} MB
                 </p>
               </div>
@@ -223,7 +223,7 @@ export default function UploadPage() {
                 <button
                   type="button"
                   onClick={() => setFile(null)}
-                  className="p-1 text-indigo-400 hover:text-indigo-600 hover:bg-indigo-100 dark:hover:bg-indigo-900 rounded-lg transition-colors"
+                  className="p-1 text-accent hover:text-accent hover:bg-accent/15 dark:hover:bg-accent/25 rounded-lg transition-colors"
                 >
                   <svg
                     className="w-4 h-4"
@@ -238,7 +238,7 @@ export default function UploadPage() {
           )}
 
           {error && (
-            <div className="flex items-center gap-2 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/50 px-4 py-3 rounded-xl border border-red-100 dark:border-red-900">
+            <div className="flex items-center gap-2 text-sm text-vermillion dark:text-vermillion bg-vermillion/10 dark:bg-vermillion/50 px-4 py-3 rounded-xl border border-vermillion/30 dark:border-vermillion/40">
               <svg
                 className="w-4 h-4 shrink-0"
                 fill="currentColor"
@@ -252,15 +252,15 @@ export default function UploadPage() {
 
           {isUploading && (
             <div className="space-y-1.5">
-              <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400">
+              <div className="flex justify-between text-xs text-text-mute dark:text-text-mute">
                 <span>
                   {uploadProgress < 100 ? "Đang tải lên..." : "Đang xử lý..."}
                 </span>
                 <span>{uploadProgress}%</span>
               </div>
-              <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+              <div className="w-full h-2 bg-raised-hi dark:bg-raised-hi rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-indigo-500 rounded-full transition-all duration-200"
+                  className="h-full bg-accent rounded-full transition-all duration-200"
                   style={{ width: `${uploadProgress}%` }}
                 />
               </div>
@@ -270,7 +270,7 @@ export default function UploadPage() {
           <button
             type="submit"
             disabled={!file || isUploading}
-            className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white font-semibold py-3 rounded-xl hover:bg-indigo-700 active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md"
+            className="w-full flex items-center justify-center gap-2 bg-accent text-white font-semibold py-3 rounded-xl hover:bg-accent-dim active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md"
           >
             {isUploading ? (
               <>
@@ -319,17 +319,17 @@ export default function UploadPage() {
               />
             </svg>
           </div>
-          <p className="text-xs font-medium text-gray-700 dark:text-gray-300">
+          <p className="text-xs font-medium text-text-dim dark:text-text-faint">
             Tải lên
           </p>
-          <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">
+          <p className="text-[11px] text-text-mute dark:text-text-mute mt-0.5">
             EPUB · PDF · TXT
           </p>
         </div>
         <div className="text-center p-3">
-          <div className="inline-flex items-center justify-center w-8 h-8 bg-purple-100 dark:bg-purple-950 rounded-lg mb-2">
+          <div className="inline-flex items-center justify-center w-8 h-8 bg-vermillion/20 dark:bg-vermillion/15 rounded-lg mb-2">
             <svg
-              className="w-4 h-4 text-purple-600 dark:text-purple-400"
+              className="w-4 h-4 text-vermillion dark:text-vermillion"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -342,10 +342,10 @@ export default function UploadPage() {
               />
             </svg>
           </div>
-          <p className="text-xs font-medium text-gray-700 dark:text-gray-300">
+          <p className="text-xs font-medium text-text-dim dark:text-text-faint">
             Chuyển đổi
           </p>
-          <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">
+          <p className="text-[11px] text-text-mute dark:text-text-mute mt-0.5">
             AI TTS
           </p>
         </div>
@@ -371,10 +371,10 @@ export default function UploadPage() {
               />
             </svg>
           </div>
-          <p className="text-xs font-medium text-gray-700 dark:text-gray-300">
+          <p className="text-xs font-medium text-text-dim dark:text-text-faint">
             Nghe & Đọc
           </p>
-          <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">
+          <p className="text-[11px] text-text-mute dark:text-text-mute mt-0.5">
             Mọi lúc
           </p>
         </div>

@@ -1,13 +1,20 @@
 "use client";
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams, useParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { isLoggedIn } from "@/lib/auth";
+import { isNativePlatform } from "@/lib/capacitor";
 import { useProgressSync } from "@/hooks/useProgressSync";
 import { Spinner } from "@/components/ui/Spinner";
 import { getLocalProgress, saveLocalBookProgress } from "@/lib/progressQueue";
+import {
+  getCachedChapterEntry,
+  cacheChapterText,
+  getAllCachedChapterIds,
+} from "@/lib/chapterTextCache";
+import { acquireScreenWake, releaseScreenWake } from "@/lib/backgroundLock";
 import type { Chapter } from "@/types";
 
 /**
@@ -105,6 +112,7 @@ interface ReaderTheme {
 }
 
 const READER_THEMES: ReaderTheme[] = [
+  { name: "auto", bg: "#ffffff", text: "#1f2937", label: "Tự động" },
   { name: "light", bg: "#ffffff", text: "#1f2937", label: "Sáng" },
   { name: "sepia", bg: "#f5f0e8", text: "#5c4b37", label: "Sepia" },
   { name: "dark", bg: "#1a1a2e", text: "#e0e0e0", label: "Tối" },
@@ -112,6 +120,48 @@ const READER_THEMES: ReaderTheme[] = [
   { name: "warm", bg: "#2d1b00", text: "#f5c882", label: "Ấm" },
   { name: "gray", bg: "#2a2a2a", text: "#cccccc", label: "Xám" },
 ];
+
+// Theme used when "auto" matches a dark system preference.
+const AUTO_DARK: Pick<ReaderTheme, "bg" | "text"> = {
+  bg: "#1a1a2e",
+  text: "#e0e0e0",
+};
+const AUTO_LIGHT: Pick<ReaderTheme, "bg" | "text"> = {
+  bg: "#ffffff",
+  text: "#1f2937",
+};
+
+// How long a cached chapter is considered fresh. Within this window we skip
+// the silent background refresh — fully pre-downloaded books do zero network
+// I/O on revisits. Chapter text is essentially immutable once published, so a
+// generous TTL is fine; the user can pull a hard refresh by re-uploading the
+// EPUB or clearing offline data.
+const CHAPTER_TEXT_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+
+/** Offline-first chapter text fetch: try IndexedDB, fall through to API. */
+async function fetchChapterTextOfflineFirst(chapterId: string) {
+  const cached = await getCachedChapterEntry(chapterId);
+  if (cached) {
+    const fresh = Date.now() - cached.cached_at < CHAPTER_TEXT_TTL_MS;
+    if (!fresh) {
+      // Stale-while-revalidate: serve cached now, refresh in the background.
+      api
+        .getChapterText(chapterId)
+        .then((res) => {
+          if (res?.text_content && res.text_content !== cached.text_content) {
+            void cacheChapterText(chapterId, res.text_content);
+          }
+        })
+        .catch(() => {});
+    }
+    return { id: chapterId, text_content: cached.text_content };
+  }
+  const res = await api.getChapterText(chapterId);
+  if (res?.text_content) {
+    void cacheChapterText(chapterId, res.text_content);
+  }
+  return res;
+}
 
 const FONT_FAMILIES = [
   { value: "serif", label: "Serif" },
@@ -156,6 +206,16 @@ export default function ReadPage() {
   const [customText, setCustomText] = useState(theme.text);
   const [customBg, setCustomBg] = useState(theme.bg);
   const [showSettings, setShowSettings] = useState(false);
+  const [showToc, setShowToc] = useState(false);
+  const [tocSearch, setTocSearch] = useState("");
+  const [cachedIds, setCachedIds] = useState<Set<string>>(new Set());
+  const [systemDark, setSystemDark] = useState(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return false;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  });
+  const [scrollPct, setScrollPct] = useState(0);
+
+  const queryClient = useQueryClient();
 
   const { data: book } = useQuery({
     queryKey: ["book", bookId],
@@ -169,7 +229,7 @@ export default function ReadPage() {
 
   const { data: chapterText, isLoading: isLoadingText } = useQuery({
     queryKey: ["chapterText", chapterId],
-    queryFn: () => api.getChapterText(chapterId!),
+    queryFn: () => fetchChapterTextOfflineFirst(chapterId!),
     enabled: !!chapterId,
   });
 
@@ -203,7 +263,10 @@ export default function ReadPage() {
     enabled: !!chapterId && isLoggedIn(),
   });
 
-  const allChapters = chaptersData?.items ?? [];
+  const allChapters = useMemo(
+    () => chaptersData?.items ?? [],
+    [chaptersData],
+  );
   const currentChapter = allChapters.find((c) => c.id === chapterId) ?? null;
   const currentIndex = currentChapter?.chapter_index ?? -1;
   const prevChapter =
@@ -245,8 +308,77 @@ export default function ReadPage() {
     [bookId, router],
   );
 
-  // Scroll to top on chapter change (or restore saved position)
+  // Prefetch ±2 chapters' text into the offline-first cache so prev/next
+  // feel instant. Skip on the web build to avoid burning cellular data —
+  // mirrors the listen page's native-only prefetch policy.
+  useEffect(() => {
+    if (!isNativePlatform()) return;
+    if (!chapterText || allChapters.length === 0 || currentIndex < 0) return;
+    const targets = [
+      currentIndex - 1,
+      currentIndex + 1,
+      currentIndex + 2,
+    ].filter((i) => i >= 0 && i < allChapters.length);
+    for (const i of targets) {
+      const ch = allChapters[i];
+      if (!ch) continue;
+      void queryClient.prefetchQuery({
+        queryKey: ["chapterText", ch.id],
+        queryFn: () => fetchChapterTextOfflineFirst(ch.id),
+      });
+    }
+  }, [chapterText, allChapters, currentIndex, queryClient]);
+
+  // Keep the screen awake while the reader is mounted and visible.
+  // Native-only; no-op on web. Releases on unmount or when the app is hidden.
+  useEffect(() => {
+    if (!isNativePlatform()) return;
+    let active = true;
+    void acquireScreenWake();
+    const onVisibility = () => {
+      if (document.hidden) {
+        active = false;
+        void releaseScreenWake();
+      } else if (!active) {
+        active = true;
+        void acquireScreenWake();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      void releaseScreenWake();
+    };
+  }, []);
+
+  // Track system dark-mode preference for the "auto" theme.
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = (e: MediaQueryListEvent) => setSystemDark(e.matches);
+    mq.addEventListener?.("change", onChange);
+    return () => mq.removeEventListener?.("change", onChange);
+  }, []);
+
+  // Resolve the user-picked theme into concrete bg/text colors. The "auto"
+  // preset adopts the system color scheme dynamically.
+  const effectiveTheme = useMemo<ReaderTheme>(() => {
+    if (theme.name === "auto") {
+      const palette = systemDark ? AUTO_DARK : AUTO_LIGHT;
+      return { ...theme, bg: palette.bg, text: palette.text };
+    }
+    return theme;
+  }, [theme, systemDark]);
+
+  // Scroll to top on chapter change (or restore saved position).
+  // Reset the visual progress bar via the "derived state on prop change"
+  // pattern so it isn't done inside an effect.
   const restoredRef = useRef(false);
+  const [lastChapterId, setLastChapterId] = useState(chapterId);
+  if (chapterId !== lastChapterId) {
+    setLastChapterId(chapterId);
+    setScrollPct(0);
+  }
   useEffect(() => {
     restoredRef.current = false;
     window.scrollTo({ top: 0 });
@@ -266,15 +398,19 @@ export default function ReadPage() {
     });
   }, [savedProgress, chapterText]);
 
-  // Track scroll progress
+  // Track scroll progress (also drives the top progress bar).
   useEffect(() => {
     if (!chapterId || !chapterText) return;
     const handleScroll = () => {
       const scrollMax =
         document.documentElement.scrollHeight - window.innerHeight;
       if (scrollMax <= 0) return;
-      const pct = Math.round((window.scrollY / scrollMax) * 100);
-      reportProgress(Math.min(pct, 100), 100);
+      const pct = Math.min(
+        100,
+        Math.max(0, Math.round((window.scrollY / scrollMax) * 100)),
+      );
+      setScrollPct(pct);
+      reportProgress(pct, 100);
     };
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
@@ -310,11 +446,76 @@ export default function ReadPage() {
     localStorage.setItem(THEME_KEY, JSON.stringify(updated));
   }
 
+  // Refresh cached-chapter IDs when the TOC drawer opens.
+  useEffect(() => {
+    if (!showToc) return;
+    let alive = true;
+    void getAllCachedChapterIds().then((ids) => {
+      if (alive) setCachedIds(new Set(ids));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [showToc]);
+
+  // Pointer-based swipe + edge-tap navigation. Pure DOM events, no library.
+  const swipeStart = useRef<{ x: number; y: number; t: number } | null>(null);
+
+  const onContentPointerDown = (e: React.PointerEvent) => {
+    if (!e.isPrimary) return;
+    swipeStart.current = { x: e.clientX, y: e.clientY, t: e.timeStamp };
+  };
+
+  const onContentPointerUp = (e: React.PointerEvent) => {
+    const start = swipeStart.current;
+    swipeStart.current = null;
+    if (!start || !e.isPrimary) return;
+
+    // Don't hijack a long-press text selection.
+    const sel = typeof window !== "undefined" ? window.getSelection() : null;
+    if (sel && sel.toString().length > 0) return;
+
+    const dx = e.clientX - start.x;
+    const dy = e.clientY - start.y;
+    const dt = e.timeStamp - start.t;
+
+    // Horizontal swipe.
+    if (dt < 500 && Math.abs(dx) > 60 && Math.abs(dy) < 40) {
+      if (dx < 0 && nextChapter) navigateTo(nextChapter);
+      else if (dx > 0 && prevChapter) navigateTo(prevChapter);
+      return;
+    }
+
+    // Edge-tap: native only, clear tap (no movement, < 300ms).
+    if (
+      isNativePlatform() &&
+      dt < 300 &&
+      Math.abs(dx) < 10 &&
+      Math.abs(dy) < 10
+    ) {
+      const w = window.innerWidth;
+      const x = e.clientX;
+      if (x < w * 0.2 && prevChapter) navigateTo(prevChapter);
+      else if (x > w * 0.8 && nextChapter) navigateTo(nextChapter);
+    }
+  };
+
+  // Filtered chapter list for the TOC search input.
+  const filteredChapters = useMemo(() => {
+    const q = tocSearch.trim().toLowerCase();
+    if (!q) return allChapters;
+    return allChapters.filter(
+      (c) =>
+        c.title.toLowerCase().includes(q) ||
+        String(c.chapter_index + 1).includes(q),
+    );
+  }, [allChapters, tocSearch]);
+
   if (!chapterId) {
     return (
-      <div className="text-center py-24 text-gray-500">
+      <div className="text-center py-24 text-text-mute">
         Không có chương nào được chọn.{" "}
-        <Link href={`/book?id=${bookId}`} className="text-indigo-600 underline">
+        <Link href={`/book?id=${bookId}`} className="text-accent underline">
           Quay lại
         </Link>
       </div>
@@ -324,7 +525,7 @@ export default function ReadPage() {
   if (!currentChapter || !book) {
     return (
       <div className="flex justify-center py-24">
-        <Spinner className="w-8 h-8 text-indigo-600" />
+        <Spinner className="w-8 h-8 text-accent" />
       </div>
     );
   }
@@ -332,85 +533,85 @@ export default function ReadPage() {
   const text = chapterText?.text_content;
 
   return (
-    <div className="max-w-3xl mx-auto">
-      {/* Top bar */}
-      <div className="flex items-center justify-between mb-4 gap-3">
+    <div
+      // One continuous surface — escape AppMain's horizontal padding so the
+      // theme bg goes edge-to-edge on Android. The whole reader (top bar,
+      // hero, content, handoff) sits on this single background.
+      className="-mx-4 sm:-mx-6 -my-2 px-4 sm:px-6 min-h-[calc(100dvh-3.5rem)] transition-colors duration-300"
+      style={{
+        backgroundColor: effectiveTheme.bg,
+        color: effectiveTheme.text,
+        paddingTop: "calc(var(--sat) + 0.5rem)",
+        overscrollBehaviorY: "contain",
+      }}
+    >
+      <div className="max-w-3xl mx-auto">
+      {/* Reading progress bar (sits below the system status bar) */}
+      <div
+        className="sticky top-0 z-20 h-0.5 bg-transparent"
+        aria-hidden="true"
+      >
+        <div
+          className="h-full bg-accent transition-[width] duration-150"
+          style={{ width: `${scrollPct}%` }}
+        />
+      </div>
+
+      {/* Top bar — back / "HỒI N · X%" / settings menu */}
+      <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2 mb-4">
         <Link
           href={`/book?id=${bookId}`}
-          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
+          className="-ml-2 p-2 text-text hover:text-accent transition-colors"
+          title={book.title}
+          aria-label="Quay lại"
         >
           <svg
-            className="w-4 h-4"
+            className="w-5 h-5"
             fill="none"
             stroke="currentColor"
+            strokeWidth={2}
             viewBox="0 0 24 24"
           >
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
-              strokeWidth={2}
-              d="M15 19l-7-7 7-7"
+              d="M15 6l-6 6 6 6"
             />
           </svg>
-          <span className="hidden sm:inline">{book.title}</span>
-          <span className="sm:hidden">Quay lại</span>
         </Link>
-
-        <div className="flex items-center gap-2">
-          {/* Listen link */}
-          <Link
-            href={`/listen?id=${bookId}&chapter=${chapterId}`}
-            className="flex items-center gap-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 px-3 py-1.5 rounded-lg hover:bg-indigo-100 dark:hover:bg-indigo-950 transition-colors"
+        <p className="text-center font-mono text-[10px] tracking-[0.18em] uppercase text-text-mute truncate">
+          Chương {currentChapter.chapter_index + 1} ·{" "}
+          <span className="text-accent">{Math.round(scrollPct)}%</span>
+        </p>
+        <button
+          onClick={() => setShowSettings(!showSettings)}
+          className={`-mr-2 p-2 transition-colors ${
+            showSettings ? "text-accent" : "text-text hover:text-accent"
+          }`}
+          title="Cài đặt đọc"
+        >
+          <svg
+            className="w-5 h-5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            viewBox="0 0 24 24"
           >
-            <svg
-              className="w-3.5 h-3.5"
-              fill="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z" />
-            </svg>
-            Nghe
-          </Link>
-
-          {/* Settings toggle */}
-          <button
-            onClick={() => setShowSettings(!showSettings)}
-            className={`p-2 rounded-lg transition-colors ${
-              showSettings
-                ? "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200"
-                : "text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:text-gray-200 dark:hover:bg-gray-800"
-            }`}
-            title="Cài đặt đọc"
-          >
-            <svg
-              className="w-5 h-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-              />
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-              />
-            </svg>
-          </button>
-        </div>
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M4 6h16M4 12h16M4 18h16"
+            />
+          </svg>
+        </button>
       </div>
 
       {/* Settings panel */}
       {showSettings && (
-        <div className="mb-4 p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm animate-in space-y-4">
+        <div className="mb-4 p-4 bg-surface dark:bg-raised rounded-xl border border-hairline-soft dark:border-hairline shadow-sm animate-in space-y-4">
           {/* Font size */}
           <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            <span className="text-sm font-medium text-text-dim dark:text-text-faint">
               Cỡ chữ
             </span>
             <div className="flex items-center gap-1.5">
@@ -420,8 +621,8 @@ export default function ReadPage() {
                   onClick={() => handleFontSize(size)}
                   className={`w-8 h-8 rounded-lg text-xs font-medium transition-colors ${
                     fontSize === size
-                      ? "bg-indigo-600 text-white"
-                      : "bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
+                      ? "bg-accent text-white"
+                      : "bg-raised dark:bg-raised-hi text-text-dim dark:text-text-faint hover:bg-raised-hi dark:hover:bg-hairline"
                   }`}
                 >
                   {size}
@@ -432,7 +633,7 @@ export default function ReadPage() {
 
           {/* Font family */}
           <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            <span className="text-sm font-medium text-text-dim dark:text-text-faint">
               Phông chữ
             </span>
             <div className="flex items-center gap-1.5 flex-wrap justify-end">
@@ -442,8 +643,8 @@ export default function ReadPage() {
                   onClick={() => handleFontFamily(ff.value)}
                   className={`px-2.5 h-8 rounded-lg text-xs font-medium transition-colors ${
                     fontFamily === ff.value
-                      ? "bg-indigo-600 text-white"
-                      : "bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
+                      ? "bg-accent text-white"
+                      : "bg-raised dark:bg-raised-hi text-text-dim dark:text-text-faint hover:bg-raised-hi dark:hover:bg-hairline"
                   }`}
                   style={{ fontFamily: ff.value }}
                 >
@@ -455,65 +656,73 @@ export default function ReadPage() {
 
           {/* Theme presets */}
           <div>
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 block">
+            <span className="text-sm font-medium text-text-dim dark:text-text-faint mb-2 block">
               Giao diện đọc
             </span>
-            <div className="grid grid-cols-6 gap-2">
-              {READER_THEMES.map((t) => (
-                <button
-                  key={t.name}
-                  onClick={() => handleTheme(t)}
-                  className={`flex flex-col items-center gap-1.5 p-2 rounded-xl border-2 transition-all ${
-                    theme.name === t.name
-                      ? "border-indigo-500 shadow-sm"
-                      : "border-transparent hover:border-gray-300 dark:hover:border-gray-600"
-                  }`}
-                >
-                  <div
-                    className="w-full aspect-square rounded-lg flex items-center justify-center text-xs font-bold shadow-inner"
-                    style={{ backgroundColor: t.bg, color: t.text }}
+            <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
+              {READER_THEMES.map((t) => {
+                const swatch =
+                  t.name === "auto"
+                    ? systemDark
+                      ? { bg: AUTO_DARK.bg, text: AUTO_DARK.text }
+                      : { bg: AUTO_LIGHT.bg, text: AUTO_LIGHT.text }
+                    : { bg: t.bg, text: t.text };
+                return (
+                  <button
+                    key={t.name}
+                    onClick={() => handleTheme(t)}
+                    className={`flex flex-col items-center gap-1.5 p-2 rounded-xl border-2 transition-all ${
+                      theme.name === t.name
+                        ? "border-accent shadow-sm"
+                        : "border-transparent hover:border-hairline dark:hover:border-hairline"
+                    }`}
                   >
-                    Aa
-                  </div>
-                  <span className="text-[10px] font-medium text-gray-500 dark:text-gray-400">
-                    {t.label}
-                  </span>
-                </button>
-              ))}
+                    <div
+                      className="w-full aspect-square rounded-lg flex items-center justify-center text-xs font-bold shadow-inner"
+                      style={{ backgroundColor: swatch.bg, color: swatch.text }}
+                    >
+                      Aa
+                    </div>
+                    <span className="text-[10px] font-medium text-text-mute dark:text-text-mute">
+                      {t.label}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
           {/* Custom color pickers */}
-          <div className="flex items-center gap-4 pt-2 border-t border-gray-100 dark:border-gray-700">
+          <div className="flex items-center gap-4 pt-2 border-t border-hairline-soft dark:border-hairline">
             <div className="flex items-center gap-2">
-              <label className="text-xs font-medium text-gray-500 dark:text-gray-400">
+              <label className="text-xs font-medium text-text-mute dark:text-text-mute">
                 Màu chữ
               </label>
               <input
                 type="color"
                 value={customText}
                 onChange={(e) => handleCustomColor("text", e.target.value)}
-                className="w-8 h-8 rounded-lg border border-gray-200 dark:border-gray-600 cursor-pointer bg-transparent"
+                className="w-8 h-8 rounded-lg border border-hairline-soft dark:border-hairline cursor-pointer bg-transparent"
               />
             </div>
             <div className="flex items-center gap-2">
-              <label className="text-xs font-medium text-gray-500 dark:text-gray-400">
+              <label className="text-xs font-medium text-text-mute dark:text-text-mute">
                 Màu nền
               </label>
               <input
                 type="color"
                 value={customBg}
                 onChange={(e) => handleCustomColor("bg", e.target.value)}
-                className="w-8 h-8 rounded-lg border border-gray-200 dark:border-gray-600 cursor-pointer bg-transparent"
+                className="w-8 h-8 rounded-lg border border-hairline-soft dark:border-hairline cursor-pointer bg-transparent"
               />
             </div>
             <div
-              className="ml-auto flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700"
-              style={{ backgroundColor: theme.bg }}
+              className="ml-auto flex items-center gap-2 px-3 py-1.5 rounded-lg border border-hairline-soft dark:border-hairline"
+              style={{ backgroundColor: effectiveTheme.bg }}
             >
               <span
                 className="text-xs font-medium"
-                style={{ color: theme.text }}
+                style={{ color: effectiveTheme.text }}
               >
                 Xem trước
               </span>
@@ -522,54 +731,112 @@ export default function ReadPage() {
         </div>
       )}
 
-      {/* Chapter header */}
-      <div className="mb-6 pb-4 border-b border-gray-200 dark:border-gray-700">
-        <p className="text-xs font-medium text-indigo-500 dark:text-indigo-400 mb-1 uppercase tracking-wider">
-          Chương {currentChapter.chapter_index + 1} / {allChapters.length}
+      {/* Chapter header — design pattern: mono eyebrow / display title / hairline + ❖ ornament */}
+      <div className="mb-6 text-center">
+        <p className="font-mono text-[10px] tracking-[0.18em] uppercase text-text-faint">
+          Chương thứ {currentChapter.chapter_index + 1}
         </p>
-        <h1 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100 leading-tight">
+        <h1 className="font-display text-2xl sm:text-3xl text-text leading-tight mt-2">
           {currentChapter.title}
         </h1>
-        <p className="text-sm text-gray-400 dark:text-gray-500 mt-1">
-          {currentChapter.word_count.toLocaleString()} từ
+        <div className="flex items-center justify-center gap-3 mt-3">
+          <span className="h-px w-14 bg-hairline" />
+          <span className="font-display text-sm text-accent">❖</span>
+          <span className="h-px w-14 bg-hairline" />
+        </div>
+        <p className="font-mono text-[10px] tracking-widest uppercase text-text-faint mt-2">
+          {currentChapter.word_count.toLocaleString()} từ · {allChapters.length}{" "}
+          chương
         </p>
       </div>
 
-      {/* Reading content */}
+      {/* Reading content — no card; inherits the page's theme bg so the
+          whole reader reads as one continuous surface. */}
       <div
         ref={contentRef}
-        className="min-h-[50vh] rounded-2xl px-5 sm:px-8 py-6 transition-colors duration-300"
-        style={{ backgroundColor: theme.bg }}
+        className="min-h-[50vh] py-2 touch-pan-y"
+        onPointerDown={onContentPointerDown}
+        onPointerUp={onContentPointerUp}
       >
         {isLoadingText ? (
           <div
-            className="flex flex-col items-center gap-3 py-20"
-            style={{ color: theme.text, opacity: 0.5 }}
+            className="space-y-4 py-4 animate-pulse"
+            style={{ color: effectiveTheme.text }}
+            aria-label="Đang tải nội dung"
           >
-            <Spinner className="w-7 h-7" />
-            <p className="text-sm">Đang tải nội dung...</p>
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div
+                key={i}
+                className="rounded-md"
+                style={{
+                  height: `${fontSize * 1.8}px`,
+                  width: `${[100, 96, 92, 88, 95, 70][i]}%`,
+                  backgroundColor: effectiveTheme.text,
+                  opacity: 0.08,
+                }}
+              />
+            ))}
           </div>
         ) : text ? (
           <article
             className="reader-content pb-8"
             style={{ fontSize: `${fontSize}px`, fontFamily: fontFamily }}
           >
-            {text.split(/\n+/).map((para, i) =>
-              para.trim() ? (
-                <p
-                  key={i}
-                  className="mb-4 last:mb-0"
-                  style={{ lineHeight: 1.8, color: theme.text }}
-                >
-                  {para.trim()}
-                </p>
-              ) : null,
-            )}
+            {(() => {
+              const paragraphs = text
+                .split(/\n+/)
+                .map((p) => p.trim())
+                .filter(Boolean);
+              return paragraphs.map((para, i) => {
+                if (i === 0) {
+                  // Drop-cap on first paragraph — design pattern
+                  const first = para.charAt(0);
+                  const rest = para.slice(1);
+                  return (
+                    <p
+                      key={i}
+                      className="mb-4"
+                      style={{
+                        lineHeight: 1.8,
+                        color: effectiveTheme.text,
+                        textIndent: 0,
+                      }}
+                    >
+                      <span
+                        className="font-display float-left mr-2 mt-1.5"
+                        style={{
+                          fontSize: `${fontSize * 3.2}px`,
+                          lineHeight: 0.9,
+                          color: "var(--color-accent)",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {first}
+                      </span>
+                      {rest}
+                    </p>
+                  );
+                }
+                return (
+                  <p
+                    key={i}
+                    className="mb-4 last:mb-0"
+                    style={{
+                      lineHeight: 1.8,
+                      color: effectiveTheme.text,
+                      textIndent: "1.5em",
+                    }}
+                  >
+                    {para}
+                  </p>
+                );
+              });
+            })()}
           </article>
         ) : (
           <div
             className="flex flex-col items-center gap-3 py-20"
-            style={{ color: theme.text, opacity: 0.4 }}
+            style={{ color: effectiveTheme.text, opacity: 0.4 }}
           >
             <svg
               className="w-12 h-12"
@@ -589,13 +856,48 @@ export default function ReadPage() {
         )}
       </div>
 
-      {/* Bottom nav */}
-      <div className="sticky bottom-0 bg-gray-50/80 dark:bg-gray-950/80 backdrop-blur-sm border-t border-gray-200 dark:border-gray-700 -mx-4 px-4 py-3 mt-8">
-        <div className="flex items-center justify-between max-w-3xl mx-auto">
+      {/* Listen handoff — inherits the theme bg, only a subtle hairline */}
+      <div className="mt-6 mb-2">
+        <Link
+          href={`/listen?id=${bookId}&chapter=${chapterId}`}
+          className="flex items-center gap-3 p-3 rounded-md ring-1 ring-current/15 hover:ring-accent/40 transition-colors group"
+          style={{ color: effectiveTheme.text }}
+        >
+          <span className="w-9 h-9 rounded-md bg-accent/15 ring-1 ring-accent/30 flex items-center justify-center text-accent shrink-0">
+            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2a5 5 0 0 1-10 0H5z" />
+            </svg>
+          </span>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold">Chuyển sang nghe?</p>
+            <p
+              className="font-mono text-[10px] tracking-widest uppercase mt-0.5"
+              style={{ opacity: 0.55 }}
+            >
+              Đọc tiếp bằng giọng hệ thống từ vị trí hiện tại
+            </p>
+          </div>
+          <span className="bg-accent text-ink font-semibold text-xs px-3.5 py-2 rounded-sm shadow-[0_0_18px_var(--color-accent-glow)] shrink-0 group-hover:bg-accent-dim transition-colors">
+            Nghe →
+          </span>
+        </Link>
+      </div>
+
+      {/* Bottom nav strip — transparent, inherits the page bg */}
+      <div
+        className="sticky bottom-0 -mx-4 px-4 mt-8 border-t border-current/10"
+        style={{
+          paddingTop: "0.75rem",
+          paddingBottom: "calc(0.75rem + var(--sab))",
+          color: effectiveTheme.text,
+        }}
+      >
+        <div className="flex items-center justify-between gap-2 max-w-3xl mx-auto">
           <button
             onClick={() => prevChapter && navigateTo(prevChapter)}
             disabled={!prevChapter}
-            className="flex items-center gap-1.5 text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            className="flex items-center gap-1.5 px-3 py-2 -ml-2 rounded-lg text-sm font-medium text-text-dim dark:text-text-mute hover:text-accent dark:hover:text-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            aria-label="Chương trước"
           >
             <svg
               className="w-4 h-4"
@@ -610,31 +912,39 @@ export default function ReadPage() {
                 d="M15 19l-7-7 7-7"
               />
             </svg>
-            Chương trước
+            <span className="hidden sm:inline">Chương trước</span>
           </button>
 
-          {/* Chapter dropdown */}
-          <select
-            value={chapterId}
-            onChange={(e) => {
-              const ch = allChapters.find((c) => c.id === e.target.value);
-              if (ch) navigateTo(ch);
-            }}
-            className="text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 text-gray-700 dark:text-gray-300 max-w-50 truncate focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+          {/* Open searchable chapter list */}
+          <button
+            onClick={() => setShowToc(true)}
+            className="flex-1 min-w-0 flex items-center justify-center gap-1.5 text-sm bg-surface dark:bg-raised border border-hairline-soft dark:border-hairline rounded-lg px-3 py-2 text-text-dim dark:text-text-faint hover:border-accent/40 dark:hover:border-accent transition-colors"
           >
-            {allChapters.map((ch) => (
-              <option key={ch.id} value={ch.id}>
-                {ch.chapter_index + 1}. {ch.title}
-              </option>
-            ))}
-          </select>
+            <svg
+              className="w-4 h-4 shrink-0 text-text-mute"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 6h16M4 12h16M4 18h16"
+              />
+            </svg>
+            <span className="truncate">
+              {currentChapter.chapter_index + 1}. {currentChapter.title}
+            </span>
+          </button>
 
           <button
             onClick={() => nextChapter && navigateTo(nextChapter)}
             disabled={!nextChapter}
-            className="flex items-center gap-1.5 text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            className="flex items-center gap-1.5 px-3 py-2 -mr-2 rounded-lg text-sm font-medium text-text-dim dark:text-text-mute hover:text-accent dark:hover:text-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            aria-label="Chương tiếp"
           >
-            Chương tiếp
+            <span className="hidden sm:inline">Chương tiếp</span>
             <svg
               className="w-4 h-4"
               fill="none"
@@ -650,6 +960,116 @@ export default function ReadPage() {
             </svg>
           </button>
         </div>
+      </div>
+
+      {/* TOC drawer */}
+      {showToc && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm"
+          onClick={() => setShowToc(false)}
+        >
+          <div
+            className="bg-surface dark:bg-surface w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl shadow-xl flex flex-col max-h-[80vh] sm:max-h-[70vh]"
+            style={{ paddingBottom: "var(--sab)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 pt-4 pb-2">
+              <h2 className="text-base font-semibold text-text dark:text-text">
+                Mục lục
+              </h2>
+              <button
+                onClick={() => setShowToc(false)}
+                className="p-1.5 rounded-lg text-text-mute hover:bg-raised dark:hover:bg-raised"
+                aria-label="Đóng"
+              >
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                </svg>
+              </button>
+            </div>
+            <div className="px-4 pb-2">
+              <input
+                type="text"
+                inputMode="search"
+                autoFocus
+                value={tocSearch}
+                onChange={(e) => setTocSearch(e.target.value)}
+                placeholder="Tìm chương theo số hoặc tiêu đề..."
+                className="w-full text-sm bg-ink dark:bg-raised border border-hairline-soft dark:border-hairline rounded-lg px-3 py-2 text-text-dim dark:text-text-dim focus:ring-2 focus:ring-accent focus:border-accent outline-none"
+              />
+            </div>
+            <div className="flex-1 overflow-y-auto px-2 pb-2">
+              {filteredChapters.length === 0 ? (
+                <p className="text-center text-sm text-text-mute py-8">
+                  Không tìm thấy chương nào.
+                </p>
+              ) : (
+                <ul className="divide-y divide-hairline-soft dark:divide-hairline-soft">
+                  {filteredChapters.map((ch) => {
+                    const isCurrent = ch.id === chapterId;
+                    const isCached = cachedIds.has(ch.id);
+                    return (
+                      <li key={ch.id}>
+                        <button
+                          onClick={() => {
+                            setShowToc(false);
+                            setTocSearch("");
+                            navigateTo(ch);
+                          }}
+                          className={`w-full flex items-center gap-3 px-3 py-2.5 text-left rounded-lg transition-colors ${
+                            isCurrent
+                              ? "bg-accent/15 dark:bg-accent/40 text-accent-dim dark:text-accent"
+                              : "text-text-dim dark:text-text-faint hover:bg-ink dark:hover:bg-raised"
+                          }`}
+                        >
+                          <span
+                            className={`shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-full text-[11px] font-semibold ${
+                              isCurrent
+                                ? "bg-accent text-white"
+                                : "bg-raised dark:bg-raised text-text-mute dark:text-text-mute"
+                            }`}
+                          >
+                            {ch.chapter_index + 1}
+                          </span>
+                          <span className="flex-1 min-w-0 text-sm truncate">
+                            {ch.title}
+                          </span>
+                          {isCached && (
+                            <svg
+                              className="w-4 h-4 shrink-0 text-accent"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                              aria-label="Đã lưu offline"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M5 13l4 4L19 7"
+                              />
+                            </svg>
+                          )}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       </div>
     </div>
   );

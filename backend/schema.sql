@@ -162,11 +162,12 @@ CREATE POLICY "Service role full access on covers"
 ON storage.objects FOR ALL TO service_role
 USING (bucket_id = 'covers') WITH CHECK (bucket_id = 'covers');
 
-CREATE POLICY "Public read on audio"
-ON storage.objects FOR SELECT TO anon USING (bucket_id = 'audio');
-
-CREATE POLICY "Public read on covers"
-ON storage.objects FOR SELECT TO anon USING (bucket_id = 'covers');
+-- The "audio" and "covers" buckets are flagged as public on the bucket
+-- itself, so anyone with an object's path can fetch it via
+-- /storage/v1/object/public/<bucket>/<path>. We deliberately do NOT add a
+-- broad SELECT policy on storage.objects for them — that would also expose
+-- the LIST endpoint and let clients enumerate every file (Supabase linter
+-- 0025_public_bucket_allows_listing).
 
 -- Storage buckets (create once in Supabase dashboard > Storage):
 --   "epub-uploads" → private
@@ -177,9 +178,19 @@ ON storage.objects FOR SELECT TO anon USING (bucket_id = 'covers');
 -- Helper functions for chapter re-indexing
 -- ============================================================
 
+-- Note: every function below pins SET search_path = pg_catalog, public so that
+-- a SECURITY DEFINER call cannot be hijacked by a malicious search_path
+-- (Supabase linter 0011_function_search_path_mutable). EXECUTE on these
+-- functions is also revoked from anon/authenticated/public at the bottom of
+-- this file — only service_role and Postgres superusers may call them.
+
 -- Make room for a new chapter inserted at p_insert_index by shifting everything above it up 1
 CREATE OR REPLACE FUNCTION shift_chapters_up(p_book_id UUID, p_insert_index INT)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
 BEGIN
     UPDATE chapters SET chapter_index = chapter_index + 1000000
     WHERE book_id = p_book_id AND chapter_index >= p_insert_index;
@@ -191,7 +202,11 @@ $$;
 
 -- Make room for p_n chapters inserted at p_insert_index (used by split-chapter)
 CREATE OR REPLACE FUNCTION shift_chapters_up_by_n(p_book_id UUID, p_insert_index INT, p_n INT)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
 BEGIN
     UPDATE chapters SET chapter_index = chapter_index + 1000000
     WHERE book_id = p_book_id AND chapter_index >= p_insert_index;
@@ -203,7 +218,11 @@ $$;
 
 -- Close the gap left after a chapter is deleted
 CREATE OR REPLACE FUNCTION reindex_chapters_after_delete(p_book_id UUID, p_deleted_index INT)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
 BEGIN
     UPDATE chapters SET chapter_index = -(chapter_index - 1)
     WHERE book_id = p_book_id AND chapter_index > p_deleted_index;
@@ -215,7 +234,11 @@ $$;
 
 -- Remove every occurrence of a literal string from all chapters of a book
 CREATE OR REPLACE FUNCTION strip_string_from_book_chapters(p_book_id UUID, p_target TEXT)
-RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER AS $$
+RETURNS INTEGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
 DECLARE
     updated_count INTEGER;
 BEGIN
@@ -236,7 +259,11 @@ $$;
 
 -- Resequence all chapters for a book starting from 0 (repair tool)
 CREATE OR REPLACE FUNCTION reindex_all_chapters(p_book_id UUID)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
 BEGIN
     UPDATE chapters SET chapter_index = chapter_index + 1000000
     WHERE book_id = p_book_id;
@@ -250,3 +277,58 @@ BEGIN
     WHERE chapters.id = subq.id;
 END;
 $$;
+
+-- ============================================================
+-- Row Level Security
+-- ============================================================
+-- The backend connects with the service_role key (see
+-- backend/app/database.py), which bypasses RLS by design.
+-- The frontend never connects to Supabase directly — all data
+-- access goes through the FastAPI backend. Auth is custom JWT,
+-- not Supabase Auth, so auth.uid() cannot be used in policies.
+--
+-- Therefore we enable RLS on every public table with NO policies.
+-- This denies all access from the anon and authenticated PostgREST
+-- roles (which is what we want) while leaving service_role
+-- unaffected. This closes the Supabase database linter warnings
+-- 0013_rls_disabled_in_public and 0023_sensitive_columns_exposed.
+
+ALTER TABLE books            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE chapters         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE users            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE refresh_tokens   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_roles       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_progress    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_settings    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_stats       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE genres           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE book_genres      ENABLE ROW LEVEL SECURITY;
+
+-- ============================================================
+-- Revoke discovery & RPC from anon / authenticated
+-- ============================================================
+-- RLS already blocks data reads from anon/authenticated, but the bare
+-- SELECT grants on these tables (and EXECUTE on the helper functions)
+-- still expose the schema via PostgREST/pg_graphql:
+--   0026_pg_graphql_anon_table_exposed
+--   0027_pg_graphql_authenticated_table_exposed
+--   0028_anon_security_definer_function_executable
+--   0029_authenticated_security_definer_function_executable
+--
+-- Since only the FastAPI backend (service_role) ever queries this DB,
+-- we revoke these privileges entirely. service_role and the postgres
+-- superuser keep their default access.
+
+REVOKE SELECT ON
+    books, chapters, users, refresh_tokens,
+    user_roles, user_progress, user_settings, user_stats,
+    genres, book_genres
+FROM anon, authenticated;
+
+REVOKE EXECUTE ON FUNCTION
+    shift_chapters_up(UUID, INT),
+    shift_chapters_up_by_n(UUID, INT, INT),
+    reindex_chapters_after_delete(UUID, INT),
+    strip_string_from_book_chapters(UUID, TEXT),
+    reindex_all_chapters(UUID)
+FROM PUBLIC, anon, authenticated;

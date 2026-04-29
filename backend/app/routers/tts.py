@@ -136,8 +136,8 @@ async def chapter_full_audio(chapter_id: str, voice: str = "vi-VN-HoaiMyNeural")
     Return the full chapter as a single MP3 for offline caching.
 
     Priority:
-      1. Pre-generated file already in audio_files table → stream it directly
-         (avoids re-generating and is instant).
+      1. Pre-generated file already referenced by chapters.audio_url → stream
+         it directly (avoids re-generating and is instant).
       2. On-the-fly generation as fallback (edge-tts → gTTS).
     """
     import tempfile, os, httpx

@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=1480"/>
+<title>TruyệnAudio · Redesign</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; padding: 0; background: #0d0c10; }
+  body { font-family: Inter, system-ui, sans-serif; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="screens.jsx"></script>
+<script type="text/babel" src="browser-window.jsx"></script>
+<script type="text/babel" src="web-screens.jsx"></script>
+<script type="text/babel" src="web-admin.jsx"></script>
+
+<script type="text/babel">
+const TWEAKS_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "accent": "jade",
+  "paperWarmth": 0,
+  "showCultivationRail": false,
+  "density": "compact",
+  "displayFont": "Crimson Pro"
+}/*EDITMODE-END*/;
+
+const ACCENT_MAP = {
+  jade:       { hue: 165, c: 0.11, l: 0.74, name: 'Ngọc Bích' },
+  vermillion: { hue: 27,  c: 0.18, l: 0.62, name: 'Châu Sa' },
+  gold:       { hue: 85,  c: 0.10, l: 0.80, name: 'Hoàng Kim' },
+  violet:     { hue: 295, c: 0.12, l: 0.72, name: 'Tử Quang' },
+};
+
+function PhoneShell({ children, label }) {
+  return (
+    <div style={{
+      width: 412, height: 892, borderRadius: 38, overflow:'hidden',
+      background: T.ink, border: `7px solid oklch(0.30 0.005 260)`,
+      boxShadow: '0 30px 80px rgba(0,0,0,0.45), inset 0 0 0 1px rgba(255,255,255,0.04)',
+      position:'relative',
+    }}>
+      {children}
+    </div>
+  );
+}
+
+function App() {
+  const [tw, setTweak] = useTweaks(TWEAKS_DEFAULTS);
+
+  // Apply accent override globally
+  React.useEffect(() => {
+    const a = ACCENT_MAP[tw.accent] || ACCENT_MAP.jade;
+    T.jade     = `oklch(${a.l} ${a.c} ${a.hue})`;
+    T.jadeDim  = `oklch(${a.l - 0.12} ${a.c - 0.01} ${a.hue})`;
+    T.jadeGlow = `oklch(${a.l} ${a.c} ${a.hue} / 0.18)`;
+  }, [tw.accent]);
+
+  // Player play/pause shared across artboards
+  const [playing, setPlaying] = React.useState(true);
+  const togglePlay = () => setPlaying(p => !p);
+
+  return (
+    <>
+      <DesignCanvas>
+        <DCSection id="overview" title="TruyệnAudio · Premium Dark Redesign"
+                   subtitle="Lacquer ink + jade · Vietnamese Xianxia audiobook reader · Android (412×892)">
+
+          <DCArtboard id="library" label="01 · Library — Tàng Kinh Các"
+                      width={412} height={892}>
+            <PhoneShell><LibraryScreen onOpenPlayer={()=>{}} onOpenBook={()=>{}}/></PhoneShell>
+          </DCArtboard>
+
+          <DCArtboard id="detail" label="02 · Book Detail"
+                      width={412} height={892}>
+            <PhoneShell><BookDetailScreen onBack={()=>{}} onListen={()=>{}}/></PhoneShell>
+          </DCArtboard>
+
+          <DCArtboard id="player" label="03 · Player (Hero)"
+                      width={412} height={892}>
+            <PhoneShell><PlayerScreen onClose={()=>{}} playing={playing} onTogglePlay={togglePlay}/></PhoneShell>
+          </DCArtboard>
+
+          <DCArtboard id="reader" label="04 · Reader"
+                      width={412} height={892}>
+            <PhoneShell><ReaderScreen paperWarmth={tw.paperWarmth}/></PhoneShell>
+          </DCArtboard>
+
+          <DCArtboard id="profile" label="05 · Cultivation / XP"
+                      width={412} height={892}>
+            <PhoneShell><ProfileScreen/></PhoneShell>
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="web" title="Web · Desktop layout"
+                   subtitle="1440×900 · Same dark lacquered ink + jade system, scaled to a sidebar+grid pattern">
+          <DCArtboard id="web-home" label="06 · Web — Trang chủ"
+                      width={1480} height={1020}>
+            <ChromeWindow tabs={[{title: 'TruệnAudio'}, {title: 'Discord'}]} activeIndex={0}
+                          url="truyenaudio.app/home" width={1480} height={1020}>
+              <WebHomeScreen playing={playing} onTogglePlay={togglePlay}/>
+            </ChromeWindow>
+          </DCArtboard>
+
+          <DCArtboard id="web-player" label="07 · Web — Trình phát & mục lục"
+                      width={1480} height={1020}>
+            <ChromeWindow tabs={[{title: 'TruệnAudio — Tiên Nghịch'}, {title: 'Discord'}]} activeIndex={0}
+                          url="truyenaudio.app/book/tien-nghich" width={1480} height={1020}>
+              <WebPlayerScreenFull playing={playing} onTogglePlay={togglePlay}/>
+            </ChromeWindow>
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="admin" title="Admin · Quyền quản trị"
+                   subtitle="Ẩn với user thường · Sidebar admin tông véc-mi-liông · Công cụ: tách chương, xóa chuỗi, Sửa AI, vùng nguy hiểm">
+          <DCArtboard id="admin-books" label="08 · Admin — Quản lý truyện"
+                      width={1480} height={1020}>
+            <ChromeWindow tabs={[{title: 'Admin — Quản lý truyện'}]} activeIndex={0}
+                          url="truyenaudio.app/admin/manage-books" width={1480} height={1020}>
+              <WebAdminManageBooks/>
+            </ChromeWindow>
+          </DCArtboard>
+
+          <DCArtboard id="admin-edit-book" label="09 · Admin — Chỉnh sửa truyện"
+                      width={1480} height={1020}>
+            <ChromeWindow tabs={[{title: 'Admin — Tiên Nghịch'}]} activeIndex={0}
+                          url="truyenaudio.app/admin/books/0001/edit" width={1480} height={1020}>
+              <WebAdminEditBook/>
+            </ChromeWindow>
+          </DCArtboard>
+
+          <DCArtboard id="admin-edit-chapter" label="10 · Admin — Chỉnh sửa chương"
+                      width={1480} height={1020}>
+            <ChromeWindow tabs={[{title: 'Admin — Chương 2078'}]} activeIndex={0}
+                          url="truyenaudio.app/admin/books/0001/chapters/2078" width={1480} height={1020}>
+              <WebAdminEditChapter/>
+            </ChromeWindow>
+          </DCArtboard>
+
+          <DCArtboard id="admin-split" label="11 · Admin — Modal tách chương"
+                      width={1480} height={1020}>
+            <ChromeWindow tabs={[{title: 'Admin — Tách chương 2078'}]} activeIndex={0}
+                          url="truyenaudio.app/admin/books/0001/chapters/2078?split=1" width={1480} height={1020}>
+              <WebAdminEditChapter showSplit={true}/>
+            </ChromeWindow>
+          </DCArtboard>
+        </DCSection>
+      </DesignCanvas>
+
+      <TweaksPanel title="Tweaks">
+        <TweakSection title="Accent realm">
+          <TweakRadio
+            value={tw.accent}
+            onChange={(v) => setTweak('accent', v)}
+            options={[
+              { value: 'jade',       label: 'Jade' },
+              { value: 'vermillion', label: 'Vermillion' },
+              { value: 'gold',       label: 'Gold' },
+              { value: 'violet',     label: 'Violet' },
+            ]}
+          />
+        </TweakSection>
+        <TweakSection title="Reader paper warmth">
+          <TweakSlider
+            value={tw.paperWarmth}
+            min={0} max={1} step={0.1}
+            onChange={(v) => setTweak('paperWarmth', v)}
+            format={(v) => v === 0 ? 'cool ink' : v >= 0.9 ? 'warm vellum' : `${Math.round(v*100)}%`}
+          />
+        </TweakSection>
+        <TweakSection title="Density">
+          <TweakRadio
+            value={tw.density}
+            onChange={(v) => setTweak('density', v)}
+            options={[
+              { value: 'compact',     label: 'Compact' },
+              { value: 'comfortable', label: 'Comfort' },
+              { value: 'spacious',    label: 'Spacious' },
+            ]}
+          />
+        </TweakSection>
+        <TweakSection title="Display font">
+          <TweakSelect
+            value={tw.displayFont}
+            onChange={(v) => {
+              setTweak('displayFont', v);
+              F.display = `"${v}", "Times New Roman", serif`;
+            }}
+            options={[
+              'Cormorant Garamond',
+              'EB Garamond',
+              'Crimson Pro',
+              'Playfair Display',
+            ]}
+          />
+        </TweakSection>
+        <TweakSection title="Show cultivation rail">
+          <TweakToggle
+            value={tw.showCultivationRail}
+            onChange={(v) => setTweak('showCultivationRail', v)}
+          />
+        </TweakSection>
+      </TweaksPanel>
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

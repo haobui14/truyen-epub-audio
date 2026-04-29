@@ -26,7 +26,7 @@ import type { Chapter, Book } from "@/types";
 import { useSpeechPlayer } from "@/hooks/useSpeechPlayer";
 import { useNativeTTSPlayer } from "@/hooks/useNativeTTSPlayer";
 import { isNativePlatform } from "@/lib/capacitor";
-import { getTtsBridge } from "@/lib/backgroundLock";
+import { getTtsBridge, releaseBackgroundLock } from "@/lib/backgroundLock";
 import {
   useChapterAudioPreload,
   type CacheStatus,
@@ -271,6 +271,28 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
     if (!isNativePlatform() || !track?.chapter?.title) return;
     getTtsBridge()?.updateTitle(track.chapter.title);
   }, [track?.chapter?.title, track?.book?.title]);
+
+  // Stop playback on logout. The native TTS foreground service runs in its
+  // own thread and outlives clearAuth(); without this, a signed-out user keeps
+  // hearing audio they have no UI to control.
+  useEffect(() => {
+    const handleAuthChange = () => {
+      if (isLoggedIn()) return;
+      const bridge = getTtsBridge();
+      if (bridge) {
+        try { bridge.stopPlayback(); } catch {}
+        try { bridge.clearNextChapter(); } catch {}
+        try { bridge.cancelSleepTimer(); } catch {}
+      }
+      if (playerStateRef.current.isPlaying) {
+        try { playerStateRef.current.toggle(); } catch {}
+      }
+      releaseBackgroundLock();
+      setTrackState(null);
+    };
+    window.addEventListener("auth-change", handleAuthChange);
+    return () => window.removeEventListener("auth-change", handleAuthChange);
+  }, []);
 
   // ── navigator.mediaSession: register handlers so hardware media buttons
   // (earbuds, Bluetooth, lock-screen) can control playback even in the WebView. ──

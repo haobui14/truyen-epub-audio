@@ -42,8 +42,8 @@ export function UploadZone({ onFile, disabled }: UploadZoneProps) {
       onClick={() => !disabled && inputRef.current?.click()}
       className={`relative border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-all duration-200 ${
         isDragging
-          ? "border-indigo-500 bg-indigo-50/80 dark:bg-indigo-950/50 scale-[1.01]"
-          : "border-gray-300 dark:border-gray-600 hover:border-indigo-400 hover:bg-gray-50 dark:hover:bg-gray-800/50"
+          ? "border-accent bg-accent/80 dark:bg-accent/50 scale-[1.01]"
+          : "border-hairline dark:border-hairline hover:border-accent/40 hover:bg-ink dark:hover:bg-raised/50"
       } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
     >
       <input
@@ -56,9 +56,9 @@ export function UploadZone({ onFile, disabled }: UploadZoneProps) {
           if (file) handleFile(file);
         }}
       />
-      <div className="inline-flex items-center justify-center w-14 h-14 bg-gray-100 dark:bg-gray-700 rounded-2xl mb-4">
+      <div className="inline-flex items-center justify-center w-14 h-14 bg-raised dark:bg-raised-hi rounded-2xl mb-4">
         <svg
-          className="w-7 h-7 text-gray-400"
+          className="w-7 h-7 text-text-mute"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -71,10 +71,10 @@ export function UploadZone({ onFile, disabled }: UploadZoneProps) {
           />
         </svg>
       </div>
-      <p className="text-gray-600 dark:text-gray-300 font-medium mb-1">
+      <p className="text-text-dim dark:text-text-faint font-medium mb-1">
         Kéo thả file vào đây
       </p>
-      <p className="text-sm text-gray-400 dark:text-gray-500">
+      <p className="text-sm text-text-mute dark:text-text-mute">
         EPUB · PDF · TXT · PRC · MOBI &nbsp;·&nbsp; tối đa 50MB
       </p>
     </div>

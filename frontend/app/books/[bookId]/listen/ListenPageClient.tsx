@@ -627,7 +627,18 @@ export default function ListenPage() {
     const nativeChId = bridge.getCurrentChapterId?.() ?? "";
     const nativePlaying = bridge.isPlaying?.() ?? false;
     if (nativePlaying && nativeChId && nativeChId !== chapterId) {
+      // Stop the in-flight chunk AND wipe Java's queues. Without the queue
+      // wipe, native auto-advances to the next chapter in the previous book's
+      // playlist (the one seeded by `setPendingChapters`) and the user keeps
+      // hearing the old book. Effect A below will re-seed with the current
+      // book once allChapters resolves.
       bridge.stopPlayback();
+      try {
+        bridge.clearNextChapter?.();
+      } catch {}
+      try {
+        bridge.setPendingChapters?.("[]", "", "");
+      } catch {}
     }
   }, [chapterId, voice, autoPlay]);
 
@@ -954,9 +965,9 @@ export default function ListenPage() {
 
   if (!chapterId) {
     return (
-      <div className="text-center py-24 text-gray-500">
+      <div className="text-center py-24 text-text-mute">
         Không có chương nào được chọn.{" "}
-        <Link href={`/book?id=${bookId}`} className="text-indigo-600 underline">
+        <Link href={`/book?id=${bookId}`} className="text-accent underline">
           Quay lại
         </Link>
       </div>
@@ -966,14 +977,14 @@ export default function ListenPage() {
   if (bookPending || chaptersPending) {
     return (
       <div className="flex justify-center py-24">
-        <Spinner className="w-8 h-8 text-indigo-600" />
+        <Spinner className="w-8 h-8 text-accent" />
       </div>
     );
   }
 
   if (!book || !currentChapter) {
     return (
-      <div className="text-center py-24 text-gray-500">
+      <div className="text-center py-24 text-text-mute">
         <p className="mb-2">
           {!book
             ? "Không thể tải thông tin sách."
@@ -984,7 +995,7 @@ export default function ListenPage() {
         </p>
         <Link
           href={`/book?id=${bookId}`}
-          className="text-indigo-600 underline text-sm"
+          className="text-accent underline text-sm"
         >
           Quay lại
         </Link>
@@ -994,48 +1005,57 @@ export default function ListenPage() {
 
   return (
     <div className="max-w-lg mx-auto">
-      {/* Top bar */}
-      <div className="flex items-center justify-between mb-4">
+      {/* Top bar — design pattern: down-chevron close · "ĐANG NGHE · Chương N/Total" · text/read switch */}
+      <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2 mb-3">
         <Link
           href={`/book?id=${bookId}`}
-          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
+          className="-ml-2 p-2 text-text hover:text-accent transition-colors"
+          title={book.title}
+          aria-label="Đóng trình phát"
         >
           <svg
-            className="w-4 h-4"
+            className="w-5 h-5"
             fill="none"
             stroke="currentColor"
+            strokeWidth={2}
             viewBox="0 0 24 24"
           >
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
-              strokeWidth={2}
-              d="M15 19l-7-7 7-7"
+              d="M6 9l6 6 6-6"
             />
           </svg>
-          <span className="hidden sm:inline truncate max-w-48">
-            {book.title}
-          </span>
-          <span className="sm:hidden">Quay lại</span>
         </Link>
+        <div className="text-center min-w-0">
+          <p className="font-mono text-[9px] tracking-[0.2em] uppercase text-text-mute">
+            Đang nghe
+          </p>
+          {currentChapter && (
+            <p className="text-xs text-text-dim mt-0.5 truncate">
+              Chương {currentChapter.chapter_index + 1} / {allChapters.length || "—"}
+            </p>
+          )}
+        </div>
         <Link
           href={`/read?id=${bookId}&chapter=${chapterId}`}
-          className="text-xs text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors flex items-center gap-1"
+          className="-mr-2 p-2 text-text hover:text-accent transition-colors"
+          title="Chuyển sang đọc"
+          aria-label="Chuyển sang đọc"
         >
           <svg
-            className="w-3.5 h-3.5"
+            className="w-5 h-5"
             fill="none"
             stroke="currentColor"
+            strokeWidth={2}
             viewBox="0 0 24 24"
           >
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
-              strokeWidth={2}
-              d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
+              d="M4 6h16M4 12h16M4 18h10"
             />
           </svg>
-          Đọc
         </Link>
       </div>
 
@@ -1049,8 +1069,8 @@ export default function ListenPage() {
             onClick={() => setShowText((v) => !v)}
             className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ${
               showText
-                ? "bg-indigo-50 dark:bg-indigo-950 border-indigo-300 dark:border-indigo-700 text-indigo-600 dark:text-indigo-400"
-                : "border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-400"
+                ? "bg-accent/15 dark:bg-accent/15 border-accent/40 dark:border-accent/40 text-accent dark:text-accent"
+                : "border-hairline-soft dark:border-hairline text-text-mute dark:text-text-mute hover:border-accent/40 hover:text-accent dark:hover:text-accent"
             }`}
           >
             <svg
@@ -1074,8 +1094,8 @@ export default function ListenPage() {
             disabled={isCached || isSaving || !chapterTextContent}
             className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ${
               isCached
-                ? "border-emerald-300 dark:border-emerald-700 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30"
-                : "border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-400 disabled:opacity-40"
+                ? "border-accent/40 dark:border-accent/40 text-accent dark:text-accent bg-accent/10 dark:bg-accent/30"
+                : "border-hairline-soft dark:border-hairline text-text-mute dark:text-text-mute hover:border-accent/40 hover:text-accent dark:hover:text-accent disabled:opacity-40"
             }`}
           >
             {isSaving ? (
@@ -1115,7 +1135,7 @@ export default function ListenPage() {
           {isAdmin && (
             <button
               onClick={handleOpenEdit}
-              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-amber-400 hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
+              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-hairline-soft dark:border-hairline text-text-mute dark:text-text-mute hover:border-amber-400 hover:text-gold dark:hover:text-gold transition-colors"
             >
               <svg
                 className="w-3.5 h-3.5"
@@ -1138,17 +1158,17 @@ export default function ListenPage() {
 
       {/* Highlighted text view */}
       {showText && chunks.length > 0 && (
-        <div className="mt-1 mb-4 max-h-72 overflow-y-auto rounded-xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 px-4 py-3 space-y-1.5 text-sm leading-relaxed">
+        <div className="mt-1 mb-4 max-h-72 overflow-y-auto rounded-xl border border-hairline-soft dark:border-hairline-soft bg-surface dark:bg-surface px-4 py-3 space-y-1.5 text-sm leading-relaxed">
           {chunks.map((chunk, i) => (
             <div
               key={i}
               ref={i === chunkIndex ? activeChunkRef : null}
               className={`rounded-lg px-2 py-1 transition-colors duration-300 ${
                 i === chunkIndex
-                  ? "bg-indigo-100 dark:bg-indigo-900/60 text-indigo-900 dark:text-indigo-100 font-medium"
+                  ? "bg-accent/15 dark:bg-accent/60 text-accent-dim dark:text-accent font-medium"
                   : i < chunkIndex
-                    ? "text-gray-400 dark:text-gray-600"
-                    : "text-gray-600 dark:text-gray-400"
+                    ? "text-text-mute dark:text-text-dim"
+                    : "text-text-dim dark:text-text-mute"
               }`}
             >
               {chunk}
@@ -1161,17 +1181,17 @@ export default function ListenPage() {
       {allChapters.length > 1 && (
         <div className="mt-6">
           <div className="flex items-center justify-between mb-2 px-1">
-            <p className="text-[11px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">
+            <p className="text-[11px] font-medium text-text-mute dark:text-text-mute uppercase tracking-wider">
               Danh sách chương
             </p>
-            <span className="text-[11px] text-gray-300 dark:text-gray-600 tabular-nums">
+            <span className="text-[11px] text-text-faint dark:text-text-dim tabular-nums">
               {allChapters.length} chương
             </span>
           </div>
           {/* Search box */}
           <div className="relative mb-2">
             <svg
-              className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-300 dark:text-gray-600 pointer-events-none"
+              className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-faint dark:text-text-dim pointer-events-none"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -1188,12 +1208,12 @@ export default function ListenPage() {
               value={chapterSearch}
               onChange={(e) => setChapterSearch(e.target.value)}
               placeholder="Tìm chương..."
-              className="w-full pl-8 pr-8 py-2 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 placeholder-gray-300 dark:placeholder-gray-600 focus:outline-none focus:border-indigo-400 dark:focus:border-indigo-600 transition-colors"
+              className="w-full pl-8 pr-8 py-2 text-xs rounded-lg border border-hairline-soft dark:border-hairline bg-surface dark:bg-raised text-text-dim dark:text-text-faint placeholder-text-faint dark:placeholder-text-faint focus:outline-none focus:border-accent/40 dark:focus:border-accent transition-colors"
             />
             {chapterSearch && (
               <button
                 onClick={() => setChapterSearch("")}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 transition-colors"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-faint dark:text-text-dim hover:text-text-mute dark:hover:text-text-mute transition-colors"
               >
                 <svg
                   className="w-3.5 h-3.5"
@@ -1222,9 +1242,9 @@ export default function ListenPage() {
                 )
               : allChapters;
             return (
-              <div className="max-h-60 overflow-y-auto rounded-xl border border-gray-100 dark:border-gray-800 divide-y divide-gray-100 dark:divide-gray-800">
+              <div className="max-h-60 overflow-y-auto rounded-xl border border-hairline-soft dark:border-hairline-soft divide-y divide-hairline-soft dark:divide-hairline-soft">
                 {filtered.length === 0 ? (
-                  <p className="px-4 py-4 text-xs text-gray-400 dark:text-gray-500 text-center">
+                  <p className="px-4 py-4 text-xs text-text-mute dark:text-text-mute text-center">
                     Không tìm thấy chương nào
                   </p>
                 ) : (
@@ -1235,19 +1255,19 @@ export default function ListenPage() {
                       onClick={() => navigateTo(ch)}
                       className={`w-full text-left px-4 py-2.5 text-sm transition-colors flex items-center justify-between gap-2 ${
                         ch.id === chapterId
-                          ? "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-medium"
-                          : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60"
+                          ? "bg-accent/15 dark:bg-accent/60 text-accent-dim dark:text-accent font-medium"
+                          : "text-text-dim dark:text-text-mute hover:bg-ink dark:hover:bg-raised/60"
                       }`}
                     >
                       <span>
-                        <span className="text-[11px] font-mono text-gray-300 dark:text-gray-600 mr-2 tabular-nums">
+                        <span className="text-[11px] font-mono text-text-faint dark:text-text-dim mr-2 tabular-nums">
                           {String(ch.chapter_index + 1).padStart(2, "0")}
                         </span>
                         {ch.title}
                       </span>
                       {isNativePlatform() && cachedIds.has(ch.id) && (
                         <svg
-                          className="w-3 h-3 shrink-0 text-emerald-400 dark:text-emerald-500"
+                          className="w-3 h-3 shrink-0 text-accent dark:text-accent"
                           fill="none"
                           stroke="currentColor"
                           viewBox="0 0 24 24"
@@ -1272,14 +1292,14 @@ export default function ListenPage() {
       {/* Edit chapter text modal */}
       {showEditModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh]">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-800">
-              <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-100">
+          <div className="bg-surface dark:bg-surface rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-hairline-soft dark:border-hairline-soft">
+              <h2 className="text-sm font-semibold text-text dark:text-text">
                 Sửa văn bản — {currentChapter?.title}
               </h2>
               <button
                 onClick={() => setShowEditModal(false)}
-                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+                className="text-text-mute hover:text-text-dim dark:hover:text-text-dim transition-colors"
               >
                 <svg
                   className="w-5 h-5"
@@ -1297,25 +1317,25 @@ export default function ListenPage() {
               </button>
             </div>
             <textarea
-              className="flex-1 resize-none px-5 py-4 text-sm text-gray-800 dark:text-gray-100 bg-transparent focus:outline-none font-mono leading-relaxed overflow-y-auto"
+              className="flex-1 resize-none px-5 py-4 text-sm text-text dark:text-text bg-transparent focus:outline-none font-mono leading-relaxed overflow-y-auto"
               value={editText}
               onChange={(e) => setEditText(e.target.value)}
               spellCheck={false}
             />
             {editError && (
-              <p className="px-5 py-2 text-xs text-red-500">{editError}</p>
+              <p className="px-5 py-2 text-xs text-vermillion">{editError}</p>
             )}
-            <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-gray-100 dark:border-gray-800">
+            <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-hairline-soft dark:border-hairline-soft">
               <button
                 onClick={() => setShowEditModal(false)}
-                className="text-sm px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                className="text-sm px-4 py-2 rounded-lg border border-hairline-soft dark:border-hairline text-text-dim dark:text-text-mute hover:bg-ink dark:hover:bg-raised transition-colors"
               >
                 Hủy
               </button>
               <button
                 onClick={handleSaveEdit}
                 disabled={isSavingEdit}
-                className="text-sm px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-medium transition-colors flex items-center gap-2"
+                className="text-sm px-4 py-2 rounded-lg bg-accent hover:bg-accent-dim disabled:opacity-50 text-white font-medium transition-colors flex items-center gap-2"
               >
                 {isSavingEdit && <Spinner className="w-3.5 h-3.5" />}
                 Lưu

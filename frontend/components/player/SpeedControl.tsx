@@ -7,7 +7,6 @@ interface SliderControlProps {
   max: number;
   step: number;
   onChange: (v: number) => void;
-  accent?: "indigo" | "emerald";
 }
 
 export function SliderControl({
@@ -17,12 +16,8 @@ export function SliderControl({
   max,
   step,
   onChange,
-  accent = "indigo",
 }: SliderControlProps) {
   const pct = ((value - min) / (max - min)) * 100;
-
-  const fill = accent === "indigo" ? "#6366f1" : "#10b981";
-  const track = "rgb(209 213 219)"; // gray-300
 
   return (
     <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -33,12 +28,12 @@ export function SliderControl({
         step={step}
         value={value}
         onChange={(e) => onChange(parseFloat(e.target.value))}
-        className={`flex-1 h-1.5 rounded-full appearance-none cursor-pointer ${accent === "emerald" ? "accent-emerald" : ""}`}
+        className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer"
         style={{
-          background: `linear-gradient(to right, ${fill} ${pct}%, ${track} ${pct}%)`,
+          background: `linear-gradient(to right, var(--color-accent) ${pct}%, var(--color-raised-hi) ${pct}%)`,
         }}
       />
-      <span className="text-xs font-semibold text-gray-700 dark:text-gray-200 tabular-nums w-10 text-right shrink-0">
+      <span className="font-mono text-[11px] tabular-nums text-text-dim w-10 text-right shrink-0">
         {value.toFixed(2).replace(/\.?0+$/, "")}
         {label}
       </span>

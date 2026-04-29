@@ -42,7 +42,7 @@ export default function LoginPage() {
   return (
     <div className="max-w-sm mx-auto py-12">
       <div className="text-center mb-8">
-        <div className="w-14 h-14 bg-linear-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
+        <div className="w-14 h-14 bg-linear-to-br from-accent to-accent-dim rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
           <svg
             className="w-7 h-7 text-white"
             fill="none"
@@ -57,10 +57,10 @@ export default function LoginPage() {
             />
           </svg>
         </div>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+        <h1 className="text-2xl font-bold text-text dark:text-text">
           {mode === "login" ? "Đăng nhập" : "Tạo tài khoản"}
         </h1>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+        <p className="text-sm text-text-mute dark:text-text-mute mt-1">
           {mode === "login"
             ? "Đăng nhập để lưu tiến trình đọc và nghe"
             : "Tạo tài khoản mới để bắt đầu"}
@@ -69,10 +69,10 @@ export default function LoginPage() {
 
       <form
         onSubmit={handleSubmit}
-        className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-6 space-y-4 shadow-sm"
+        className="bg-surface dark:bg-surface rounded-2xl border border-hairline-soft dark:border-hairline p-6 space-y-4 shadow-sm"
       >
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+          <label className="block text-sm font-medium text-text-dim dark:text-text-faint mb-1.5">
             Email
           </label>
           <input
@@ -80,13 +80,13 @@ export default function LoginPage() {
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full px-3.5 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-colors"
+            className="w-full px-3.5 py-2.5 rounded-xl border border-hairline-soft dark:border-hairline bg-ink dark:bg-raised text-text dark:text-text text-sm focus:ring-2 focus:ring-accent focus:border-accent outline-none transition-colors"
             placeholder="email@example.com"
           />
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+          <label className="block text-sm font-medium text-text-dim dark:text-text-faint mb-1.5">
             Mật khẩu
           </label>
           <input
@@ -95,13 +95,13 @@ export default function LoginPage() {
             minLength={6}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full px-3.5 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-colors"
+            className="w-full px-3.5 py-2.5 rounded-xl border border-hairline-soft dark:border-hairline bg-ink dark:bg-raised text-text dark:text-text text-sm focus:ring-2 focus:ring-accent focus:border-accent outline-none transition-colors"
             placeholder="Ít nhất 6 ký tự"
           />
         </div>
 
         {error && (
-          <div className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 px-3.5 py-2.5 rounded-xl">
+          <div className="text-sm text-vermillion dark:text-vermillion bg-vermillion/10 dark:bg-vermillion/30 px-3.5 py-2.5 rounded-xl">
             {error}
           </div>
         )}
@@ -109,7 +109,7 @@ export default function LoginPage() {
         <button
           type="submit"
           disabled={loading}
-          className="w-full py-2.5 bg-indigo-600 text-white text-sm font-medium rounded-xl hover:bg-indigo-700 active:scale-[0.98] disabled:opacity-50 transition-all shadow-sm"
+          className="w-full py-2.5 bg-accent text-white text-sm font-medium rounded-xl hover:bg-accent-dim active:scale-[0.98] disabled:opacity-50 transition-all shadow-sm"
         >
           {loading
             ? "Đang xử lý..."
@@ -118,7 +118,7 @@ export default function LoginPage() {
               : "Tạo tài khoản"}
         </button>
 
-        <div className="text-center text-sm text-gray-500 dark:text-gray-400">
+        <div className="text-center text-sm text-text-mute dark:text-text-mute">
           {mode === "login" ? (
             <>
               Chưa có tài khoản?{" "}
@@ -128,7 +128,7 @@ export default function LoginPage() {
                   setMode("signup");
                   setError("");
                 }}
-                className="text-indigo-600 dark:text-indigo-400 font-medium hover:underline"
+                className="text-accent dark:text-accent font-medium hover:underline"
               >
                 Đăng ký
               </button>
@@ -142,7 +142,7 @@ export default function LoginPage() {
                   setMode("login");
                   setError("");
                 }}
-                className="text-indigo-600 dark:text-indigo-400 font-medium hover:underline"
+                className="text-accent dark:text-accent font-medium hover:underline"
               >
                 Đăng nhập
               </button>
@@ -154,7 +154,7 @@ export default function LoginPage() {
       <div className="text-center mt-6">
         <Link
           href="/"
-          className="text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+          className="text-sm text-text-mute hover:text-text-dim dark:hover:text-text-faint transition-colors"
         >
           Quay lại trang chủ
         </Link>

@@ -115,10 +115,10 @@ export default function SearchClient() {
     <div className="max-w-2xl mx-auto">
       {/* Page title */}
       <div className="mb-5">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 leading-tight">
+        <h1 className="text-2xl font-bold text-text dark:text-text leading-tight">
           Tìm kiếm
         </h1>
-        <p className="text-sm text-gray-400 dark:text-gray-500 mt-0.5">
+        <p className="text-sm text-text-mute dark:text-text-mute mt-0.5">
           Tìm truyện theo tên, tác giả hoặc thể loại
         </p>
       </div>
@@ -126,7 +126,7 @@ export default function SearchClient() {
       {/* Search bar */}
       <div className="relative mb-4">
         <svg
-          className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-gray-400 dark:text-gray-500 pointer-events-none"
+          className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-text-mute dark:text-text-mute pointer-events-none"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -144,12 +144,12 @@ export default function SearchClient() {
           placeholder="Tên truyện hoặc tác giả…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          className="w-full pl-10 pr-10 py-3 text-sm rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500 shadow-sm transition"
+          className="w-full pl-10 pr-10 py-3 text-sm rounded-2xl border border-hairline-soft dark:border-hairline bg-surface dark:bg-raised text-text dark:text-text placeholder-text-faint dark:placeholder-text-faint focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent shadow-sm transition"
         />
         {query && (
           <button
             onClick={() => setQuery("")}
-            className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+            className="absolute right-3.5 top-1/2 -translate-y-1/2 text-text-mute hover:text-text-dim dark:hover:text-text-dim transition-colors"
           >
             <svg
               className="w-4 h-4"
@@ -172,7 +172,7 @@ export default function SearchClient() {
       <div className="space-y-3 mb-5">
         {/* Story status */}
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-2">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-text-mute dark:text-text-mute mb-2">
             Tình trạng
           </p>
           <div className="flex gap-2 overflow-x-auto pb-0.5 scrollbar-none -mx-4 sm:mx-0 px-4 sm:px-0">
@@ -182,8 +182,8 @@ export default function SearchClient() {
                 onClick={() => setStoryFilter(opt.value)}
                 className={`flex-none px-3.5 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap ${
                   storyFilter === opt.value
-                    ? "bg-indigo-600 text-white shadow-sm"
-                    : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700"
+                    ? "bg-accent text-white shadow-sm"
+                    : "bg-raised dark:bg-raised text-text-dim dark:text-text-mute hover:bg-raised-hi dark:hover:bg-raised-hi"
                 }`}
               >
                 {opt.label}
@@ -195,7 +195,7 @@ export default function SearchClient() {
         {/* Genre chips */}
         {usedGenres.length > 0 && (
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-text-mute dark:text-text-mute mb-2">
               Thể loại
             </p>
             <div className="flex gap-2 overflow-x-auto pb-0.5 scrollbar-none -mx-4 sm:mx-0 px-4 sm:px-0">
@@ -203,8 +203,8 @@ export default function SearchClient() {
                 onClick={() => setGenreFilter(null)}
                 className={`flex-none px-3.5 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap ${
                   genreFilter === null
-                    ? "bg-indigo-600 text-white shadow-sm"
-                    : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700"
+                    ? "bg-accent text-white shadow-sm"
+                    : "bg-raised dark:bg-raised text-text-dim dark:text-text-mute hover:bg-raised-hi dark:hover:bg-raised-hi"
                 }`}
               >
                 Tất cả
@@ -217,8 +217,8 @@ export default function SearchClient() {
                   }
                   className={`flex-none px-3.5 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap ${
                     genreFilter === g.id
-                      ? "bg-indigo-600 text-white shadow-sm"
-                      : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700"
+                      ? "bg-accent text-white shadow-sm"
+                      : "bg-raised dark:bg-raised text-text-dim dark:text-text-mute hover:bg-raised-hi dark:hover:bg-raised-hi"
                   }`}
                 >
                   {g.name}
@@ -232,7 +232,7 @@ export default function SearchClient() {
       {/* Results header */}
       {!isLoading && books && (
         <div className="flex items-center justify-between mb-3">
-          <p className="text-xs text-gray-400 dark:text-gray-500">
+          <p className="text-xs text-text-mute dark:text-text-mute">
             {hasActiveFilters
               ? `${results.length} kết quả`
               : `${books.length} truyện`}
@@ -240,7 +240,7 @@ export default function SearchClient() {
           {hasActiveFilters && (
             <button
               onClick={clearAll}
-              className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+              className="text-xs text-accent dark:text-accent hover:underline"
             >
               Xóa bộ lọc
             </button>
@@ -251,26 +251,26 @@ export default function SearchClient() {
       {/* States */}
       {isLoading && (
         <div className="flex flex-col items-center gap-3 py-20">
-          <Spinner className="w-8 h-8 text-indigo-600" />
-          <p className="text-sm text-gray-400">Đang tải...</p>
+          <Spinner className="w-8 h-8 text-accent" />
+          <p className="text-sm text-text-mute">Đang tải...</p>
         </div>
       )}
 
       {error && (
         <div className="text-center py-20">
-          <p className="text-red-500 font-medium">
+          <p className="text-vermillion font-medium">
             Không thể tải danh sách truyện
           </p>
-          <p className="text-sm text-gray-400 mt-1">
+          <p className="text-sm text-text-mute mt-1">
             Vui lòng kiểm tra kết nối và thử lại.
           </p>
         </div>
       )}
 
       {!isLoading && !error && results.length === 0 && (
-        <div className="text-center py-20 text-gray-400 dark:text-gray-500">
+        <div className="text-center py-20 text-text-mute dark:text-text-mute">
           <svg
-            className="w-12 h-12 mx-auto mb-3 text-gray-200 dark:text-gray-700"
+            className="w-12 h-12 mx-auto mb-3 text-text-dim dark:text-text-dim"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -282,7 +282,7 @@ export default function SearchClient() {
               d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
             />
           </svg>
-          <p className="text-base font-medium text-gray-500 dark:text-gray-400">
+          <p className="text-base font-medium text-text-mute dark:text-text-mute">
             {hasActiveFilters
               ? "Không tìm thấy kết quả"
               : "Nhập từ khóa để tìm kiếm"}
@@ -290,7 +290,7 @@ export default function SearchClient() {
           {hasActiveFilters && (
             <button
               onClick={clearAll}
-              className="mt-3 text-sm text-indigo-600 dark:text-indigo-400 hover:underline"
+              className="mt-3 text-sm text-accent dark:text-accent hover:underline"
             >
               Xóa bộ lọc
             </button>

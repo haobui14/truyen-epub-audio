@@ -2,6 +2,67 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+@theme {
+  /* ─── Lacquered ink palette (OKLCH) ─────────────────────── */
+  --color-ink: oklch(0.16 0.012 260);
+  --color-surface: oklch(0.2 0.014 260);
+  --color-raised: oklch(0.235 0.014 260);
+  --color-raised-hi: oklch(0.27 0.015 260);
+  --color-hairline: oklch(0.32 0.013 260);
+  --color-hairline-soft: oklch(0.27 0.012 260 / 0.6);
+
+  /* ─── Typography colors ─────────────────────────────────── */
+  --color-text: oklch(0.96 0.004 260);
+  --color-text-dim: oklch(0.78 0.006 260);
+  --color-text-mute: oklch(0.6 0.008 260);
+  --color-text-faint: oklch(0.46 0.01 260);
+
+  /* ─── Accents ───────────────────────────────────────────── */
+  /* Primary: jade. Vermillion reserved for seal moments. */
+  --color-accent: oklch(0.74 0.11 165);
+  --color-accent-dim: oklch(0.62 0.1 165);
+  --color-accent-glow: oklch(0.74 0.11 165 / 0.18);
+  --color-gold: oklch(0.8 0.1 85);
+  --color-gold-dim: oklch(0.66 0.09 85);
+  --color-vermillion: oklch(0.62 0.18 27);
+  --color-vermillion-dim: oklch(0.55 0.18 27);
+
+  /* ─── Cultivation realm tints (dark-tuned) ──────────────── */
+  --color-realm-slate: oklch(0.72 0.04 260);
+  --color-realm-emerald: oklch(0.74 0.12 162);
+  --color-realm-yellow: oklch(0.82 0.13 92);
+  --color-realm-orange: oklch(0.74 0.14 55);
+  --color-realm-pink: oklch(0.76 0.12 0);
+  --color-realm-violet: oklch(0.72 0.13 295);
+  --color-realm-blue: oklch(0.72 0.12 235);
+  --color-realm-red: oklch(0.68 0.18 25);
+
+  /* ─── Fonts ─────────────────────────────────────────────── */
+  --font-display: "Cormorant Garamond", "Times New Roman", serif;
+  --font-sans: "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+:root {
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  background-color: var(--color-ink);
+  color: var(--color-text);
+  color-scheme: dark;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-ink);
+  color: var(--color-text);
+  padding-top: var(--sat);
+  padding-bottom: var(--sab);
+  padding-left: var(--sal);
+  padding-right: var(--sar);
+}
+
 @keyframes slideUp {
   from {
     transform: translateY(100%);
@@ -14,23 +75,7 @@
   animation: slideUp 0.22s cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-:root {
-  --font-geist-sans: "Geist", sans-serif;
-  --sat: env(safe-area-inset-top, 0px);
-  --sab: env(safe-area-inset-bottom, 0px);
-  --sal: env(safe-area-inset-left, 0px);
-  --sar: env(safe-area-inset-right, 0px);
-}
-
-body {
-  font-family: var(--font-geist-sans), system-ui, sans-serif;
-  padding-top: var(--sat);
-  padding-bottom: var(--sab);
-  padding-left: var(--sal);
-  padding-right: var(--sar);
-}
-
-/* Smooth audio seek bar */
+/* ─── Audio seek bar (jade) ──────────────────────────────── */
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
@@ -40,9 +85,9 @@ input[type="range"]::-webkit-slider-thumb {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: white;
-  border: 2px solid #6366f1;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  background: var(--color-text);
+  border: 2px solid var(--color-accent);
+  box-shadow: 0 0 12px var(--color-accent-glow);
   cursor: pointer;
   margin-top: -1px;
 }
@@ -50,19 +95,13 @@ input[type="range"]::-moz-range-thumb {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: white;
-  border: 2px solid #6366f1;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  background: var(--color-text);
+  border: 2px solid var(--color-accent);
+  box-shadow: 0 0 12px var(--color-accent-glow);
   cursor: pointer;
 }
-input[type="range"].accent-emerald::-webkit-slider-thumb {
-  border-color: #10b981;
-}
-input[type="range"].accent-emerald::-moz-range-thumb {
-  border-color: #10b981;
-}
 
-/* Global scrollbar */
+/* ─── Scrollbars (dark-tuned) ────────────────────────────── */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -71,27 +110,16 @@ input[type="range"].accent-emerald::-moz-range-thumb {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #d1d5db;
+  background: var(--color-raised-hi);
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #9ca3af;
-}
-.dark ::-webkit-scrollbar-thumb {
-  background: #374151;
-}
-.dark ::-webkit-scrollbar-thumb:hover {
-  background: #4b5563;
+  background: var(--color-hairline);
 }
 * {
   scrollbar-width: thin;
-  scrollbar-color: #d1d5db transparent;
+  scrollbar-color: var(--color-raised-hi) transparent;
 }
-.dark * {
-  scrollbar-color: #374151 transparent;
-}
-
-/* Custom scrollbar (kept for explicit usage) */
 .scrollbar-thin::-webkit-scrollbar {
   width: 6px;
 }
@@ -99,14 +127,11 @@ input[type="range"].accent-emerald::-moz-range-thumb {
   background: transparent;
 }
 .scrollbar-thin::-webkit-scrollbar-thumb {
-  background: #d1d5db;
+  background: var(--color-hairline);
   border-radius: 9999px;
 }
-.dark .scrollbar-thin::-webkit-scrollbar-thumb {
-  background: #4b5563;
-}
 
-/* Smooth transitions */
+/* ─── Animations ─────────────────────────────────────────── */
 .animate-in {
   animation: fadeSlideIn 0.2s ease-out;
 }
@@ -121,7 +146,6 @@ input[type="range"].accent-emerald::-moz-range-thumb {
   }
 }
 
-/* Sound wave bars (used in player) */
 @keyframes wave-bounce {
   0%,
   100% {
@@ -150,7 +174,6 @@ input[type="range"].accent-emerald::-moz-range-thumb {
   animation-delay: 0.45s;
 }
 
-/* Floating icon animation (empty states) */
 @keyframes float {
   0%,
   100% {
@@ -164,14 +187,30 @@ input[type="range"].accent-emerald::-moz-range-thumb {
   animation: float 4s ease-in-out infinite;
 }
 
-/* Reader content styles */
+/* Player cover breathing halo */
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.18;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(1.02);
+  }
+}
+.animate-breathe {
+  animation: breathe 3.2s ease-in-out infinite;
+}
+
+/* ─── Reader content (serif body) ────────────────────────── */
 .reader-content {
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-display);
   word-break: break-word;
   hyphens: auto;
 }
 
-/* Card hover lift effect */
+/* ─── Card hover lift ────────────────────────────────────── */
 .card-hover {
   transition:
     transform 0.2s ease,
@@ -179,11 +218,6 @@ input[type="range"].accent-emerald::-moz-range-thumb {
 }
 .card-hover:hover {
   transform: translateY(-3px);
-  box-shadow:
-    0 12px 28px -4px rgba(0, 0, 0, 0.1),
-    0 4px 8px -2px rgba(0, 0, 0, 0.04);
-}
-.dark .card-hover:hover {
   box-shadow:
     0 12px 28px -4px rgba(0, 0, 0, 0.4),
     0 4px 8px -2px rgba(0, 0, 0, 0.2);

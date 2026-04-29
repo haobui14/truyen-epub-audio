@@ -8,7 +8,7 @@ const STORY_STATUS_LABELS: Record<string, { label: string; classes: string }> =
     completed: {
       label: "Hoàn thành",
       classes:
-        "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300",
+        "bg-accent/15 dark:bg-accent/40/40 text-accent-dim dark:text-accent",
     },
     ongoing: {
       label: "Đang ra",
@@ -16,7 +16,7 @@ const STORY_STATUS_LABELS: Record<string, { label: string; classes: string }> =
     },
     unknown: {
       label: "Chưa rõ",
-      classes: "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400",
+      classes: "bg-raised dark:bg-raised text-text-mute dark:text-text-mute",
     },
   };
 
@@ -28,10 +28,10 @@ export function BookListRow({ book }: { book: Book }) {
   return (
     <Link
       href={`/book?id=${book.id}`}
-      className="flex items-start gap-3 sm:gap-4 bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700/60 hover:border-indigo-200 dark:hover:border-indigo-800/60 shadow-sm hover:shadow-md active:scale-[0.99] transition-all duration-200 p-3 group"
+      className="flex items-start gap-3 sm:gap-4 bg-surface dark:bg-raised rounded-2xl border border-hairline-soft dark:border-hairline/60 hover:border-accent/40 dark:hover:border-accent/40/60 shadow-sm hover:shadow-md active:scale-[0.99] transition-all duration-200 p-3 group"
     >
       {/* Cover thumbnail */}
-      <div className="flex-none w-14 sm:w-16 aspect-2/3 rounded-xl overflow-hidden bg-linear-to-br from-indigo-50 to-purple-50 dark:from-indigo-950 dark:to-purple-950 relative shadow-sm">
+      <div className="flex-none w-14 sm:w-16 aspect-2/3 rounded-xl overflow-hidden bg-linear-to-br from-raised to-raised-hi dark:from-raised dark:to-raised-hi relative shadow-sm">
         {book.cover_url ? (
           <Image
             src={book.cover_url}
@@ -43,7 +43,7 @@ export function BookListRow({ book }: { book: Book }) {
         ) : (
           <div className="w-full h-full flex items-center justify-center">
             <svg
-              className="w-6 h-6 text-indigo-300 dark:text-indigo-700"
+              className="w-6 h-6 text-accent dark:text-accent-dim"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -63,14 +63,14 @@ export function BookListRow({ book }: { book: Book }) {
       <div className="flex-1 min-w-0 py-0.5">
         {/* Title */}
         <h3
-          className="font-semibold text-gray-900 dark:text-gray-100 text-sm leading-snug line-clamp-2 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors mb-0.5"
+          className="font-semibold text-text dark:text-text text-sm leading-snug line-clamp-2 group-hover:text-accent dark:group-hover:text-accent transition-colors mb-0.5"
           title={book.title}
         >
           {book.title}
         </h3>
 
         {/* Author */}
-        <p className="text-xs text-gray-500 dark:text-gray-400 truncate mb-2">
+        <p className="text-xs text-text-mute dark:text-text-mute truncate mb-2">
           {book.author ?? "—"}
         </p>
 
@@ -90,7 +90,7 @@ export function BookListRow({ book }: { book: Book }) {
                 <GenreTag key={g.id} genre={g} />
               ))}
               {book.genres.length > 2 && (
-                <span className="text-[10px] text-gray-400 dark:text-gray-500">
+                <span className="text-[10px] text-text-mute dark:text-text-mute">
                   +{book.genres.length - 2}
                 </span>
               )}
@@ -98,7 +98,7 @@ export function BookListRow({ book }: { book: Book }) {
           )}
 
           {/* Chapter count */}
-          <span className="ml-auto flex items-center gap-1 text-[11px] text-gray-400 dark:text-gray-500 flex-none">
+          <span className="ml-auto flex items-center gap-1 text-[11px] text-text-mute dark:text-text-mute flex-none">
             <svg
               className="w-3 h-3"
               fill="none"
@@ -118,7 +118,7 @@ export function BookListRow({ book }: { book: Book }) {
       </div>
 
       {/* Chevron */}
-      <div className="flex-none self-center text-gray-300 dark:text-gray-600 group-hover:text-indigo-400 transition-colors">
+      <div className="flex-none self-center text-text-faint dark:text-text-dim group-hover:text-accent transition-colors">
         <svg
           className="w-4 h-4"
           fill="none"

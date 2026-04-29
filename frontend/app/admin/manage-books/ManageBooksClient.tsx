@@ -29,12 +29,12 @@ function BookRow({
     <div
       className={`flex items-center gap-3 sm:gap-4 px-4 py-3 rounded-xl border transition-colors ${
         book.is_featured
-          ? "bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800"
-          : "bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700/60"
+          ? "bg-gold/10 dark:bg-gold/30 border-gold/30 dark:border-gold/30"
+          : "bg-surface dark:bg-raised border-hairline-soft dark:border-hairline/60"
       }`}
     >
       {/* Cover thumbnail */}
-      <div className="flex-none w-10 h-14 rounded-lg overflow-hidden bg-indigo-100 dark:bg-indigo-900/40 relative">
+      <div className="flex-none w-10 h-14 rounded-lg overflow-hidden bg-accent/15 dark:bg-accent/40 relative">
         {book.cover_url ? (
           <Image
             src={book.cover_url}
@@ -46,7 +46,7 @@ function BookRow({
         ) : (
           <div className="w-full h-full flex items-center justify-center">
             <svg
-              className="w-5 h-5 text-indigo-400"
+              className="w-5 h-5 text-accent"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -65,11 +65,11 @@ function BookRow({
       {/* Info */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-medium text-sm text-gray-900 dark:text-gray-100 truncate max-w-45 sm:max-w-xs">
+          <span className="font-medium text-sm text-text dark:text-text truncate max-w-45 sm:max-w-xs">
             {book.title}
           </span>
           {book.is_featured && (
-            <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 flex-none">
+            <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-gold/15 dark:bg-amber-900/50 text-gold dark:text-gold flex-none">
               <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
                 <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
               </svg>
@@ -77,7 +77,7 @@ function BookRow({
             </span>
           )}
         </div>
-        <p className="text-xs text-gray-400 dark:text-gray-500 truncate mt-0.5">
+        <p className="text-xs text-text-mute dark:text-text-mute truncate mt-0.5">
           {book.author ?? "—"} · {book.total_chapters} chương
         </p>
       </div>
@@ -86,7 +86,7 @@ function BookRow({
       <div className="flex items-center gap-2 flex-none">
         <Link
           href={`/admin/edit-book?id=${book.id}`}
-          className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-colors"
+          className="p-1.5 rounded-lg text-text-mute hover:text-accent dark:hover:text-accent hover:bg-accent/15 dark:hover:bg-accent/40 transition-colors"
           title="Chỉnh sửa"
         >
           <svg
@@ -107,8 +107,8 @@ function BookRow({
           onClick={() => onFeature(book)}
           className={`p-1.5 rounded-lg transition-colors ${
             book.is_featured
-              ? "text-amber-500 bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-900/60"
-              : "text-gray-400 hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+              ? "text-gold bg-gold/15 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-900/60"
+              : "text-text-mute hover:text-gold hover:bg-gold/10 dark:hover:bg-gold/30"
           }`}
           title={book.is_featured ? "Bỏ spotlight" : "Đặt làm spotlight"}
         >
@@ -152,11 +152,11 @@ function FeatureModal({
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div className="relative z-10 w-full sm:max-w-sm mx-auto bg-white dark:bg-gray-900 rounded-t-2xl sm:rounded-2xl shadow-2xl px-5 py-6 animate-in">
-        <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-1">
+      <div className="relative z-10 w-full sm:max-w-sm mx-auto bg-surface dark:bg-surface rounded-t-2xl sm:rounded-2xl shadow-2xl px-5 py-6 animate-in">
+        <h3 className="text-base font-semibold text-text dark:text-text mb-1">
           Đặt spotlight
         </h3>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mb-4 line-clamp-1">
+        <p className="text-sm text-text-mute dark:text-text-mute mb-4 line-clamp-1">
           {book.title}
         </p>
 
@@ -171,8 +171,8 @@ function FeatureModal({
               }}
               className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors border ${
                 !custom && label === p.value
-                  ? "bg-amber-500 text-white border-amber-500"
-                  : "border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-amber-400 hover:text-amber-600"
+                  ? "bg-gold text-white border-amber-500"
+                  : "border-hairline-soft dark:border-hairline text-text-dim dark:text-text-mute hover:border-amber-400 hover:text-gold"
               }`}
             >
               {p.label}
@@ -182,8 +182,8 @@ function FeatureModal({
             onClick={() => setCustom(true)}
             className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors border ${
               custom
-                ? "bg-indigo-600 text-white border-indigo-600"
-                : "border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-indigo-400 hover:text-indigo-600"
+                ? "bg-accent text-white border-accent"
+                : "border-hairline-soft dark:border-hairline text-text-dim dark:text-text-mute hover:border-accent/40 hover:text-accent"
             }`}
           >
             Tùy chỉnh…
@@ -198,20 +198,20 @@ function FeatureModal({
             onChange={(e) => setLabel(e.target.value)}
             placeholder="Nhập nhãn tùy chỉnh…"
             maxLength={30}
-            className="w-full mb-4 px-3.5 py-2.5 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500 transition"
+            className="w-full mb-4 px-3.5 py-2.5 text-sm rounded-xl border border-hairline-soft dark:border-hairline bg-surface dark:bg-raised text-text dark:text-text placeholder-text-faint focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent transition"
           />
         )}
 
         <div className="flex gap-3">
           <button
             onClick={() => onConfirm(label.trim() || "Nổi bật")}
-            className="flex-1 bg-amber-500 hover:bg-amber-400 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors"
+            className="flex-1 bg-gold hover:bg-amber-400 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors"
           >
             Xác nhận
           </button>
           <button
             onClick={onClose}
-            className="flex-1 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 font-medium py-2.5 rounded-xl text-sm hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+            className="flex-1 border border-hairline-soft dark:border-hairline text-text-dim dark:text-text-faint font-medium py-2.5 rounded-xl text-sm hover:bg-ink dark:hover:bg-raised transition-colors"
           >
             Hủy
           </button>
@@ -312,10 +312,10 @@ export default function ManageBooksClient() {
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
       {/* Breadcrumb */}
-      <nav className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 mb-6">
+      <nav className="flex items-center gap-1.5 text-sm text-text-mute dark:text-text-mute mb-6">
         <Link
           href="/"
-          className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+          className="hover:text-accent dark:hover:text-accent transition-colors"
         >
           Thư viện
         </Link>
@@ -332,22 +332,22 @@ export default function ManageBooksClient() {
             d="M9 5l7 7-7 7"
           />
         </svg>
-        <span className="text-gray-700 dark:text-gray-200 font-medium">
+        <span className="text-text-dim dark:text-text-dim font-medium">
           Quản lý truyện
         </span>
       </nav>
 
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+          <h1 className="text-2xl font-bold text-text dark:text-text">
             Quản lý truyện
           </h1>
-          <p className="text-sm text-gray-400 dark:text-gray-500 mt-0.5">
+          <p className="text-sm text-text-mute dark:text-text-mute mt-0.5">
             Đặt spotlight, chỉnh sửa và sắp xếp thư viện
           </p>
         </div>
         {books && (
-          <span className="text-xs font-medium text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-3 py-1.5 rounded-full tabular-nums">
+          <span className="text-xs font-medium text-text-mute dark:text-text-mute bg-raised dark:bg-raised px-3 py-1.5 rounded-full tabular-nums">
             {books.length} truyện
           </span>
         )}
@@ -355,16 +355,16 @@ export default function ManageBooksClient() {
 
       {/* Current spotlight info banner */}
       {featured && (
-        <div className="flex items-center gap-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl px-4 py-3 mb-5">
+        <div className="flex items-center gap-3 bg-gold/10 dark:bg-gold/30 border border-gold/30 dark:border-gold/30 rounded-xl px-4 py-3 mb-5">
           <svg
-            className="w-5 h-5 text-amber-500 flex-none"
+            className="w-5 h-5 text-gold flex-none"
             fill="currentColor"
             viewBox="0 0 20 20"
           >
             <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
           </svg>
           <div className="flex-1 min-w-0">
-            <p className="text-xs font-semibold text-amber-700 dark:text-amber-300 mb-0.5">
+            <p className="text-xs font-semibold text-gold dark:text-gold mb-0.5">
               Đang spotlight · {featured.featured_label ?? "Nổi bật"}
             </p>
             <p className="text-sm text-amber-800 dark:text-amber-200 truncate font-medium">
@@ -375,7 +375,7 @@ export default function ManageBooksClient() {
             onClick={() =>
               featureMutation.mutate({ id: featured.id, is_featured: false })
             }
-            className="text-xs text-amber-600 dark:text-amber-400 hover:underline flex-none"
+            className="text-xs text-gold dark:text-gold hover:underline flex-none"
           >
             Bỏ
           </button>
@@ -385,7 +385,7 @@ export default function ManageBooksClient() {
       {/* Search */}
       <div className="relative mb-4">
         <svg
-          className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none"
+          className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-mute pointer-events-none"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -402,12 +402,12 @@ export default function ManageBooksClient() {
           placeholder="Tìm theo tên hoặc tác giả…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full pl-9 pr-4 py-2.5 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500 transition"
+          className="w-full pl-9 pr-4 py-2.5 text-sm rounded-xl border border-hairline-soft dark:border-hairline bg-surface dark:bg-raised text-text dark:text-text placeholder-text-faint dark:placeholder-text-faint focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent transition"
         />
         {search && (
           <button
             onClick={() => setSearch("")}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-text-mute hover:text-text-dim dark:hover:text-text-dim transition-colors"
           >
             <svg
               className="w-4 h-4"
@@ -427,7 +427,7 @@ export default function ManageBooksClient() {
       </div>
 
       {/* Legend */}
-      <p className="text-xs text-gray-400 dark:text-gray-500 mb-3">
+      <p className="text-xs text-text-mute dark:text-text-mute mb-3">
         Nhấn{" "}
         <svg
           className="inline w-3.5 h-3.5 mb-0.5"
@@ -449,10 +449,10 @@ export default function ManageBooksClient() {
       {/* Book list */}
       {isLoading ? (
         <div className="flex justify-center py-20">
-          <Spinner className="w-8 h-8 text-indigo-500" />
+          <Spinner className="w-8 h-8 text-accent" />
         </div>
       ) : filtered.length === 0 ? (
-        <div className="text-center py-16 text-gray-400 dark:text-gray-500">
+        <div className="text-center py-16 text-text-mute dark:text-text-mute">
           {search ? `Không tìm thấy "${search}"` : "Chưa có truyện nào"}
         </div>
       ) : (
@@ -474,7 +474,7 @@ export default function ManageBooksClient() {
 
       {/* Toast */}
       {toastMsg && (
-        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-sm font-medium px-4 py-2.5 rounded-xl shadow-lg animate-in whitespace-nowrap">
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 bg-surface dark:bg-raised text-white dark:text-text text-sm font-medium px-4 py-2.5 rounded-xl shadow-lg animate-in whitespace-nowrap">
           {toastMsg}
         </div>
       )}

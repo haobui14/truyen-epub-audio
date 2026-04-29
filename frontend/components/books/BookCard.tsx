@@ -33,9 +33,9 @@ export function BookCard({ book, priority }: { book: Book; priority?: boolean })
       <div className="relative group">
         <Link
           href={`/book?id=${book.id}`}
-          className="block bg-white dark:bg-gray-800 rounded-2xl shadow-sm card-hover overflow-hidden border border-gray-100 dark:border-gray-700/60 hover:border-indigo-100 dark:hover:border-indigo-900/60 transition-colors duration-200"
+          className="block bg-surface dark:bg-raised rounded-2xl shadow-sm card-hover overflow-hidden border border-hairline-soft dark:border-hairline/60 hover:border-accent/30 dark:hover:border-accent/40/60 transition-colors duration-200"
         >
-          <div className="aspect-2/3 bg-linear-to-br from-indigo-50 to-purple-50 dark:from-indigo-950 dark:to-purple-950 relative overflow-hidden">
+          <div className="aspect-2/3 bg-linear-to-br from-raised to-raised-hi dark:from-raised dark:to-raised-hi relative overflow-hidden">
             {book.cover_url ? (
               <Image
                 src={book.cover_url}
@@ -46,7 +46,7 @@ export function BookCard({ book, priority }: { book: Book; priority?: boolean })
                 priority={priority}
               />
             ) : (
-              <div className="w-full h-full flex flex-col items-center justify-center text-indigo-300 dark:text-indigo-700 px-3">
+              <div className="w-full h-full flex flex-col items-center justify-center text-accent dark:text-accent-dim px-3">
                 <svg
                   className="w-12 h-12 mb-2"
                   fill="none"
@@ -60,7 +60,7 @@ export function BookCard({ book, priority }: { book: Book; priority?: boolean })
                     d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
                   />
                 </svg>
-                <span className="text-xs font-medium text-indigo-400 dark:text-indigo-600 text-center line-clamp-2">
+                <span className="text-xs font-medium text-accent dark:text-accent text-center line-clamp-2">
                   {book.title}
                 </span>
               </div>
@@ -69,19 +69,19 @@ export function BookCard({ book, priority }: { book: Book; priority?: boolean })
           <div className="p-3 flex flex-col">
             {/* Title - fixed 2 lines max */}
             <h3
-              className="font-semibold text-gray-900 dark:text-gray-100 text-sm leading-[1.3] h-[calc(1.3em*2)] line-clamp-2 mb-1 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors"
+              className="font-semibold text-text dark:text-text text-sm leading-[1.3] h-[calc(1.3em*2)] line-clamp-2 mb-1 group-hover:text-accent dark:group-hover:text-accent transition-colors"
               title={book.title}
             >
               {book.title}
             </h3>
             {/* Author - fixed 1 line */}
             <p
-              className="text-xs leading-[1.4] h-[1.4em] text-gray-500 dark:text-gray-400 mb-1.5 truncate"
+              className="text-xs leading-[1.4] h-[1.4em] text-text-mute dark:text-text-mute mb-1.5 truncate"
               title={book.author || ""}
             >
               {book.author || "\u00A0"}
             </p>
-            <div className="flex items-center gap-1 text-xs text-gray-400 dark:text-gray-500">
+            <div className="flex items-center gap-1 text-xs text-text-mute dark:text-text-mute">
               <svg
                 className="w-3 h-3"
                 fill="none"
@@ -103,7 +103,7 @@ export function BookCard({ book, priority }: { book: Book; priority?: boolean })
                   <GenreTag key={g.id} genre={g} />
                 ))}
                 {book.genres.length > 2 && (
-                  <span className="text-[10px] text-gray-400 dark:text-gray-500 leading-5">
+                  <span className="text-[10px] text-text-mute dark:text-text-mute leading-5">
                     +{book.genres.length - 2}
                   </span>
                 )}
@@ -120,7 +120,7 @@ export function BookCard({ book, priority }: { book: Book; priority?: boolean })
               e.stopPropagation();
               setShowConfirm(true);
             }}
-            className="absolute top-2 left-2 p-1.5 rounded-lg bg-black/50 text-white/80 hover:bg-red-600 hover:text-white opacity-0 group-hover:opacity-100 transition-all duration-200 backdrop-blur-sm z-10"
+            className="absolute top-2 left-2 p-1.5 rounded-lg bg-black/50 text-white/80 hover:bg-vermillion hover:text-white opacity-0 group-hover:opacity-100 transition-all duration-200 backdrop-blur-sm z-10"
             title="Xóa truyện"
           >
             <svg

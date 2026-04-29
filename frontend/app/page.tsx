@@ -35,8 +35,7 @@ function RecentCard({
       href={`/book?id=${book.id}`}
       className="flex-none w-28 sm:w-33 group relative"
     >
-      {/* Cover */}
-      <div className="aspect-2/3 rounded-xl overflow-hidden bg-linear-to-br from-indigo-50 to-purple-50 dark:from-indigo-950 dark:to-purple-950 relative shadow-sm mb-2">
+      <div className="aspect-2/3 rounded-md overflow-hidden bg-raised relative ring-1 ring-hairline-soft mb-2 shadow-[0_8px_22px_rgba(0,0,0,0.45)]">
         {book.cover_url ? (
           <Image
             src={book.cover_url}
@@ -48,7 +47,7 @@ function RecentCard({
         ) : (
           <div className="w-full h-full flex items-center justify-center">
             <svg
-              className="w-8 h-8 text-indigo-300 dark:text-indigo-700"
+              className="w-8 h-8 text-text-faint"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -63,20 +62,18 @@ function RecentCard({
           </div>
         )}
 
-        {/* "Đọc xong" badge */}
         {isLastChapter && (
           <div className="absolute bottom-1.5 left-1.5 right-1.5 flex justify-center">
-            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500 text-white shadow-md">
-              ✓ Đọc xong
+            <span className="font-mono text-[9px] tracking-widest uppercase px-1.5 py-0.5 rounded-sm bg-gold text-ink shadow-md">
+              ✓ Hoàn
             </span>
           </div>
         )}
 
-        {/* Progress bar at bottom of cover */}
         {!isLastChapter && book.total_chapters > 0 && (
-          <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/20">
+          <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-black/40">
             <div
-              className="h-full bg-indigo-500 transition-all"
+              className="h-full bg-accent transition-all"
               style={{
                 width: `${Math.round(((chapter.chapter_index + 1) / book.total_chapters) * 100)}%`,
               }}
@@ -85,17 +82,23 @@ function RecentCard({
         )}
       </div>
 
-      {/* Title */}
-      <p className="text-xs font-semibold text-gray-900 dark:text-gray-100 line-clamp-2 leading-tight group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+      <p className="text-xs font-semibold text-text line-clamp-2 leading-tight group-hover:text-accent transition-colors">
         {book.title}
       </p>
 
-      {/* Last chapter */}
-      <p className="text-[10px] text-gray-400 dark:text-gray-500 truncate mt-0.5">
+      <p className="font-mono text-[10px] tracking-wider text-text-faint truncate mt-0.5">
         Ch.{chapter.chapter_index + 1}/{book.total_chapters}
       </p>
     </Link>
   );
+}
+
+// ── Greeting helper ───────────────────────────────────────────────────────────
+function greetingForHour(h: number): string {
+  if (h < 11) return "Chào buổi sáng";
+  if (h < 14) return "Chào buổi trưa";
+  if (h < 18) return "Chào buổi chiều";
+  return "Chào buổi tối";
 }
 
 // ── Home page ─────────────────────────────────────────────────────────────────
@@ -144,7 +147,6 @@ export default function HomePage() {
     staleTime: 60_000,
   });
 
-  // My books — only fetch when logged in; sorted by updated_at desc (server-side)
   const { data: myBooks } = useQuery({
     queryKey: ["my-books"],
     queryFn: api.getMyBooks,
@@ -155,7 +157,6 @@ export default function HomePage() {
   const hasBooks = books && books.length > 0;
   const featuredBook = books?.find((b) => b.is_featured) ?? books?.[0] ?? null;
 
-  // Books sorted newest-first
   const newBooks = useMemo(() => {
     if (!books) return [];
     return [...books]
@@ -166,7 +167,6 @@ export default function HomePage() {
       .slice(0, 12);
   }, [books]);
 
-  // Genres that have at least one book, with their books list
   const genreSections = useMemo(() => {
     if (!books || !genres) return [];
     return genres
@@ -179,14 +179,28 @@ export default function HomePage() {
       .filter((s) => s.books.length > 0);
   }, [books, genres]);
 
+  const greeting = greetingForHour(new Date().getHours());
+
   return (
     <div>
+      {/* Greeting hero (logged-in only) */}
+      {loggedIn && (hasBooks || isLoading) && (
+        <div className="mb-7">
+          <p className="font-mono text-[10px] tracking-[0.18em] uppercase text-text-mute">
+            Tủ sách của bạn
+          </p>
+          <h1 className="font-display text-3xl sm:text-4xl text-text leading-tight mt-1">
+            {greeting}, <span className="italic text-accent">đạo hữu</span>
+          </h1>
+        </div>
+      )}
+
       {/* Empty-state hero */}
       {!hasBooks && !isLoading && !error && (
         <div className="text-center py-20 sm:py-28">
-          <div className="inline-flex items-center justify-center w-20 h-20 bg-linear-to-br from-indigo-100 to-purple-100 dark:from-indigo-950 dark:to-purple-950 rounded-2xl mb-6 shadow-inner animate-float">
+          <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl mb-6 bg-accent/10 ring-1 ring-accent/30 shadow-[0_0_40px_var(--color-accent-glow)] animate-float">
             <svg
-              className="w-10 h-10 text-indigo-500"
+              className="w-10 h-10 text-accent"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -199,17 +213,18 @@ export default function HomePage() {
               />
             </svg>
           </div>
-          <h1 className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-gray-100 mb-3">
-            Chào mừng đến TruyệnAudio
+          <h1 className="font-display text-3xl sm:text-4xl text-text mb-3">
+            Chào mừng đến{" "}
+            <span className="italic text-accent">TruyệnAudio</span>
           </h1>
-          <p className="text-gray-500 dark:text-gray-400 max-w-md mx-auto mb-8 text-base leading-relaxed">
+          <p className="text-text-mute max-w-md mx-auto mb-8 text-base leading-relaxed">
             Tải lên file EPUB để nghe hoặc đọc truyện tiếng Việt với giọng đọc
             AI tự nhiên.
           </p>
           {admin && (
             <Link
               href="/upload"
-              className="inline-flex items-center gap-2 bg-indigo-600 text-white font-medium px-6 py-3 rounded-xl hover:bg-indigo-700 active:scale-[0.98] transition-all shadow-md hover:shadow-lg"
+              className="inline-flex items-center gap-2 bg-accent text-ink font-medium px-6 py-3 rounded-md hover:bg-accent-dim active:scale-[0.98] transition-all shadow-[0_0_24px_var(--color-accent-glow)]"
             >
               <svg
                 className="w-5 h-5"
@@ -233,29 +248,27 @@ export default function HomePage() {
       {/* Library section */}
       {(hasBooks || isLoading) && (
         <>
-          {/* Spotlight — featured book hero */}
           {hasBooks && featuredBook && (
             <div className="mb-7">
               <SpotlightCard book={featuredBook} />
             </div>
           )}
 
-          {/* Header row */}
           <div className="flex items-center justify-between mb-5">
             <div>
-              <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100 leading-tight">
+              <p className="font-mono text-[10px] tracking-[0.18em] uppercase text-text-mute">
                 Khám phá
-              </h1>
-              <p className="text-sm text-gray-400 dark:text-gray-500 mt-0.5">
-                Nghe hoặc đọc truyện của bạn
               </p>
+              <h2 className="font-display text-xl text-text leading-tight mt-0.5">
+                Thư viện đang chờ
+              </h2>
             </div>
             {books && (
               <div className="flex items-center gap-2">
                 {admin && (
                   <Link
                     href="/admin/manage-books"
-                    className="p-2 rounded-xl text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-colors"
+                    className="p-2 rounded-md text-text-faint hover:text-accent hover:bg-raised transition-colors"
                     title="Quản lý truyện"
                   >
                     <svg
@@ -279,7 +292,7 @@ export default function HomePage() {
                     </svg>
                   </Link>
                 )}
-                <span className="text-xs font-medium text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-3 py-1.5 rounded-full tabular-nums">
+                <span className="font-mono text-[10px] tracking-widest uppercase text-text-mute bg-raised border border-hairline-soft px-2.5 py-1 rounded-sm tabular-nums">
                   {books.length} truyện
                 </span>
               </div>
@@ -288,19 +301,17 @@ export default function HomePage() {
         </>
       )}
 
-      {/* Loading */}
       {isLoading && (
         <div className="flex flex-col items-center gap-3 py-24">
-          <Spinner className="w-8 h-8 text-indigo-600" />
-          <p className="text-sm text-gray-400">Đang tải thư viện...</p>
+          <Spinner className="w-8 h-8 text-accent" />
+          <p className="text-sm text-text-mute">Đang tải thư viện...</p>
         </div>
       )}
 
-      {/* Error */}
       {error && (
         <div className="text-center py-24">
           <svg
-            className="w-12 h-12 mx-auto mb-3 text-red-300 dark:text-red-800"
+            className="w-12 h-12 mx-auto mb-3 text-vermillion/60"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -312,10 +323,10 @@ export default function HomePage() {
               d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z"
             />
           </svg>
-          <p className="text-red-500 font-medium">
+          <p className="text-vermillion font-medium">
             Không thể tải danh sách truyện
           </p>
-          <p className="text-sm text-gray-400 mt-1">
+          <p className="text-sm text-text-faint mt-1">
             Vui lòng kiểm tra kết nối và thử lại.
           </p>
         </div>
@@ -324,19 +335,16 @@ export default function HomePage() {
       {/* Sections */}
       {hasBooks && (
         <>
-          {/* "Continue reading" — sorted by last viewed, only for logged-in users */}
           {loggedIn && myBooks && myBooks.length > 0 && (
             <section className="mb-8">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 shrink-0" />
-                  <h2 className="text-base font-bold text-gray-900 dark:text-gray-100">
-                    Tiếp tục đọc
-                  </h2>
+                  <span className="w-1.5 h-4 rounded-sm bg-accent shrink-0 shadow-[0_0_10px_var(--color-accent-glow)]" />
+                  <h2 className="font-display text-lg text-text">Đang nghe</h2>
                 </div>
                 <Link
                   href="/profile"
-                  className="flex items-center gap-0.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline shrink-0"
+                  className="flex items-center gap-0.5 font-mono text-[10px] tracking-widest uppercase text-accent hover:text-accent-dim shrink-0"
                 >
                   Trang cá nhân
                   <svg
@@ -346,7 +354,11 @@ export default function HomePage() {
                     strokeWidth={2.5}
                     viewBox="0 0 24 24"
                   >
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M9 5l7 7-7 7"
+                    />
                   </svg>
                 </Link>
               </div>

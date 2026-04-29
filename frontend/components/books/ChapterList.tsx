@@ -23,14 +23,12 @@ function ChapterRow({
   editBasePath?: string;
   activeChapterId?: string;
 }) {
+  const isActive =
+    (editBasePath && chapter.id === activeChapterId) || selected;
   return (
     <div
       className={`flex items-center gap-3 py-3 px-4 transition-colors ${
-        editBasePath && chapter.id === activeChapterId
-          ? "bg-indigo-50 dark:bg-indigo-950/30"
-          : selected
-            ? "bg-indigo-50 dark:bg-indigo-950/30"
-            : "hover:bg-gray-50 dark:hover:bg-gray-700/50"
+        isActive ? "bg-accent/10" : "hover:bg-raised-hi"
       }`}
     >
       {showAdmin && (
@@ -38,28 +36,28 @@ function ChapterRow({
           type="checkbox"
           checked={selected}
           onChange={() => onToggleSelect(chapter.id)}
-          className="w-5 h-5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer shrink-0"
+          className="w-5 h-5 rounded border-hairline bg-raised text-accent focus:ring-accent cursor-pointer shrink-0 accent-[var(--color-accent)]"
         />
       )}
-      <span className="text-xs font-mono text-gray-400 dark:text-gray-500 w-8 shrink-0 text-right">
+      <span className="font-mono text-[10px] tracking-wider text-text-faint w-8 shrink-0 text-right">
         {chapter.chapter_index + 1}
       </span>
       <div className="flex-1 min-w-0">
         {editBasePath ? (
           <Link href={`${editBasePath}${chapter.id}`} className="group block">
-            <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+            <p className="text-sm font-medium text-text truncate group-hover:text-accent transition-colors">
               {chapter.title}
             </p>
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+            <p className="font-mono text-[10px] tracking-wider uppercase text-text-faint mt-0.5">
               {chapter.word_count.toLocaleString()} từ
             </p>
           </Link>
         ) : (
           <>
-            <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+            <p className="text-sm font-medium text-text truncate">
               {chapter.title}
             </p>
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+            <p className="font-mono text-[10px] tracking-wider uppercase text-text-faint mt-0.5">
               {chapter.word_count.toLocaleString()} từ
             </p>
           </>
@@ -70,7 +68,7 @@ function ChapterRow({
           <>
             <Link
               href={`/read?id=${bookId}&chapter=${chapter.id}`}
-              className="p-2 text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 bg-gray-100 dark:bg-gray-700 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 active:bg-indigo-100 dark:active:bg-indigo-950 rounded-lg transition-colors"
+              className="p-2 text-text-mute hover:text-accent bg-raised-hi hover:bg-accent/15 rounded-md transition-colors"
               title="Đọc"
             >
               <svg
@@ -89,11 +87,11 @@ function ChapterRow({
             </Link>
             <Link
               href={`/listen?id=${bookId}&chapter=${chapter.id}`}
-              className="p-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 active:bg-indigo-800 transition-colors"
+              className="p-2 bg-accent text-ink rounded-md hover:bg-accent-dim active:scale-95 transition-all shadow-[0_0_12px_var(--color-accent-glow)]"
               title="Nghe"
             >
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M8 5v14l11-7z" />
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 14 14">
+                <path d="M3 1l10 6-10 6V1z" />
               </svg>
             </Link>
           </>
@@ -116,10 +114,10 @@ function PaginationButton({
   return (
     <button
       onClick={() => onClick(page)}
-      className={`min-w-10 h-10 px-2 text-sm font-medium rounded-lg transition-colors ${
+      className={`min-w-10 h-10 px-2 text-sm font-medium rounded-md transition-colors ${
         isActive
-          ? "bg-indigo-600 text-white shadow-sm"
-          : "text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700"
+          ? "bg-accent text-ink shadow-[0_0_12px_var(--color-accent-glow)]"
+          : "text-text-mute hover:bg-raised-hi"
       }`}
     >
       {page}
@@ -140,7 +138,6 @@ function Pagination({
 
   if (totalPages <= 1) return null;
 
-  // Build page numbers to show: always show first, last, current, and neighbors
   const pages: (number | "ellipsis")[] = [];
   const addPage = (p: number) => {
     if (p >= 1 && p <= totalPages && !pages.includes(p)) {
@@ -170,12 +167,12 @@ function Pagination({
   }
 
   return (
-    <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700 space-y-2">
+    <div className="mt-4 pt-4 border-t border-hairline-soft space-y-2">
       <div className="flex items-center justify-center gap-1">
         <button
           onClick={() => onPageChange(page - 1)}
           disabled={page <= 1}
-          className="h-10 px-3 text-sm font-medium rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 active:bg-gray-200 dark:active:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          className="h-10 px-3 text-sm font-medium rounded-md text-text-mute hover:bg-raised-hi disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
         >
           <svg
             className="w-4 h-4"
@@ -196,7 +193,7 @@ function Pagination({
           p === "ellipsis" ? (
             <span
               key={`ellipsis-${i}`}
-              className="px-1 text-gray-400 dark:text-gray-500 text-sm"
+              className="px-1 text-text-faint text-sm"
             >
               …
             </span>
@@ -213,7 +210,7 @@ function Pagination({
         <button
           onClick={() => onPageChange(page + 1)}
           disabled={page >= totalPages}
-          className="h-10 px-3 text-sm font-medium rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 active:bg-gray-200 dark:active:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          className="h-10 px-3 text-sm font-medium rounded-md text-text-mute hover:bg-raised-hi disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
         >
           <svg
             className="w-4 h-4"
@@ -235,7 +232,9 @@ function Pagination({
         onSubmit={handleGo}
         className="flex items-center justify-center gap-2"
       >
-        <span className="text-xs text-gray-400 dark:text-gray-500">Đến trang</span>
+        <span className="font-mono text-[10px] tracking-widest uppercase text-text-faint">
+          Đến trang
+        </span>
         <input
           type="number"
           min={1}
@@ -243,12 +242,14 @@ function Pagination({
           value={inputVal}
           onChange={(e) => setInputVal(e.target.value)}
           placeholder={String(page)}
-          className="w-14 h-8 text-sm text-center border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
+          className="w-14 h-8 text-sm text-center border border-hairline rounded-md bg-raised text-text focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent"
         />
-        <span className="text-xs text-gray-400 dark:text-gray-500">/ {totalPages}</span>
+        <span className="font-mono text-[10px] tracking-widest uppercase text-text-faint">
+          / {totalPages}
+        </span>
         <button
           type="submit"
-          className="h-8 px-3 text-xs font-medium text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-700 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-colors"
+          className="h-8 px-3 font-mono text-[10px] tracking-widest uppercase text-accent border border-accent/40 rounded-md hover:bg-accent/10 transition-colors"
         >
           Đến
         </button>
@@ -294,7 +295,6 @@ export function ChapterList({
     }
   }, [someCurrentSelected, allCurrentSelected]);
 
-  // Clear selection when navigating to a different page
   useEffect(() => {
     setSelected(new Set());
   }, [page]);
@@ -346,7 +346,7 @@ export function ChapterList({
 
   if (chapters.length === 0 && page === 1) {
     return (
-      <div className="text-center py-12 text-gray-400 dark:text-gray-500 text-sm">
+      <div className="text-center py-12 text-text-faint text-sm italic">
         Đang phân tích chương...
       </div>
     );
@@ -355,14 +355,14 @@ export function ChapterList({
   return (
     <div>
       {admin && selected.size > 0 && (
-        <div className="flex items-center justify-between mb-3 px-4 py-2.5 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 rounded-xl">
-          <span className="text-sm font-medium text-indigo-700 dark:text-indigo-300">
+        <div className="flex items-center justify-between mb-3 px-4 py-2.5 bg-vermillion/10 border border-vermillion/30 rounded-md">
+          <span className="text-sm font-medium text-vermillion">
             Đã chọn {selected.size} chương
           </span>
           <button
             onClick={handleBulkDelete}
             disabled={bulkDeleting}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-ink bg-vermillion hover:bg-vermillion-dim rounded-md transition-colors disabled:opacity-50"
           >
             {bulkDeleting ? (
               <svg
@@ -403,22 +403,22 @@ export function ChapterList({
           </button>
         </div>
       )}
-      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden">
+      <div className="bg-surface rounded-md ring-1 ring-hairline overflow-hidden">
         {admin && (
-          <div className="flex items-center gap-3 px-4 py-2.5 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/80">
+          <div className="flex items-center gap-3 px-4 py-2.5 border-b border-hairline-soft bg-raised">
             <input
               ref={selectAllRef}
               type="checkbox"
               checked={allCurrentSelected}
               onChange={toggleSelectAll}
-              className="w-5 h-5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+              className="w-5 h-5 rounded border-hairline bg-raised text-accent focus:ring-accent cursor-pointer accent-[var(--color-accent)]"
             />
-            <span className="text-xs text-gray-500 dark:text-gray-400">
+            <span className="font-mono text-[10px] tracking-widest uppercase text-text-mute">
               {allCurrentSelected ? "Bỏ chọn tất cả" : "Chọn tất cả trang này"}
             </span>
           </div>
         )}
-        <div className="divide-y divide-gray-100 dark:divide-gray-700">
+        <div className="divide-y divide-hairline-soft">
           {chapters.map((ch) => (
             <ChapterRow
               key={ch.id}

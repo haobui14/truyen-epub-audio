@@ -25,8 +25,15 @@ export async function tryRefreshToken(): Promise<boolean | null> {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refresh_token: refreshToken }),
       });
-      // Server explicitly rejected the token — it is invalid, safe to logout.
-      if (!res.ok) return false;
+      if (!res.ok) {
+        // 5xx / 408 / 429 are transient (Supabase blip, gateway hiccup, rate
+        // limit). Returning null keeps the user signed in so they can retry —
+        // only an explicit 4xx rejection should clear the session.
+        if (res.status >= 500 || res.status === 408 || res.status === 429) {
+          return null;
+        }
+        return false;
+      }
       const data = await res.json();
       const user = getUser();
       if (data.access_token && user) {

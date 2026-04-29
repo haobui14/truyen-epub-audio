@@ -70,7 +70,7 @@ export default function EditBookClient() {
   if (bookLoading) {
     return (
       <div className="flex justify-center py-24">
-        <Spinner className="w-8 h-8 text-indigo-600" />
+        <Spinner className="w-8 h-8 text-accent" />
       </div>
     );
   }
@@ -78,12 +78,12 @@ export default function EditBookClient() {
   if (!book) {
     return (
       <div className="text-center py-24">
-        <p className="text-gray-500 dark:text-gray-400 font-medium">
+        <p className="text-text-mute dark:text-text-mute font-medium">
           Không tìm thấy truyện
         </p>
         <Link
           href="/"
-          className="text-sm text-indigo-600 hover:text-indigo-700 mt-2 inline-block"
+          className="text-sm text-accent hover:text-accent-dim mt-2 inline-block"
         >
           Quay lại thư viện
         </Link>
@@ -96,10 +96,10 @@ export default function EditBookClient() {
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       {/* Breadcrumb */}
-      <nav className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 min-w-0">
+      <nav className="flex items-center gap-2 text-sm text-text-mute dark:text-text-mute min-w-0">
         <Link
           href="/"
-          className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors shrink-0"
+          className="hover:text-accent dark:hover:text-accent transition-colors shrink-0"
         >
           Thư viện
         </Link>
@@ -118,7 +118,7 @@ export default function EditBookClient() {
         </svg>
         <Link
           href={`/book?id=${bookId}`}
-          className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors truncate max-w-xs"
+          className="hover:text-accent dark:hover:text-accent transition-colors truncate max-w-xs"
         >
           {book.title}
         </Link>
@@ -135,19 +135,19 @@ export default function EditBookClient() {
             d="M9 5l7 7-7 7"
           />
         </svg>
-        <span className="text-gray-900 dark:text-gray-100 font-medium shrink-0">
+        <span className="text-text dark:text-text font-medium shrink-0">
           Chỉnh sửa
         </span>
       </nav>
 
-      <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+      <h1 className="text-2xl font-bold text-text dark:text-text">
         Chỉnh sửa truyện
       </h1>
 
       {/* Book Info */}
-      <section className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100 dark:border-gray-700">
-          <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+      <section className="bg-surface dark:bg-raised rounded-2xl border border-hairline-soft dark:border-hairline shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-hairline-soft dark:border-hairline">
+          <h2 className="text-sm font-semibold text-text dark:text-text">
             Thông tin cơ bản
           </h2>
         </div>
@@ -163,9 +163,9 @@ export default function EditBookClient() {
       </section>
 
       {/* Genres */}
-      <section className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm">
-        <div className="px-5 py-4 border-b border-gray-100 dark:border-gray-700">
-          <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+      <section className="bg-surface dark:bg-raised rounded-2xl border border-hairline-soft dark:border-hairline shadow-sm">
+        <div className="px-5 py-4 border-b border-hairline-soft dark:border-hairline">
+          <h2 className="text-sm font-semibold text-text dark:text-text">
             Thể loại
           </h2>
         </div>
@@ -175,12 +175,12 @@ export default function EditBookClient() {
       </section>
 
       {/* Chapters */}
-      <section className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+      <section className="bg-surface dark:bg-raised rounded-2xl border border-hairline-soft dark:border-hairline shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-hairline-soft dark:border-hairline flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-text dark:text-text">
             Danh sách chương
             {chaptersData && (
-              <span className="ml-2 text-xs font-medium text-gray-400 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded-full">
+              <span className="ml-2 text-xs font-medium text-text-mute bg-raised dark:bg-raised-hi px-2 py-0.5 rounded-full">
                 {chaptersData.total}
               </span>
             )}
@@ -195,10 +195,10 @@ export default function EditBookClient() {
               queryClient.invalidateQueries({ queryKey: ["book", bookId] });
             }}
           />
-          <div className="border-t border-gray-100 dark:border-gray-700 pt-5">
+          <div className="border-t border-hairline-soft dark:border-hairline pt-5">
             {chaptersLoading ? (
               <div className="flex justify-center py-10">
-                <Spinner className="w-6 h-6 text-indigo-600" />
+                <Spinner className="w-6 h-6 text-accent" />
               </div>
             ) : (
               <ChapterList
@@ -216,20 +216,20 @@ export default function EditBookClient() {
       </section>
 
       {/* Auto-split */}
-      <section className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100 dark:border-gray-700">
-          <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+      <section className="bg-surface dark:bg-raised rounded-2xl border border-hairline-soft dark:border-hairline shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-hairline-soft dark:border-hairline">
+          <h2 className="text-sm font-semibold text-text dark:text-text">
             Tự động tách chương
           </h2>
         </div>
         <div className="p-5 space-y-3">
-          <p className="text-xs text-gray-500 dark:text-gray-400">
+          <p className="text-xs text-text-mute dark:text-text-mute">
             Gộp toàn bộ nội dung lại rồi tách theo tiêu đề{" "}
-            <span className="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">
+            <span className="font-mono bg-raised dark:bg-raised-hi px-1 rounded">
               Chương N
             </span>{" "}
             /{" "}
-            <span className="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">
+            <span className="font-mono bg-raised dark:bg-raised-hi px-1 rounded">
               Chapter N
             </span>
             . Audio cũ sẽ bị xóa, tất cả chương mới về trạng thái{" "}
@@ -255,31 +255,31 @@ export default function EditBookClient() {
                 setAutoSplitRunning(false);
               }
             }}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-indigo-600 dark:text-indigo-400 border border-indigo-300 dark:border-indigo-700 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/30 disabled:opacity-60 transition-colors"
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-accent dark:text-accent border border-accent/40 dark:border-accent/40 rounded-lg hover:bg-accent/15 dark:hover:bg-accent/30 disabled:opacity-60 transition-colors"
           >
             {autoSplitRunning && <Spinner className="w-4 h-4" />}
             {autoSplitRunning ? "Đang tách…" : "Chạy tách tự động"}
           </button>
           {autoSplitError && (
-            <p className="text-xs text-red-600 dark:text-red-400">
+            <p className="text-xs text-vermillion dark:text-vermillion">
               {autoSplitError}
             </p>
           )}
           {autoSplitResult && (
             <div className="space-y-2">
-              <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+              <p className="text-xs text-accent dark:text-accent font-medium">
                 Hoàn thành: {autoSplitResult.old_count} → {autoSplitResult.new_count} chương
               </p>
               {autoSplitResult.missing_chapters.length > 0 && (
                 <div>
-                  <p className="text-xs font-medium text-amber-600 dark:text-amber-400 mb-1">
+                  <p className="text-xs font-medium text-gold dark:text-gold mb-1">
                     {autoSplitResult.missing_chapters.length} chương thiếu nội dung:
                   </p>
                   <ul className="space-y-0.5 max-h-40 overflow-y-auto">
                     {autoSplitResult.missing_chapters.map((ch) => (
                       <li
                         key={ch.chapter_index}
-                        className="text-xs text-gray-600 dark:text-gray-400 font-mono bg-amber-50 dark:bg-amber-950/20 px-2 py-0.5 rounded"
+                        className="text-xs text-text-dim dark:text-text-mute font-mono bg-gold/10 dark:bg-gold/20 px-2 py-0.5 rounded"
                       >
                         [{ch.chapter_index + 1}] {ch.title}
                       </li>
@@ -293,14 +293,14 @@ export default function EditBookClient() {
       </section>
 
       {/* Strip string */}
-      <section className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100 dark:border-gray-700">
-          <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+      <section className="bg-surface dark:bg-raised rounded-2xl border border-hairline-soft dark:border-hairline shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-hairline-soft dark:border-hairline">
+          <h2 className="text-sm font-semibold text-text dark:text-text">
             Xóa chuỗi khỏi tất cả chương
           </h2>
         </div>
         <div className="p-5 space-y-3">
-          <p className="text-xs text-gray-500 dark:text-gray-400">
+          <p className="text-xs text-text-mute dark:text-text-mute">
             Nhập chuỗi cần xóa (khớp chính xác) khỏi nội dung văn bản của mọi chương trong truyện.
           </p>
           <textarea
@@ -308,7 +308,7 @@ export default function EditBookClient() {
             value={stripTarget}
             onChange={(e) => { setStripTarget(e.target.value); setStripResult(null); setStripError(null); }}
             placeholder="Nhập chuỗi cần xóa…"
-            className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-sm text-gray-900 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
+            className="w-full rounded-lg border border-hairline-soft dark:border-hairline bg-ink dark:bg-surface text-sm text-text dark:text-text px-3 py-2 focus:outline-none focus:ring-2 focus:ring-accent font-mono"
           />
           <button
             type="button"
@@ -327,16 +327,16 @@ export default function EditBookClient() {
                 setStripRunning(false);
               }
             }}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-indigo-600 dark:text-indigo-400 border border-indigo-300 dark:border-indigo-700 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/30 disabled:opacity-60 transition-colors"
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-accent dark:text-accent border border-accent/40 dark:border-accent/40 rounded-lg hover:bg-accent/15 dark:hover:bg-accent/30 disabled:opacity-60 transition-colors"
           >
             {stripRunning && <Spinner className="w-4 h-4" />}
             {stripRunning ? "Đang xóa…" : "Xóa chuỗi"}
           </button>
           {stripError && (
-            <p className="text-xs text-red-600 dark:text-red-400">{stripError}</p>
+            <p className="text-xs text-vermillion dark:text-vermillion">{stripError}</p>
           )}
           {stripResult && (
-            <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+            <p className="text-xs text-accent dark:text-accent font-medium">
               Hoàn thành: đã cập nhật {stripResult.updated_chapters} chương.
             </p>
           )}
@@ -344,25 +344,25 @@ export default function EditBookClient() {
       </section>
 
       {/* Danger Zone */}
-      <section className="bg-white dark:bg-gray-800 rounded-2xl border border-red-200 dark:border-red-900/50 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-red-100 dark:border-red-900/30">
-          <h2 className="text-sm font-semibold text-red-600 dark:text-red-400">
+      <section className="bg-surface dark:bg-raised rounded-2xl border border-vermillion/30 dark:border-vermillion/40/50 shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-vermillion/30 dark:border-vermillion/40/30">
+          <h2 className="text-sm font-semibold text-vermillion dark:text-vermillion">
             Vùng nguy hiểm
           </h2>
         </div>
         <div className="p-5 flex items-center justify-between gap-4">
           <div>
-            <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+            <p className="text-sm font-medium text-text dark:text-text">
               Xóa truyện
             </p>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+            <p className="text-xs text-text-mute dark:text-text-mute mt-0.5">
               Xóa vĩnh viễn toàn bộ truyện, chương, file audio và ảnh bìa. Không
               thể hoàn tác.
             </p>
           </div>
           <button
             onClick={() => setShowDeleteConfirm(true)}
-            className="shrink-0 flex items-center gap-2 px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 border border-red-300 dark:border-red-800 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+            className="shrink-0 flex items-center gap-2 px-4 py-2 text-sm font-medium text-vermillion dark:text-vermillion border border-vermillion/40 dark:border-vermillion/40 rounded-lg hover:bg-vermillion/10 dark:hover:bg-vermillion/30 transition-colors"
           >
             <svg
               className="w-4 h-4"
@@ -480,7 +480,7 @@ function BookInfoEditor({
       <div className="flex flex-col sm:flex-row gap-5">
         {/* Cover image */}
         <div className="shrink-0 flex flex-col items-center gap-2">
-          <div className="w-28 h-40 rounded-xl overflow-hidden bg-linear-to-br from-indigo-50 to-purple-50 dark:from-indigo-950 dark:to-purple-950 border border-gray-200 dark:border-gray-700 shadow-sm">
+          <div className="w-28 h-40 rounded-xl overflow-hidden bg-linear-to-br from-raised to-raised-hi dark:from-raised dark:to-raised-hi border border-hairline-soft dark:border-hairline shadow-sm">
             {currentCover ? (
               <Image
                 src={currentCover}
@@ -490,7 +490,7 @@ function BookInfoEditor({
                 className="object-cover w-full h-full"
               />
             ) : (
-              <div className="w-full h-full flex items-center justify-center text-indigo-200 dark:text-indigo-800">
+              <div className="w-full h-full flex items-center justify-center text-accent dark:text-accent-dim">
                 <svg
                   className="w-10 h-10"
                   fill="none"
@@ -508,7 +508,7 @@ function BookInfoEditor({
             )}
           </div>
           <label className="cursor-pointer">
-            <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-400 border border-gray-300 dark:border-gray-600 rounded-lg hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-text-dim dark:text-text-mute border border-hairline dark:border-hairline rounded-lg hover:border-accent/40 hover:text-accent hover:bg-accent/15 dark:hover:bg-accent/30 transition-colors">
               <svg
                 className="w-3.5 h-3.5"
                 fill="none"
@@ -540,7 +540,7 @@ function BookInfoEditor({
                 setCoverPreview(null);
                 if (fileRef.current) fileRef.current.value = "";
               }}
-              className="text-xs text-red-500 hover:text-red-700 transition-colors"
+              className="text-xs text-vermillion hover:text-vermillion transition-colors"
             >
               Bỏ chọn
             </button>
@@ -550,25 +550,25 @@ function BookInfoEditor({
         {/* Text fields */}
         <div className="flex-1 space-y-3 min-w-0">
           <div>
-            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+            <label className="block text-xs font-medium text-text-dim dark:text-text-mute mb-1">
               Tên truyện *
             </label>
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               required
-              className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full px-3 py-2 text-sm rounded-lg border border-hairline dark:border-hairline bg-surface dark:bg-surface text-text dark:text-text focus:outline-none focus:ring-2 focus:ring-accent"
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+            <label className="block text-xs font-medium text-text-dim dark:text-text-mute mb-1">
               Tác giả
             </label>
             <input
               value={author}
               onChange={(e) => setAuthor(e.target.value)}
               placeholder="Không rõ"
-              className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full px-3 py-2 text-sm rounded-lg border border-hairline dark:border-hairline bg-surface dark:bg-surface text-text dark:text-text placeholder-text-faint focus:outline-none focus:ring-2 focus:ring-accent"
             />
           </div>
         </div>
@@ -576,13 +576,13 @@ function BookInfoEditor({
 
       {/* Story status */}
       <div>
-        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+        <label className="block text-xs font-medium text-text-dim dark:text-text-mute mb-1">
           Tình trạng
         </label>
         <select
           value={storyStatus}
           onChange={(e) => setStoryStatus(e.target.value)}
-          className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          className="w-full px-3 py-2 text-sm rounded-lg border border-hairline dark:border-hairline bg-surface dark:bg-surface text-text dark:text-text focus:outline-none focus:ring-2 focus:ring-accent"
         >
           <option value="unknown">Chưa rõ</option>
           <option value="ongoing">Đang ra</option>
@@ -592,7 +592,7 @@ function BookInfoEditor({
 
       {/* Description */}
       <div>
-        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+        <label className="block text-xs font-medium text-text-dim dark:text-text-mute mb-1">
           Mô tả / Giới thiệu
         </label>
         <textarea
@@ -600,15 +600,15 @@ function BookInfoEditor({
           onChange={(e) => setDescription(e.target.value)}
           rows={4}
           placeholder="Nhập mô tả về nội dung truyện..."
-          className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-y"
+          className="w-full px-3 py-2 text-sm rounded-lg border border-hairline dark:border-hairline bg-surface dark:bg-surface text-text dark:text-text placeholder-text-faint focus:outline-none focus:ring-2 focus:ring-accent resize-y"
         />
       </div>
 
       {error && (
-        <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+        <p className="text-sm text-vermillion dark:text-vermillion">{error}</p>
       )}
       {success && (
-        <p className="text-sm text-emerald-600 dark:text-emerald-400">
+        <p className="text-sm text-accent dark:text-accent">
           ✓ Đã lưu thành công
         </p>
       )}
@@ -616,7 +616,7 @@ function BookInfoEditor({
       <button
         type="submit"
         disabled={saving}
-        className="flex items-center gap-2 bg-indigo-600 text-white text-sm font-medium px-5 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-60 transition-colors"
+        className="flex items-center gap-2 bg-accent text-white text-sm font-medium px-5 py-2 rounded-lg hover:bg-accent-dim disabled:opacity-60 transition-colors"
       >
         {saving && <Spinner className="w-4 h-4" />}
         {saving ? "Đang lưu…" : "Lưu thay đổi"}
@@ -689,7 +689,7 @@ function AddChapterForm({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-indigo-600 dark:text-indigo-400 border border-indigo-300 dark:border-indigo-700 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors"
+        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-accent dark:text-accent border border-accent/40 dark:border-accent/40 rounded-lg hover:bg-accent/15 dark:hover:bg-accent/30 transition-colors"
       >
         <svg
           className={`w-4 h-4 transition-transform ${open ? "rotate-45" : ""}`}
@@ -710,11 +710,11 @@ function AddChapterForm({
       {open && (
         <form
           onSubmit={handleSubmit}
-          className="mt-4 space-y-3 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl border border-gray-200 dark:border-gray-700"
+          className="mt-4 space-y-3 p-4 bg-ink dark:bg-surface/50 rounded-xl border border-hairline-soft dark:border-hairline"
         >
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+              <label className="block text-xs font-medium text-text-dim dark:text-text-mute mb-1">
                 Số chương
               </label>
               <input
@@ -724,11 +724,11 @@ function AddChapterForm({
                 onChange={(e) => setChapterIndex(e.target.value)}
                 required
                 placeholder="1"
-                className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full px-3 py-2 text-sm rounded-lg border border-hairline dark:border-hairline bg-surface dark:bg-raised text-text dark:text-text focus:outline-none focus:ring-2 focus:ring-accent"
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+              <label className="block text-xs font-medium text-text-dim dark:text-text-mute mb-1">
                 Tiêu đề
               </label>
               <input
@@ -736,12 +736,12 @@ function AddChapterForm({
                 onChange={(e) => setTitle(e.target.value)}
                 required
                 placeholder="Chương 1: …"
-                className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full px-3 py-2 text-sm rounded-lg border border-hairline dark:border-hairline bg-surface dark:bg-raised text-text dark:text-text focus:outline-none focus:ring-2 focus:ring-accent"
               />
             </div>
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+            <label className="block text-xs font-medium text-text-dim dark:text-text-mute mb-1">
               Nội dung
             </label>
             <textarea
@@ -750,14 +750,14 @@ function AddChapterForm({
               required
               rows={8}
               placeholder="Nhập nội dung chương…"
-              className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-y font-mono leading-relaxed"
+              className="w-full px-3 py-2 text-sm rounded-lg border border-hairline dark:border-hairline bg-surface dark:bg-raised text-text dark:text-text focus:outline-none focus:ring-2 focus:ring-accent resize-y font-mono leading-relaxed"
             />
           </div>
           {error && (
-            <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
+            <p className="text-xs text-vermillion dark:text-vermillion">{error}</p>
           )}
           {success && (
-            <p className="text-xs text-emerald-600 dark:text-emerald-400">
+            <p className="text-xs text-accent dark:text-accent">
               ✓ Đã thêm chương thành công!
             </p>
           )}
@@ -765,7 +765,7 @@ function AddChapterForm({
             <button
               type="submit"
               disabled={saving}
-              className="flex items-center gap-1.5 bg-indigo-600 text-white text-xs font-medium px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-60 transition-colors"
+              className="flex items-center gap-1.5 bg-accent text-white text-xs font-medium px-4 py-2 rounded-lg hover:bg-accent-dim disabled:opacity-60 transition-colors"
             >
               {saving && <Spinner className="w-3 h-3" />}
               {saving ? "Đang lưu…" : "Thêm chương"}
@@ -773,7 +773,7 @@ function AddChapterForm({
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 px-3 py-2 transition-colors"
+              className="text-xs text-text-mute dark:text-text-mute hover:text-text-dim dark:hover:text-text-dim px-3 py-2 transition-colors"
             >
               Hủy
             </button>

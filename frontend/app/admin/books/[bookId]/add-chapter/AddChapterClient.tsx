@@ -83,10 +83,10 @@ export default function AddChapterClient() {
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
       {/* Breadcrumb */}
-      <nav className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 mb-6">
+      <nav className="flex items-center gap-1.5 text-sm text-text-mute dark:text-text-mute mb-6">
         <Link
           href="/"
-          className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+          className="hover:text-accent dark:hover:text-accent transition-colors"
         >
           Thư viện
         </Link>
@@ -106,7 +106,7 @@ export default function AddChapterClient() {
         {book ? (
           <Link
             href={`/book?id=${bookId}`}
-            className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors truncate max-w-40"
+            className="hover:text-accent dark:hover:text-accent transition-colors truncate max-w-40"
           >
             {book.title}
           </Link>
@@ -126,18 +126,18 @@ export default function AddChapterClient() {
             d="M9 5l7 7-7 7"
           />
         </svg>
-        <span className="text-gray-700 dark:text-gray-200 font-medium">
+        <span className="text-text-dim dark:text-text-dim font-medium">
           Thêm chương
         </span>
       </nav>
 
-      <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-6">
+      <h1 className="text-2xl font-bold text-text dark:text-text mb-6">
         Thêm chương mới
       </h1>
 
       <form onSubmit={handleSubmit} className="space-y-5">
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+          <label className="block text-sm font-medium text-text-dim dark:text-text-faint mb-1.5">
             Số chương
           </label>
           <input
@@ -147,11 +147,11 @@ export default function AddChapterClient() {
             onChange={(e) => setChapterIndex(e.target.value)}
             placeholder="Ví dụ: 1"
             required
-            className="w-full px-3.5 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+            className="w-full px-3.5 py-2.5 rounded-lg border border-hairline dark:border-hairline bg-surface dark:bg-raised text-text dark:text-text placeholder-text-faint focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition"
           />
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+          <label className="block text-sm font-medium text-text-dim dark:text-text-faint mb-1.5">
             Tiêu đề chương
           </label>
           <input
@@ -160,11 +160,11 @@ export default function AddChapterClient() {
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Ví dụ: Chương 1: Khởi đầu"
             required
-            className="w-full px-3.5 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+            className="w-full px-3.5 py-2.5 rounded-lg border border-hairline dark:border-hairline bg-surface dark:bg-raised text-text dark:text-text placeholder-text-faint focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition"
           />
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+          <label className="block text-sm font-medium text-text-dim dark:text-text-faint mb-1.5">
             Nội dung chương
           </label>
           <textarea
@@ -173,11 +173,11 @@ export default function AddChapterClient() {
             placeholder="Nhập nội dung chương tại đây..."
             required
             rows={16}
-            className="w-full px-3.5 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition resize-y font-mono text-sm leading-relaxed"
+            className="w-full px-3.5 py-2.5 rounded-lg border border-hairline dark:border-hairline bg-surface dark:bg-raised text-text dark:text-text placeholder-text-faint focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition resize-y font-mono text-sm leading-relaxed"
           />
         </div>
         {error && (
-          <div className="rounded-lg bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-300">
+          <div className="rounded-lg bg-vermillion/10 dark:bg-vermillion/15 border border-vermillion/30 dark:border-vermillion/40 px-4 py-3 text-sm text-vermillion dark:text-vermillion">
             {error}
           </div>
         )}
@@ -185,7 +185,7 @@ export default function AddChapterClient() {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="flex items-center gap-2 bg-indigo-600 text-white font-medium px-5 py-2.5 rounded-lg hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed active:scale-[0.98] transition-all"
+            className="flex items-center gap-2 bg-accent text-white font-medium px-5 py-2.5 rounded-lg hover:bg-accent-dim disabled:opacity-60 disabled:cursor-not-allowed active:scale-[0.98] transition-all"
           >
             {isSubmitting ? (
               <>
@@ -198,7 +198,7 @@ export default function AddChapterClient() {
           </button>
           <Link
             href={`/book?id=${bookId}`}
-            className="px-5 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 font-medium hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors text-sm"
+            className="px-5 py-2.5 rounded-lg border border-hairline dark:border-hairline text-text-dim dark:text-text-faint font-medium hover:bg-ink dark:hover:bg-raised transition-colors text-sm"
           >
             Hủy
           </Link>

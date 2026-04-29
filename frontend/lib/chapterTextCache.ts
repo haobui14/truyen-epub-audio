@@ -24,6 +24,39 @@ export async function getCachedChapterText(
   }
 }
 
+export interface CachedChapterEntry {
+  text_content: string;
+  cached_at: number;
+}
+
+/** Like getCachedChapterText but also returns the cache timestamp for TTL checks. */
+export async function getCachedChapterEntry(
+  chapterId: string,
+): Promise<CachedChapterEntry | null> {
+  try {
+    const db = await openOfflineDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, "readonly");
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.get(chapterId);
+      req.onsuccess = () => {
+        const row = req.result;
+        if (!row?.text_content) {
+          resolve(null);
+          return;
+        }
+        resolve({
+          text_content: row.text_content,
+          cached_at: row.cached_at ?? 0,
+        });
+      };
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+}
+
 export async function cacheChapterText(
   chapterId: string,
   textContent: string,

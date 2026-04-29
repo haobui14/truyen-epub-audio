@@ -2,17 +2,30 @@
 import { useState } from "react";
 import Image from "next/image";
 import { usePlayerContext } from "@/context/PlayerContext";
-import { SliderControl } from "./SpeedControl";
 import { Spinner } from "@/components/ui/Spinner";
 import { useNativeTTSAvailable } from "@/hooks/useNativeTTSPlayer";
 
 const SLEEP_PRESETS = [15, 30, 45, 60] as const;
+const SPEED_PRESETS = [0.8, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0] as const;
 
 const BACKEND_VOICES = [
-  { value: "vi-VN-HoaiMyNeural", label: "HoaiMy", sub: "Nữ" },
-  { value: "vi-VN-NamMinhNeural", label: "NamMinh", sub: "Nam" },
-  { value: "gtts", label: "gTTS", sub: "Mặc định" },
+  { value: "vi-VN-HoaiMyNeural", label: "HoaiMy" },
+  { value: "vi-VN-NamMinhNeural", label: "NamMinh" },
+  { value: "gtts", label: "gTTS" },
 ] as const;
+
+const VOICE_LABELS: Record<string, string> = {
+  "vi-VN-HoaiMyNeural": "HoaiMy · vi-VN",
+  "vi-VN-NamMinhNeural": "NamMinh · vi-VN",
+  gtts: "gTTS · vi-VN",
+  "native:vi-VN-default": "Hệ thống · vi-VN",
+};
+
+function fmtTime(s: number) {
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${sec.toString().padStart(2, "0")}`;
+}
 
 export function SpeechPlayer() {
   const {
@@ -41,8 +54,9 @@ export function SpeechPlayer() {
   } = usePlayerContext();
 
   const isNative = useNativeTTSAvailable();
-
-  const [showTimerPanel, setShowTimerPanel] = useState(false);
+  const [openPanel, setOpenPanel] = useState<
+    null | "speed" | "voice" | "sleep"
+  >(null);
   const [customMinutes, setCustomMinutes] = useState("");
 
   if (!track) return null;
@@ -53,35 +67,27 @@ export function SpeechPlayer() {
     (s) => s === "downloading",
   ).length;
 
-  // Use the hook (state+effect) instead of isNativePlatform() directly
-  // to avoid hydration mismatch between static HTML and client render
-  const isOnNative = isNative;
-
-  function handleVoiceChange(newVoice: string) {
-    // If we're switching TTS engines (backend ↔ native), stop current playback
-    // first so both engines don't fight. The user presses Play for the new voice.
-    const switchingEngine =
-      newVoice.startsWith("native:") !== voice.startsWith("native:");
-    if (switchingEngine && isPlaying) {
-      toggle(); // stop current engine
-    } else {
-      restartChunk(); // same engine — restart chunk with new voice
-    }
-    setVoice(newVoice);
-  }
-
   const ready = !isLoadingText && (mode === "full" || !!track.text);
   const progressPct = Math.max(0, Math.min(100, Math.round(progress * 100)));
 
-  function fmtTime(s: number) {
-    const m = Math.floor(s / 60);
-    const sec = Math.floor(s % 60);
-    return `${m}:${sec.toString().padStart(2, "0")}`;
+  const chunkDotCount = 20;
+  const filledDots =
+    totalChunks > 0
+      ? Math.round((chunkIndex / Math.max(1, totalChunks)) * chunkDotCount)
+      : Math.round(progress * chunkDotCount);
+
+  function handleVoiceChange(newVoice: string) {
+    const switchingEngine =
+      newVoice.startsWith("native:") !== voice.startsWith("native:");
+    if (switchingEngine && isPlaying) toggle();
+    else restartChunk();
+    setVoice(newVoice);
+    setOpenPanel(null);
   }
 
   function handleSetTimer(mins: number) {
     setSleepTimer(mins);
-    setShowTimerPanel(false);
+    setOpenPanel(null);
     setCustomMinutes("");
   }
 
@@ -90,416 +96,464 @@ export function SpeechPlayer() {
     if (!isNaN(mins) && mins > 0) handleSetTimer(mins);
   }
 
-  function handleProgressClick(e: React.MouseEvent<HTMLDivElement>) {
-    if (!ready || totalChunks === 0) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const fraction = Math.max(
-      0,
-      Math.min(1, (e.clientX - rect.left) / rect.width),
-    );
-    if (mode === "full") {
-      // Full mode: delta in "5% units" (20 = full span)
-      seekChunk((fraction - progress) * 20);
-    } else {
-      seekChunk(Math.round(fraction * totalChunks) - chunkIndex);
-    }
-  }
+  const voiceLabel = VOICE_LABELS[voice] ?? voice.replace(/^native:/, "");
+  const voiceBadge = voice.startsWith("native:")
+    ? "GIỌNG HỆ THỐNG · VI-VN"
+    : voiceLabel.toUpperCase();
 
   return (
-    <div className="w-full rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-sm overflow-hidden">
-      {/* ── HEADER ── */}
-      <div className="flex items-center gap-3 px-4 py-3.5 border-b border-gray-100 dark:border-gray-800">
-        <div className="w-12 h-12 rounded-xl overflow-hidden bg-indigo-100 dark:bg-indigo-950 shrink-0 shadow-sm">
-          {book.cover_url ? (
-            <Image
-              src={book.cover_url}
-              alt={book.title}
-              width={48}
-              height={48}
-              className="object-cover w-full h-full"
-            />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-indigo-300">
-              <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
-              </svg>
+    <div className="w-full">
+      {/* Hero halo + cover with breathing glow + 讀 seal.
+          Cover height capped against the viewport so the play button stays
+          above the fold on Android phones (412×892 ≈ ~700px usable). */}
+      <div
+        className="relative -mx-4 sm:-mx-6 px-4 sm:px-6 pt-2 pb-1"
+        style={{
+          background:
+            "radial-gradient(140% 50% at 50% -10%, oklch(0.30 0.07 165 / 0.40) 0%, transparent 55%)",
+        }}
+      >
+        <div className="flex justify-center pt-1 pb-2">
+          <div
+            className="relative aspect-[4/5]"
+            style={{
+              width: "min(180px, 32vh)",
+            }}
+          >
+            <div className="w-full h-full rounded-lg overflow-hidden bg-raised ring-1 ring-hairline shadow-[0_30px_60px_rgba(0,0,0,0.55)]">
+              {book.cover_url ? (
+                <Image
+                  src={book.cover_url}
+                  alt={book.title}
+                  fill
+                  sizes="220px"
+                  className="object-cover"
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-text-faint">
+                  <svg
+                    className="w-12 h-12"
+                    fill="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
+                  </svg>
+                </div>
+              )}
             </div>
-          )}
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-medium text-indigo-500 dark:text-indigo-400 truncate leading-none mb-0.5">
-            {book.title}
-          </p>
-          <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100 leading-snug line-clamp-2">
-            {chapter.title}
-          </h2>
-        </div>
-        {isPlaying && !isBuffering && (
-          <div className="flex items-end gap-0.5 text-indigo-400 shrink-0 h-5">
-            <span className="sound-bar" />
-            <span className="sound-bar" />
-            <span className="sound-bar" />
-            <span className="sound-bar" />
+            <div
+              className="absolute -top-2.5 -right-2.5 w-10 h-10 rounded-sm flex items-center justify-center bg-vermillion text-text -rotate-3"
+              style={{
+                boxShadow:
+                  "inset 0 0 0 2px oklch(0.55 0.18 27), 0 4px 14px rgba(0,0,0,0.5)",
+              }}
+              aria-hidden="true"
+            >
+              <span className="font-display text-xl leading-none font-semibold">
+                讀
+              </span>
+            </div>
+            <div
+              className={`absolute -inset-2.5 rounded-xl border border-accent pointer-events-none ${
+                isPlaying ? "animate-breathe" : ""
+              }`}
+              style={{ opacity: 0.25 }}
+            />
           </div>
-        )}
+        </div>
       </div>
 
-      {/* ── PLAYER ── */}
-      <div className="px-5 py-5 flex flex-col gap-4">
-        {/* Progress bar */}
-        <div>
-          <div
-            className="h-2 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden cursor-pointer"
-            title={`${progressPct}%`}
-            onClick={handleProgressClick}
+      {/* Title + meta */}
+      <div className="px-1 sm:px-2 pt-1 pb-2">
+        <h2 className="font-display text-xl sm:text-2xl text-text leading-tight line-clamp-2">
+          {chapter.title}
+        </h2>
+        <div className="flex items-center gap-2 mt-1 text-xs sm:text-sm text-text-mute min-w-0">
+          <span className="truncate">{book.title}</span>
+          <span className="text-text-faint">·</span>
+          <span className="font-mono text-[9px] sm:text-[10px] tracking-widest text-accent shrink-0">
+            {voiceBadge}
+          </span>
+        </div>
+      </div>
+
+      {nativeTtsError && (
+        <div className="flex items-start gap-2 px-3 py-2.5 mb-3 rounded-md bg-vermillion/10 border border-vermillion/30">
+          <svg
+            className="w-4 h-4 text-vermillion shrink-0 mt-0.5"
+            fill="currentColor"
+            viewBox="0 0 20 20"
           >
-            <div
-              className="h-full bg-indigo-500 rounded-full transition-all duration-300"
-              style={{ width: `${progressPct}%` }}
+            <path
+              fillRule="evenodd"
+              d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z"
+              clipRule="evenodd"
             />
-          </div>
-          <div className="flex justify-between items-center mt-1.5">
-            {totalChunks > 0 ? (
-              mode === "full" ? (
-                <>
-                  <span className="text-[11px] text-gray-400 dark:text-gray-500 flex items-center gap-1">
-                    <span
-                      className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400"
-                      title="Từ bộ nhớ"
-                    />
-                    {fmtTime(chunkIndex)}
-                  </span>
-                  <span className="text-[11px] text-gray-400 dark:text-gray-500">
-                    {fmtTime(totalChunks)}
-                  </span>
-                </>
-              ) : (
-                <>
-                  <span className="text-[11px] text-gray-400 dark:text-gray-500">
-                    {chunkIndex + 1} / {totalChunks}
-                  </span>
-                  <span className="text-[11px] text-gray-400 dark:text-gray-500">
-                    {progressPct}%
-                  </span>
-                </>
-              )
+          </svg>
+          <p className="text-xs text-vermillion leading-snug">
+            {nativeTtsError}
+          </p>
+        </div>
+      )}
+
+      {/* 20-segment chunk-dot progress */}
+      <div className="pt-0.5 pb-1">
+        <button
+          type="button"
+          onClick={(e) => {
+            if (!ready) return;
+            const rect = e.currentTarget.getBoundingClientRect();
+            const fraction = Math.max(
+              0,
+              Math.min(1, (e.clientX - rect.left) / rect.width),
+            );
+            if (mode === "full") {
+              seekChunk((fraction - progress) * 20);
+            } else if (totalChunks > 0) {
+              seekChunk(Math.round(fraction * totalChunks) - chunkIndex);
+            }
+          }}
+          className="w-full flex gap-[3px] h-1 cursor-pointer disabled:cursor-default"
+          disabled={!ready}
+          aria-label="Seek"
+        >
+          {Array.from({ length: chunkDotCount }).map((_, i) => {
+            const filled = i < filledDots;
+            const current = i === filledDots;
+            return (
+              <span
+                key={i}
+                className={`flex-1 rounded-[1px] transition-colors ${
+                  filled
+                    ? "bg-accent"
+                    : current
+                      ? "bg-accent/70"
+                      : "bg-hairline"
+                }`}
+              />
+            );
+          })}
+        </button>
+        <div className="flex justify-between items-center mt-1.5 font-mono text-[10px] tracking-widest tabular-nums text-text-faint">
+          {totalChunks > 0 ? (
+            mode === "full" ? (
+              <>
+                <span>{fmtTime(chunkIndex)}</span>
+                <span>{progressPct}%</span>
+                <span>−{fmtTime(Math.max(0, totalChunks - chunkIndex))}</span>
+              </>
             ) : (
-              <span className="text-[11px] text-gray-300 dark:text-gray-600 italic">
-                {isLoadingText
-                  ? "Đang tải..."
-                  : !track.text && mode !== "full"
+              <>
+                <span>
+                  {chunkIndex + 1} / {totalChunks} đoạn
+                </span>
+                <span>{progressPct}%</span>
+                <span>−{Math.max(0, totalChunks - chunkIndex - 1)}</span>
+              </>
+            )
+          ) : (
+            <span className="font-sans normal-case tracking-normal italic text-text-faint">
+              {isLoadingText
+                ? "Đang tải..."
+                : !track.text && mode !== "full"
                   ? "Không có nội dung"
                   : "Sẵn sàng"}
-              </span>
-            )}
-          </div>
+            </span>
+          )}
         </div>
+      </div>
 
-        {/* Controls */}
-        <div className="flex items-center justify-center gap-4">
-          {/* Prev chapter */}
-          <button
-            onClick={onPrev ?? undefined}
-            disabled={!onPrev}
-            className="p-2 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:text-gray-200 dark:hover:bg-gray-800 disabled:opacity-25 transition-all"
-            title="Chương trước"
-          >
-            <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" />
-            </svg>
-          </button>
+      {/* Status line — only takes up space when there's something to say */}
+      <div className="flex items-center justify-center font-mono text-[10px] tracking-widest uppercase empty:hidden">
+        {isBuffering ? (
+          isOffline ? (
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-gold animate-pulse" />
+              <span className="text-gold">Mất kết nối, đang chờ...</span>
+            </span>
+          ) : (
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
+              <span className="text-accent">Đang tải âm thanh...</span>
+            </span>
+          )
+        ) : downloadingCount > 0 ? (
+          <span className="flex items-center gap-1.5 text-text-faint">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent/60 animate-pulse" />
+            Đang tải sẵn {downloadingCount} chương...
+          </span>
+        ) : null}
+      </div>
 
-          {/* Seek back 5% */}
-          <button
-            onClick={() => seekChunk(-1)}
-            disabled={!ready || totalChunks === 0}
-            className="p-1.5 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:text-gray-200 dark:hover:bg-gray-800 disabled:opacity-25 transition-all"
-            title="Lùi 5%"
-          >
-            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M11 18V6l-8.5 6 8.5 6zm.5-6 8.5 6V6l-8.5 6z" />
-            </svg>
-          </button>
-
-          {/* Play / Pause */}
-          <button
-            onClick={toggle}
-            disabled={!ready}
-            className="w-14 h-14 bg-indigo-600 text-white rounded-full flex items-center justify-center hover:bg-indigo-700 active:scale-95 disabled:opacity-40 transition-all shadow-md shadow-indigo-200 dark:shadow-indigo-900"
-            title={isPlaying ? "Tạm dừng" : "Phát"}
-          >
-            {isLoadingText || isBuffering ? (
-              <Spinner className="w-5 h-5" />
-            ) : isPlaying ? (
-              <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
-              </svg>
-            ) : (
-              <svg
-                className="w-6 h-6 ml-0.5"
-                fill="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path d="M8 5v14l11-7z" />
-              </svg>
-            )}
-          </button>
-
-          {/* Seek forward 5% */}
-          <button
-            onClick={() => seekChunk(1)}
-            disabled={!ready || totalChunks === 0}
-            className="p-1.5 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:text-gray-200 dark:hover:bg-gray-800 disabled:opacity-25 transition-all"
-            title="Tiến 5%"
-          >
-            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z" />
-            </svg>
-          </button>
-
-          {/* Next chapter */}
-          <button
-            onClick={onNext ?? undefined}
-            disabled={!onNext}
-            className="p-2 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:text-gray-200 dark:hover:bg-gray-800 disabled:opacity-25 transition-all"
-            title="Chương tiếp"
-          >
-            <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
-            </svg>
-          </button>
-        </div>
-
-        {/* Native TTS error banner */}
-        {nativeTtsError && (
-          <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800/50 -mt-1">
+      {/* Transport row — 5 buttons centred */}
+      <div className="flex items-center justify-between px-2 pt-2 pb-0">
+        <button
+          onClick={onPrev ?? undefined}
+          disabled={!onPrev}
+          className="p-2 text-text hover:text-accent disabled:text-text-faint disabled:opacity-40 transition-colors"
+          title="Chương trước"
+        >
+          <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M19 6l-9 6 9 6V6zM6 6h2v12H6V6z" />
+          </svg>
+        </button>
+        <button
+          onClick={() => seekChunk(-1)}
+          disabled={!ready || totalChunks === 0}
+          className="p-2 text-text-mute hover:text-accent disabled:text-text-faint disabled:opacity-40 transition-colors"
+          title="Lùi đoạn"
+        >
+          <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M11 17l-5-5 5-5v3h7v4h-7v3z" />
+          </svg>
+        </button>
+        <button
+          onClick={toggle}
+          disabled={!ready}
+          className="w-[76px] h-[76px] bg-accent text-ink rounded-full flex items-center justify-center hover:bg-accent-dim active:scale-95 disabled:opacity-40 transition-all shadow-[0_0_0_6px_oklch(0.74_0.11_165/0.12),0_0_40px_var(--color-accent-glow)]"
+          title={isPlaying ? "Tạm dừng" : "Phát"}
+        >
+          {isLoadingText || isBuffering ? (
+            <Spinner className="w-7 h-7" />
+          ) : isPlaying ? (
             <svg
-              className="w-4 h-4 text-red-500 shrink-0 mt-0.5"
+              className="w-[26px] h-[26px]"
               fill="currentColor"
-              viewBox="0 0 20 20"
+              viewBox="0 0 14 14"
             >
-              <path
-                fillRule="evenodd"
-                d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z"
-                clipRule="evenodd"
-              />
+              <rect x="2" y="1" width="3.5" height="12" rx="0.5" />
+              <rect x="8.5" y="1" width="3.5" height="12" rx="0.5" />
             </svg>
-            <p className="text-xs text-red-700 dark:text-red-400 leading-snug">
-              {nativeTtsError}
-            </p>
+          ) : (
+            <svg
+              className="w-[26px] h-[26px] ml-0.5"
+              fill="currentColor"
+              viewBox="0 0 14 14"
+            >
+              <path d="M3 1l10 6-10 6V1z" />
+            </svg>
+          )}
+        </button>
+        <button
+          onClick={() => seekChunk(1)}
+          disabled={!ready || totalChunks === 0}
+          className="p-2 text-text-mute hover:text-accent disabled:text-text-faint disabled:opacity-40 transition-colors"
+          title="Tiến đoạn"
+        >
+          <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M13 7l5 5-5 5v-3H6v-4h7V7z" />
+          </svg>
+        </button>
+        <button
+          onClick={onNext ?? undefined}
+          disabled={!onNext}
+          className="p-2 text-text hover:text-accent disabled:text-text-faint disabled:opacity-40 transition-colors"
+          title="Chương tiếp"
+        >
+          <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M5 6l9 6-9 6V6zm11 0h2v12h-2V6z" />
+          </svg>
+        </button>
+      </div>
+
+      {/* Chip strip */}
+      <div className="flex gap-2 pt-3 pb-1">
+        <Chip
+          label={`${rate.toFixed(2).replace(/\.?0+$/, "")}×`}
+          sub="Tốc độ"
+          mono
+          active={openPanel === "speed"}
+          onClick={() => setOpenPanel(openPanel === "speed" ? null : "speed")}
+        />
+        <Chip
+          label={
+            voice.startsWith("native:")
+              ? "Hệ thống"
+              : voiceLabel.split(" ")[0]
+          }
+          sub="Giọng đọc"
+          active={openPanel === "voice"}
+          onClick={() => setOpenPanel(openPanel === "voice" ? null : "voice")}
+        />
+        <Chip
+          label={sleepRemaining !== null ? fmtTime(sleepRemaining) : "Tắt"}
+          sub="Hẹn giờ"
+          mono
+          active={sleepRemaining !== null || openPanel === "sleep"}
+          onClick={() => {
+            if (sleepRemaining !== null) {
+              cancelSleepTimer();
+              setOpenPanel(null);
+            } else {
+              setOpenPanel(openPanel === "sleep" ? null : "sleep");
+            }
+          }}
+        />
+      </div>
+
+      {/* Chip panels */}
+      {openPanel === "speed" && (
+        <div className="mt-2 p-3 bg-raised rounded-md ring-1 ring-hairline-soft">
+          <p className="font-mono text-[10px] tracking-widest uppercase text-text-faint mb-2">
+            Tốc độ phát ·{" "}
+            <span className="text-accent">
+              {rate.toFixed(2).replace(/\.?0+$/, "")}×
+            </span>
+          </p>
+          <div className="grid grid-cols-7 gap-1.5 mb-3">
+            {SPEED_PRESETS.map((s) => (
+              <button
+                key={s}
+                onClick={() => {
+                  changeRate(s);
+                  setOpenPanel(null);
+                }}
+                className={`py-1.5 rounded-sm text-xs font-medium border transition-colors ${
+                  Math.abs(rate - s) < 0.001
+                    ? "bg-accent border-accent text-ink"
+                    : "border-hairline text-text-mute hover:border-accent/40 hover:text-accent"
+                }`}
+              >
+                {s.toFixed(2).replace(/\.?0+$/, "")}×
+              </button>
+            ))}
           </div>
-        )}
-
-        {/* Status line — buffering / offline / cache */}
-        <div className="flex items-center justify-center h-4 -mt-1">
-          {isBuffering ? (
-            <span className="flex items-center gap-1.5 text-xs">
-              {isOffline ? (
-                <>
-                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                  <span className="text-amber-500 dark:text-amber-400">
-                    Mất kết nối, đang chờ...
-                  </span>
-                </>
-              ) : (
-                <>
-                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
-                  <span className="text-indigo-400 dark:text-indigo-500">
-                    Đang tải âm thanh...
-                  </span>
-                </>
-              )}
-            </span>
-          ) : downloadingCount > 0 ? (
-            <span className="flex items-center gap-1.5 text-[11px] text-gray-400 dark:text-gray-500">
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-300 animate-pulse" />
-              Đang tải sẵn {downloadingCount} chương...
-            </span>
-          ) : null}
-        </div>
-
-        {/* ── CONTROLS STRIP ── */}
-        <div className="flex flex-col gap-3 pt-2 border-t border-gray-100 dark:border-gray-800">
-          {/* Speed */}
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-gray-400 dark:text-gray-500 font-medium w-16 shrink-0">
-              Tốc độ
-            </span>
-            <SliderControl
-              label="x"
-              value={rate}
-              min={0.5}
-              max={3}
-              step={0.05}
-              onChange={changeRate}
-            />
-          </div>
-
-          {/* Pitch (native voice only) */}
           {voice.startsWith("native:") && (
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-gray-400 dark:text-gray-500 font-medium w-16 shrink-0">
-                Tông
-              </span>
-              <SliderControl
-                label="x"
-                value={pitch}
+            <div className="pt-2 border-t border-hairline-soft">
+              <p className="font-mono text-[10px] tracking-widest uppercase text-text-faint mb-2">
+                Tông ·{" "}
+                <span className="text-accent">
+                  {pitch.toFixed(2).replace(/\.?0+$/, "")}×
+                </span>
+              </p>
+              <input
+                type="range"
                 min={0.5}
                 max={2}
                 step={0.05}
-                onChange={changePitch}
-                accent="emerald"
+                value={pitch}
+                onChange={(e) => changePitch(parseFloat(e.target.value))}
+                className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
+                style={{
+                  background: `linear-gradient(to right, var(--color-accent) ${
+                    ((pitch - 0.5) / 1.5) * 100
+                  }%, var(--color-raised-hi) ${((pitch - 0.5) / 1.5) * 100}%)`,
+                }}
               />
             </div>
           )}
+        </div>
+      )}
 
-          {/* Voices — all in one row, grouped */}
-          <div className="flex items-start gap-2">
-            <span className="text-xs text-gray-400 dark:text-gray-500 font-medium w-16 shrink-0 pt-1">
-              Giọng
-            </span>
-            <div className="flex gap-1.5 flex-wrap">
-              {/* Backend voices (indigo) — hidden on native app */}
-              {!isOnNative &&
-                BACKEND_VOICES.map((opt) => (
-                  <button
-                    key={opt.value}
-                    onClick={() => handleVoiceChange(opt.value)}
-                    title={opt.sub}
-                    className={`flex flex-col items-center px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
-                      voice === opt.value
-                        ? "bg-indigo-600 border-indigo-600 text-white"
-                        : "border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-400"
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-
-              {/* Divider if both backend and native voices shown */}
-              {!isOnNative && isNative && (
-                <span className="self-center text-gray-200 dark:text-gray-700 text-xs select-none">
-                  |
-                </span>
-              )}
-
-              {/* Native (Capacitor) voice — shown only in app */}
-              {isNative && (
+      {openPanel === "voice" && (
+        <div className="mt-2 p-3 bg-raised rounded-md ring-1 ring-hairline-soft">
+          <p className="font-mono text-[10px] tracking-widest uppercase text-text-faint mb-2">
+            Giọng đọc
+          </p>
+          <div className="flex gap-1.5 flex-wrap">
+            {!isNative &&
+              BACKEND_VOICES.map((opt) => (
                 <button
-                  onClick={() => handleVoiceChange("native:vi-VN-default")}
-                  title="Giọng thiết bị — không cần mạng"
-                  className={`flex flex-col items-center px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
-                    voice.startsWith("native:")
-                      ? "bg-emerald-600 border-emerald-600 text-white"
-                      : "border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-400"
+                  key={opt.value}
+                  onClick={() => handleVoiceChange(opt.value)}
+                  className={`px-3 py-1.5 rounded-sm text-xs font-medium border transition-colors ${
+                    voice === opt.value
+                      ? "bg-accent border-accent text-ink"
+                      : "border-hairline text-text-mute hover:border-accent/40 hover:text-accent"
                   }`}
                 >
-                  Thiết bị
+                  {opt.label}
                 </button>
-              )}
-            </div>
-          </div>
-
-          {/* Sleep timer */}
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-gray-400 dark:text-gray-500 font-medium w-16 shrink-0">
-              Hẹn giờ
-            </span>
-            <button
-              onClick={() => {
-                if (sleepRemaining !== null) {
-                  // Timer is active → cancel it directly (no need to open panel)
-                  cancelSleepTimer();
-                  setShowTimerPanel(false);
-                } else {
-                  setShowTimerPanel((v) => !v);
-                }
-              }}
-              className={`flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border transition-colors ${
-                sleepRemaining !== null
-                  ? "bg-amber-500 border-amber-500 text-white hover:bg-amber-600"
-                  : showTimerPanel
-                    ? "bg-indigo-50 dark:bg-indigo-950 border-indigo-300 dark:border-indigo-700 text-indigo-600 dark:text-indigo-400"
-                    : "border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-400"
-              }`}
-            >
-              <svg
-                className="w-3.5 h-3.5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
+              ))}
+            {isNative && (
+              <button
+                onClick={() => handleVoiceChange("native:vi-VN-default")}
+                className={`px-3 py-1.5 rounded-sm text-xs font-medium border transition-colors ${
+                  voice.startsWith("native:")
+                    ? "bg-accent border-accent text-ink"
+                    : "border-hairline text-text-mute hover:border-accent/40 hover:text-accent"
+                }`}
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"
-                />
-              </svg>
-              {sleepRemaining !== null
-                ? `${fmtTime(sleepRemaining)} ✕`
-                : "Tắt"}
+                Hệ thống · vi-VN
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {openPanel === "sleep" && (
+        <div className="mt-2 p-3 bg-raised rounded-md ring-1 ring-hairline-soft">
+          <p className="font-mono text-[10px] tracking-widest uppercase text-text-faint mb-2">
+            Hẹn giờ tắt
+          </p>
+          <div className="grid grid-cols-4 gap-1.5 mb-2">
+            {SLEEP_PRESETS.map((mins) => (
+              <button
+                key={mins}
+                onClick={() => handleSetTimer(mins)}
+                className="py-1.5 rounded-sm text-xs font-medium border border-hairline text-text-mute hover:border-accent/40 hover:text-accent transition-colors"
+              >
+                {mins < 60 ? `${mins}p` : "1g"}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-1.5">
+            <input
+              type="number"
+              min="1"
+              max="300"
+              placeholder="Số phút..."
+              value={customMinutes}
+              onChange={(e) => setCustomMinutes(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleCustomTimer()}
+              className="flex-1 px-2.5 py-1.5 rounded-sm text-xs border border-hairline bg-surface text-text placeholder-text-faint focus:outline-none focus:border-accent"
+            />
+            <button
+              onClick={handleCustomTimer}
+              disabled={
+                !customMinutes ||
+                isNaN(parseFloat(customMinutes)) ||
+                parseFloat(customMinutes) <= 0
+              }
+              className="px-3 py-1.5 rounded-sm text-xs font-medium bg-accent text-ink hover:bg-accent-dim disabled:opacity-40 transition-colors"
+            >
+              Đặt
             </button>
           </div>
-
-          {/* Timer panel */}
-          {showTimerPanel && (
-            <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3 flex flex-col gap-2.5">
-              {sleepRemaining !== null && (
-                <div className="flex items-center justify-between text-xs">
-                  <span className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-medium">
-                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                    Tắt sau {fmtTime(sleepRemaining)}
-                  </span>
-                  <button
-                    onClick={() => {
-                      cancelSleepTimer();
-                      setShowTimerPanel(false);
-                    }}
-                    className="text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors text-xs font-medium"
-                  >
-                    Hủy
-                  </button>
-                </div>
-              )}
-              <div className="grid grid-cols-4 gap-1.5">
-                {SLEEP_PRESETS.map((mins) => (
-                  <button
-                    key={mins}
-                    onClick={() => handleSetTimer(mins)}
-                    className="py-1.5 rounded-lg text-xs font-medium border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-indigo-50 dark:hover:bg-indigo-950 hover:border-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
-                  >
-                    {mins < 60 ? `${mins}p` : "1g"}
-                  </button>
-                ))}
-              </div>
-              <div className="flex gap-1.5">
-                <input
-                  type="number"
-                  min="1"
-                  max="300"
-                  placeholder="Số phút..."
-                  value={customMinutes}
-                  onChange={(e) => setCustomMinutes(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleCustomTimer()}
-                  className="flex-1 px-2.5 py-1.5 rounded-lg text-xs border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 placeholder-gray-400 focus:outline-none focus:border-indigo-400 dark:focus:border-indigo-500"
-                />
-                <button
-                  onClick={handleCustomTimer}
-                  disabled={
-                    !customMinutes ||
-                    isNaN(parseFloat(customMinutes)) ||
-                    parseFloat(customMinutes) <= 0
-                  }
-                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 transition-colors"
-                >
-                  Đặt
-                </button>
-              </div>
-            </div>
-          )}
         </div>
-      </div>
+      )}
     </div>
+  );
+}
+
+interface ChipProps {
+  label: string;
+  sub: string;
+  mono?: boolean;
+  active?: boolean;
+  onClick?: () => void;
+}
+
+function Chip({ label, sub, mono, active, onClick }: ChipProps) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex-1 py-2 px-1 rounded-md flex flex-col items-center gap-0.5 border transition-colors cursor-pointer ${
+        active
+          ? "bg-accent/15 border-accent/40"
+          : "bg-raised border-hairline hover:border-accent/30"
+      }`}
+    >
+      <span
+        className={`text-[13px] font-semibold text-text ${
+          mono ? "font-mono tabular-nums" : "font-sans"
+        }`}
+      >
+        {label}
+      </span>
+      <span className="font-mono text-[9px] tracking-widest uppercase text-text-mute">
+        {sub}
+      </span>
+    </button>
   );
 }

@@ -5,7 +5,7 @@ import type { Book } from "@/types";
 interface Props {
   title: string;
   seeAllHref?: string;
-  /** Tailwind bg-* class for the colored dot in the section header, e.g. "bg-indigo-500" */
+  /** Tailwind bg-* class for the colored dot in the section header */
   colorDot?: string;
   books: Book[];
 }
@@ -15,20 +15,19 @@ export function BookScrollRow({ title, seeAllHref, colorDot, books }: Props) {
 
   return (
     <section className="mb-8">
-      {/* Section header */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          {colorDot && (
-            <span className={`w-2.5 h-2.5 rounded-full ${colorDot} shrink-0`} />
+          {colorDot ? (
+            <span className={`w-1.5 h-4 rounded-sm ${colorDot} shrink-0`} />
+          ) : (
+            <span className="w-1.5 h-4 rounded-sm bg-accent shrink-0 shadow-[0_0_10px_var(--color-accent-glow)]" />
           )}
-          <h2 className="text-base font-bold text-gray-900 dark:text-gray-100">
-            {title}
-          </h2>
+          <h2 className="font-display text-lg text-text">{title}</h2>
         </div>
         {seeAllHref && (
           <Link
             href={seeAllHref}
-            className="flex items-center gap-0.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline shrink-0"
+            className="flex items-center gap-0.5 font-mono text-[10px] tracking-widest uppercase text-accent hover:text-accent-dim shrink-0"
           >
             Xem thêm
             <svg
@@ -48,7 +47,6 @@ export function BookScrollRow({ title, seeAllHref, colorDot, books }: Props) {
         )}
       </div>
 
-      {/* Horizontal scroll list */}
       <div className="flex gap-3 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] pb-1">
         {books.map((book) => (
           <Link
@@ -56,8 +54,7 @@ export function BookScrollRow({ title, seeAllHref, colorDot, books }: Props) {
             href={`/book?id=${book.id}`}
             className="flex-none w-28 sm:w-33 group"
           >
-            {/* Cover */}
-            <div className="aspect-2/3 rounded-xl overflow-hidden bg-linear-to-br from-indigo-50 to-purple-50 dark:from-indigo-950 dark:to-purple-950 relative shadow-sm mb-2">
+            <div className="aspect-2/3 rounded-md overflow-hidden bg-raised relative ring-1 ring-hairline-soft mb-2 shadow-[0_8px_22px_rgba(0,0,0,0.45)] group-hover:ring-accent/30 transition-all">
               {book.cover_url ? (
                 <Image
                   src={book.cover_url}
@@ -69,7 +66,7 @@ export function BookScrollRow({ title, seeAllHref, colorDot, books }: Props) {
               ) : (
                 <div className="w-full h-full flex items-center justify-center">
                   <svg
-                    className="w-8 h-8 text-indigo-300 dark:text-indigo-700"
+                    className="w-8 h-8 text-text-faint"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -85,14 +82,12 @@ export function BookScrollRow({ title, seeAllHref, colorDot, books }: Props) {
               )}
             </div>
 
-            {/* Title */}
-            <p className="text-xs font-semibold text-gray-900 dark:text-gray-100 line-clamp-2 leading-tight group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+            <p className="text-xs font-semibold text-text line-clamp-2 leading-tight group-hover:text-accent transition-colors">
               {book.title}
             </p>
 
-            {/* Author */}
             {book.author && (
-              <p className="text-[10px] text-gray-400 dark:text-gray-500 truncate mt-0.5">
+              <p className="font-mono text-[10px] tracking-wider text-text-faint truncate mt-0.5">
                 {book.author}
               </p>
             )}

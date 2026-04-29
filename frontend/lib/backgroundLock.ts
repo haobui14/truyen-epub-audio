@@ -107,3 +107,28 @@ export async function releaseBackgroundLock() {
     /* plugin might not be installed */
   }
 }
+
+/**
+ * Keep the screen on without starting the TTS foreground service.
+ * Use for the reader, where audio is not playing and a media notification
+ * would be misleading.
+ */
+export async function acquireScreenWake() {
+  if (!isNativePlatform()) return;
+  try {
+    const { KeepAwake } = await import("@capacitor-community/keep-awake");
+    await KeepAwake.keepAwake();
+  } catch {
+    /* plugin might not be installed */
+  }
+}
+
+export async function releaseScreenWake() {
+  if (!isNativePlatform()) return;
+  try {
+    const { KeepAwake } = await import("@capacitor-community/keep-awake");
+    await KeepAwake.allowSleep();
+  } catch {
+    /* plugin might not be installed */
+  }
+}

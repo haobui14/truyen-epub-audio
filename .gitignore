@@ -2,18 +2,32 @@
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
 .venv/
 venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
 backend/.env
 
-# Next.js
+# Next.js / Node
 frontend/.next/
+frontend/out/
 frontend/node_modules/
-frontend/.env.local
+frontend/coverage/
+frontend/tsconfig.tsbuildinfo
+# Cover the family of env files Next.js loads, not just `.env.local`.
+# Keep the example files committed.
+frontend/.env*.local
+!frontend/.env*.local.example
 
 # Misc
 .DS_Store
+Thumbs.db
 *.log
+*.swp
+*~
 /tmp/
 
 # IDE
@@ -21,8 +35,13 @@ frontend/.env.local
 .vscode/
 .claude/
 
-# Claude Code local settings
-.claude/settings.local.json
+# Design canvas runtime sidecar (see design/design-canvas.jsx — written by the
+# omelette host, not part of the source-of-truth design)
+design/.design-canvas.state.json
+
+# Local one-off scripts (e.g. ad-hoc sed migrations)
+.tmp-*.sed
+*.sed.bak
 
 # Android build outputs
 frontend/android/app/build/

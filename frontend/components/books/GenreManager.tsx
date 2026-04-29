@@ -4,85 +4,23 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { Genre } from "@/types";
 
+// Genre color palette tuned for dark surfaces. `dot` is a saturated swatch
+// (used in scroll-row eyebrow markers); `bg`/`text` are subdued tints + light
+// labels for the GenreTag pill.
 const COLOR_OPTIONS = [
-  {
-    key: "indigo",
-    bg: "bg-indigo-100 dark:bg-indigo-900/40",
-    text: "text-indigo-700 dark:text-indigo-300",
-    dot: "bg-indigo-500",
-  },
-  {
-    key: "purple",
-    bg: "bg-purple-100 dark:bg-purple-900/40",
-    text: "text-purple-700 dark:text-purple-300",
-    dot: "bg-purple-500",
-  },
-  {
-    key: "pink",
-    bg: "bg-pink-100 dark:bg-pink-900/40",
-    text: "text-pink-700 dark:text-pink-300",
-    dot: "bg-pink-500",
-  },
-  {
-    key: "rose",
-    bg: "bg-rose-100 dark:bg-rose-900/40",
-    text: "text-rose-700 dark:text-rose-300",
-    dot: "bg-rose-500",
-  },
-  {
-    key: "red",
-    bg: "bg-red-100 dark:bg-red-900/40",
-    text: "text-red-700 dark:text-red-300",
-    dot: "bg-red-500",
-  },
-  {
-    key: "orange",
-    bg: "bg-orange-100 dark:bg-orange-900/40",
-    text: "text-orange-700 dark:text-orange-300",
-    dot: "bg-orange-500",
-  },
-  {
-    key: "amber",
-    bg: "bg-amber-100 dark:bg-amber-900/40",
-    text: "text-amber-700 dark:text-amber-300",
-    dot: "bg-amber-500",
-  },
-  {
-    key: "yellow",
-    bg: "bg-yellow-100 dark:bg-yellow-900/40",
-    text: "text-yellow-700 dark:text-yellow-300",
-    dot: "bg-yellow-500",
-  },
-  {
-    key: "green",
-    bg: "bg-green-100 dark:bg-green-900/40",
-    text: "text-green-700 dark:text-green-300",
-    dot: "bg-green-500",
-  },
-  {
-    key: "teal",
-    bg: "bg-teal-100 dark:bg-teal-900/40",
-    text: "text-teal-700 dark:text-teal-300",
-    dot: "bg-teal-500",
-  },
-  {
-    key: "cyan",
-    bg: "bg-cyan-100 dark:bg-cyan-900/40",
-    text: "text-cyan-700 dark:text-cyan-300",
-    dot: "bg-cyan-500",
-  },
-  {
-    key: "blue",
-    bg: "bg-blue-100 dark:bg-blue-900/40",
-    text: "text-blue-700 dark:text-blue-300",
-    dot: "bg-blue-500",
-  },
-  {
-    key: "gray",
-    bg: "bg-gray-100 dark:bg-gray-700",
-    text: "text-gray-700 dark:text-gray-300",
-    dot: "bg-gray-500",
-  },
+  { key: "indigo", bg: "bg-accent/15", text: "text-accent", dot: "bg-indigo-400" },
+  { key: "purple", bg: "bg-purple-500/15", text: "text-vermillion", dot: "bg-vermillion" },
+  { key: "pink", bg: "bg-pink-500/15", text: "text-pink-300", dot: "bg-pink-400" },
+  { key: "rose", bg: "bg-rose-500/15", text: "text-rose-300", dot: "bg-rose-400" },
+  { key: "red", bg: "bg-vermillion/15", text: "text-vermillion", dot: "bg-red-400" },
+  { key: "orange", bg: "bg-orange-500/15", text: "text-orange-300", dot: "bg-orange-400" },
+  { key: "amber", bg: "bg-gold/15", text: "text-gold", dot: "bg-amber-400" },
+  { key: "yellow", bg: "bg-yellow-500/15", text: "text-yellow-300", dot: "bg-yellow-400" },
+  { key: "green", bg: "bg-green-500/15", text: "text-green-300", dot: "bg-green-400" },
+  { key: "teal", bg: "bg-teal-500/15", text: "text-teal-300", dot: "bg-teal-400" },
+  { key: "cyan", bg: "bg-cyan-500/15", text: "text-cyan-300", dot: "bg-cyan-400" },
+  { key: "blue", bg: "bg-blue-500/15", text: "text-blue-300", dot: "bg-blue-400" },
+  { key: "gray", bg: "bg-raised-hi", text: "text-text-dim", dot: "bg-text-mute" },
 ] as const;
 
 export type ColorKey = (typeof COLOR_OPTIONS)[number]["key"];
@@ -105,7 +43,7 @@ function ColorPicker({
           key={c.key}
           type="button"
           onClick={() => onChange(c.key)}
-          className={`w-7 h-7 rounded-full cursor-pointer ${c.dot} transition-transform ${value === c.key ? "ring-2 ring-offset-2 ring-gray-500 dark:ring-gray-300 scale-110" : "opacity-60 hover:opacity-100 active:scale-95"}`}
+          className={`w-7 h-7 rounded-full cursor-pointer ${c.dot} transition-transform ${value === c.key ? "ring-2 ring-offset-2 ring-hairline dark:ring-text-dim scale-110" : "opacity-60 hover:opacity-100 active:scale-95"}`}
           title={c.key}
         />
       ))}
@@ -278,11 +216,11 @@ export function GenreManager({ bookId }: GenreManagerProps) {
     <div className="space-y-4">
       {/* Assigned genres */}
       <div>
-        <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">
+        <p className="text-xs font-medium text-text-mute dark:text-text-mute mb-2">
           Đã gán cho truyện này
         </p>
         {assignedIds.size === 0 ? (
-          <p className="text-xs text-gray-400 dark:text-gray-500 italic">
+          <p className="text-xs text-text-mute dark:text-text-mute italic">
             Chưa gán thể loại nào
           </p>
         ) : (
@@ -301,7 +239,7 @@ export function GenreManager({ bookId }: GenreManagerProps) {
       {/* All genres — click to toggle assign; manage mode reveals edit/delete */}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <p className="text-xs font-medium text-gray-500 dark:text-gray-400">
+          <p className="text-xs font-medium text-text-mute dark:text-text-mute">
             Tất cả thể loại
           </p>
           {allGenres.length > 0 && !isLoading && (
@@ -313,8 +251,8 @@ export function GenreManager({ bookId }: GenreManagerProps) {
               }}
               className={`inline-flex items-center gap-1 text-xs font-medium cursor-pointer transition-colors ${
                 isManaging
-                  ? "text-indigo-600 dark:text-indigo-400 hover:text-indigo-700"
-                  : "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
+                  ? "text-accent dark:text-accent hover:text-accent-dim"
+                  : "text-text-mute dark:text-text-mute hover:text-text-dim dark:hover:text-text-faint"
               }`}
             >
               {isManaging ? (
@@ -356,9 +294,9 @@ export function GenreManager({ bookId }: GenreManagerProps) {
           )}
         </div>
         {isLoading ? (
-          <p className="text-xs text-gray-400">Đang tải...</p>
+          <p className="text-xs text-text-mute">Đang tải...</p>
         ) : allGenres.length === 0 ? (
-          <p className="text-xs text-gray-400 dark:text-gray-500 italic">
+          <p className="text-xs text-text-mute dark:text-text-mute italic">
             Chưa có thể loại nào
           </p>
         ) : (
@@ -370,7 +308,7 @@ export function GenreManager({ bookId }: GenreManagerProps) {
                 return (
                   <form
                     key={g.id}
-                    className="flex flex-col gap-2 p-3 rounded-xl border border-indigo-300 dark:border-indigo-700 bg-gray-50 dark:bg-gray-900 w-full sm:w-72"
+                    className="flex flex-col gap-2 p-3 rounded-xl border border-accent/40 dark:border-accent/40 bg-ink dark:bg-surface w-full sm:w-72"
                     onSubmit={(e) => {
                       e.preventDefault();
                       updateMutation.mutate({
@@ -384,21 +322,21 @@ export function GenreManager({ bookId }: GenreManagerProps) {
                       autoFocus
                       value={editName}
                       onChange={(e) => setEditName(e.target.value)}
-                      className="text-sm px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-indigo-500"
+                      className="text-sm px-3 py-1.5 rounded-lg border border-hairline dark:border-hairline bg-surface dark:bg-raised text-text dark:text-text outline-none focus:ring-2 focus:ring-accent"
                     />
                     <ColorPicker value={editColor} onChange={setEditColor} />
                     <div className="flex gap-2">
                       <button
                         type="submit"
                         disabled={updateMutation.isPending}
-                        className="text-xs px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer font-medium"
+                        className="text-xs px-3 py-1.5 bg-accent text-white rounded-lg hover:bg-accent-dim disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer font-medium"
                       >
                         {updateMutation.isPending ? "Đang lưu..." : "Lưu"}
                       </button>
                       <button
                         type="button"
                         onClick={() => setEditingId(null)}
-                        className="text-xs px-3 py-1.5 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-lg cursor-pointer"
+                        className="text-xs px-3 py-1.5 bg-raised dark:bg-raised-hi text-text-dim dark:text-text-faint rounded-lg cursor-pointer"
                       >
                         Hủy
                       </button>
@@ -419,7 +357,7 @@ export function GenreManager({ bookId }: GenreManagerProps) {
                     } ${
                       isAssigned
                         ? `${c.bg} ${c.text} border-transparent ring-2 ring-offset-1 ring-current`
-                        : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-gray-400 dark:hover:border-gray-500"
+                        : "bg-surface dark:bg-raised text-text-dim dark:text-text-mute border-hairline-soft dark:border-hairline hover:border-hairline dark:hover:border-hairline"
                     }`}
                   >
                     <span
@@ -439,7 +377,7 @@ export function GenreManager({ bookId }: GenreManagerProps) {
                           setEditName(g.name);
                           setEditColor(g.color as ColorKey);
                         }}
-                        className="p-2 cursor-pointer text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 active:text-indigo-700 transition-colors rounded"
+                        className="p-2 cursor-pointer text-text-mute hover:text-accent dark:hover:text-accent active:text-accent-dim transition-colors rounded"
                         title="Sửa"
                       >
                         <svg
@@ -462,7 +400,7 @@ export function GenreManager({ bookId }: GenreManagerProps) {
                           if (confirm(`Xóa thể loại "${g.name}"?`))
                             deleteGenreMutation.mutate(g.id);
                         }}
-                        className="p-2 cursor-pointer text-gray-400 hover:text-red-600 dark:hover:text-red-400 active:text-red-700 transition-colors rounded"
+                        className="p-2 cursor-pointer text-text-mute hover:text-vermillion dark:hover:text-vermillion active:text-vermillion transition-colors rounded"
                         title="Xóa"
                       >
                         <svg
@@ -491,13 +429,13 @@ export function GenreManager({ bookId }: GenreManagerProps) {
       {/* Create new genre */}
       {showCreate ? (
         <form
-          className="flex flex-col gap-2.5 p-4 rounded-xl border border-dashed border-indigo-300 dark:border-indigo-700 bg-indigo-50/30 dark:bg-indigo-950/20"
+          className="flex flex-col gap-2.5 p-4 rounded-xl border border-dashed border-accent/40 dark:border-accent/40 bg-accent/30 dark:bg-accent/20"
           onSubmit={(e) => {
             e.preventDefault();
             createMutation.mutate();
           }}
         >
-          <p className="text-xs font-medium text-gray-700 dark:text-gray-300">
+          <p className="text-xs font-medium text-text-dim dark:text-text-faint">
             Thể loại mới
           </p>
           <input
@@ -509,15 +447,15 @@ export function GenreManager({ bookId }: GenreManagerProps) {
             }}
             placeholder="Tên thể loại..."
             maxLength={50}
-            className="text-sm px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-indigo-500"
+            className="text-sm px-3 py-1.5 rounded-lg border border-hairline dark:border-hairline bg-surface dark:bg-surface text-text dark:text-text outline-none focus:ring-2 focus:ring-accent"
           />
           <ColorPicker value={newColor} onChange={setNewColor} />
-          {createError && <p className="text-xs text-red-500">{createError}</p>}
+          {createError && <p className="text-xs text-vermillion">{createError}</p>}
           <div className="flex gap-2">
             <button
               type="submit"
               disabled={!newName.trim() || createMutation.isPending}
-              className="text-sm px-4 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer font-medium"
+              className="text-sm px-4 py-1.5 bg-accent text-white rounded-lg hover:bg-accent-dim disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer font-medium"
             >
               {createMutation.isPending ? "Đang tạo..." : "Tạo & gán"}
             </button>
@@ -528,7 +466,7 @@ export function GenreManager({ bookId }: GenreManagerProps) {
                 setNewName("");
                 setCreateError("");
               }}
-              className="text-sm px-3 py-1.5 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 cursor-pointer"
+              className="text-sm px-3 py-1.5 bg-raised dark:bg-raised-hi text-text-dim dark:text-text-faint rounded-lg hover:bg-raised-hi dark:hover:bg-hairline cursor-pointer"
             >
               Hủy
             </button>
@@ -538,7 +476,7 @@ export function GenreManager({ bookId }: GenreManagerProps) {
         <button
           type="button"
           onClick={() => setShowCreate(true)}
-          className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 transition-colors cursor-pointer"
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-accent dark:text-accent hover:text-accent-dim dark:hover:text-accent transition-colors cursor-pointer"
         >
           <svg
             className="w-3.5 h-3.5"

@@ -7,7 +7,7 @@ export default function SearchPage() {
     <Suspense
       fallback={
         <div className="flex justify-center py-24">
-          <Spinner className="w-8 h-8 text-indigo-600" />
+          <Spinner className="w-8 h-8 text-accent" />
         </div>
       }
     >

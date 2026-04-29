@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { getUser, clearAuth, isAdmin as checkAdmin } from "@/lib/auth";
 import type { AuthUser } from "@/lib/auth";
-import { DarkModeToggle } from "@/components/ui/DarkModeToggle";
 
 /** Indicator pill that highlights the active tab */
 function Pill({
@@ -17,7 +16,9 @@ function Pill({
   return (
     <span
       className={`flex items-center justify-center w-12 h-7 rounded-full transition-colors ${
-        active ? "bg-indigo-100 dark:bg-indigo-950/60" : ""
+        active
+          ? "bg-accent/15 ring-1 ring-accent/30 shadow-[0_0_18px_var(--color-accent-glow)]"
+          : ""
       }`}
     >
       {children}
@@ -51,24 +52,22 @@ export function BottomNav() {
     href === "/" ? pathname === "/" : pathname.startsWith(href);
 
   const tabCls = (href: string) =>
-    `flex-1 flex flex-col items-center justify-center gap-0.5 py-1 text-[10px] font-medium transition-colors ${
-      at(href)
-        ? "text-indigo-600 dark:text-indigo-400"
-        : "text-gray-400 dark:text-gray-500"
+    `flex-1 flex flex-col items-center justify-center gap-0.5 py-1 text-[10px] font-medium tracking-wide transition-colors ${
+      at(href) ? "text-accent" : "text-text-faint"
     }`;
 
-  const profileActive = pathname.startsWith("/login") || pathname.startsWith("/profile") || sheetOpen;
-  const btnCls = `flex-1 flex flex-col items-center justify-center gap-0.5 py-1 text-[10px] font-medium transition-colors ${
-    profileActive
-      ? "text-indigo-600 dark:text-indigo-400"
-      : "text-gray-400 dark:text-gray-500"
+  const profileActive =
+    pathname.startsWith("/login") ||
+    pathname.startsWith("/profile") ||
+    sheetOpen;
+  const btnCls = `flex-1 flex flex-col items-center justify-center gap-0.5 py-1 text-[10px] font-medium tracking-wide transition-colors ${
+    profileActive ? "text-accent" : "text-text-faint"
   }`;
 
   return (
     <>
-      {/* Bottom navigation bar */}
       <nav
-        className="fixed bottom-0 left-0 right-0 z-30 bg-white/95 dark:bg-gray-900/95 backdrop-blur-xl border-t border-gray-200/60 dark:border-gray-800/60"
+        className="fixed bottom-0 left-0 right-0 z-30 bg-ink/95 backdrop-blur-xl border-t border-hairline-soft"
         style={{ paddingBottom: "var(--sab)" }}
       >
         <div className="flex items-stretch h-14">
@@ -79,7 +78,7 @@ export function BottomNav() {
                 className="w-5 h-5"
                 fill="none"
                 stroke="currentColor"
-                strokeWidth={at("/") ? 2.5 : 1.75}
+                strokeWidth={at("/") ? 2.4 : 1.75}
                 viewBox="0 0 24 24"
               >
                 <path
@@ -99,7 +98,7 @@ export function BottomNav() {
                 className="w-5 h-5"
                 fill="none"
                 stroke="currentColor"
-                strokeWidth={at("/search") ? 2.5 : 1.75}
+                strokeWidth={at("/search") ? 2.4 : 1.75}
                 viewBox="0 0 24 24"
               >
                 <path
@@ -140,10 +139,10 @@ export function BottomNav() {
             <Pill active={profileActive}>
               {user ? (
                 <span
-                  className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold ${
+                  className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold transition-colors ${
                     profileActive
-                      ? "bg-indigo-600 text-white"
-                      : "bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-200"
+                      ? "bg-accent text-ink"
+                      : "bg-raised-hi text-text-dim"
                   }`}
                 >
                   {user.email.charAt(0).toUpperCase()}
@@ -172,52 +171,45 @@ export function BottomNav() {
       {/* Profile bottom sheet */}
       {sheetOpen && user && (
         <>
-          {/* Backdrop */}
           <div
-            className="fixed inset-0 z-40 bg-black/40"
+            className="fixed inset-0 z-40 bg-black/60"
             onClick={closeSheet}
           />
-          {/* Sheet panel — sits above the nav bar */}
           <div
-            className="fixed left-0 right-0 z-50 bg-white dark:bg-gray-900 rounded-t-2xl shadow-2xl animate-slide-up"
+            className="fixed left-0 right-0 z-50 bg-surface border-t border-hairline rounded-t-2xl shadow-[0_-20px_60px_rgba(0,0,0,0.5)] animate-slide-up"
             style={{ bottom: "calc(3.5rem + var(--sab))" }}
           >
-            {/* Drag handle */}
             <div className="flex justify-center pt-3 pb-1">
-              <div className="w-9 h-1 bg-gray-300 dark:bg-gray-700 rounded-full" />
+              <div className="w-9 h-1 bg-hairline rounded-full" />
             </div>
 
             {/* User info header */}
-            <div className="px-5 py-3 flex items-center gap-3 border-b border-gray-100 dark:border-gray-800">
-              <div className="w-11 h-11 rounded-full bg-indigo-600 flex items-center justify-center text-white text-base font-bold shrink-0">
+            <div className="px-5 py-3 flex items-center gap-3 border-b border-hairline-soft">
+              <div className="w-11 h-11 rounded-full bg-accent text-ink flex items-center justify-center text-base font-semibold shrink-0 shadow-[0_0_18px_var(--color-accent-glow)]">
                 {user.email.charAt(0).toUpperCase()}
               </div>
-              <div className="min-w-0">
-                <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-text truncate">
                   {user.email}
                 </p>
                 {admin && (
-                  <span className="text-xs font-medium text-indigo-600 dark:text-indigo-400">
+                  <span className="font-mono text-[10px] tracking-widest uppercase text-vermillion">
                     Admin
                   </span>
                 )}
               </div>
-              <div className="ml-auto shrink-0">
-                <DarkModeToggle />
-              </div>
             </div>
 
-            {/* Menu items */}
             <div className="py-1.5">
               {/* Profile page */}
               <Link
                 href="/profile"
                 onClick={closeSheet}
-                className="flex items-center gap-3.5 px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                className="flex items-center gap-3.5 px-5 py-3 hover:bg-raised transition-colors"
               >
-                <span className="w-8 h-8 rounded-full bg-indigo-50 dark:bg-indigo-950/60 flex items-center justify-center shrink-0">
+                <span className="w-8 h-8 rounded-full bg-accent/15 ring-1 ring-accent/25 flex items-center justify-center shrink-0">
                   <svg
-                    className="w-4 h-4 text-indigo-600 dark:text-indigo-400"
+                    className="w-4 h-4 text-accent"
                     fill="none"
                     stroke="currentColor"
                     strokeWidth={2}
@@ -231,35 +223,39 @@ export function BottomNav() {
                   </svg>
                 </span>
                 <div className="flex-1 min-w-0">
-                  <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                  <span className="text-sm font-medium text-text-dim">
                     Trang cá nhân
                   </span>
-                  <p className="text-xs text-gray-400 dark:text-gray-500">
+                  <p className="text-xs text-text-faint">
                     Cấp độ &amp; thống kê tu luyện
                   </p>
                 </div>
                 <svg
-                  className="w-4 h-4 text-gray-300 dark:text-gray-600 shrink-0"
+                  className="w-4 h-4 text-text-faint shrink-0"
                   fill="none"
                   stroke="currentColor"
                   strokeWidth={2}
                   viewBox="0 0 24 24"
                 >
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M9 5l7 7-7 7"
+                  />
                 </svg>
               </Link>
-              <div className="h-px mx-5 bg-gray-100 dark:bg-gray-800 my-1" />
+              <div className="h-px mx-5 bg-hairline-soft my-1" />
 
               {admin && (
                 <>
                   <Link
                     href="/upload"
                     onClick={closeSheet}
-                    className="flex items-center gap-3.5 px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                    className="flex items-center gap-3.5 px-5 py-3 hover:bg-raised transition-colors"
                   >
-                    <span className="w-8 h-8 rounded-full bg-indigo-50 dark:bg-indigo-950/60 flex items-center justify-center shrink-0">
+                    <span className="w-8 h-8 rounded-full bg-accent/15 ring-1 ring-accent/25 flex items-center justify-center shrink-0">
                       <svg
-                        className="w-4 h-4 text-indigo-600 dark:text-indigo-400"
+                        className="w-4 h-4 text-accent"
                         fill="none"
                         stroke="currentColor"
                         strokeWidth={2}
@@ -272,18 +268,18 @@ export function BottomNav() {
                         />
                       </svg>
                     </span>
-                    <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                    <span className="text-sm font-medium text-text-dim">
                       Tải lên truyện
                     </span>
                   </Link>
                   <Link
                     href="/admin/manage-books"
                     onClick={closeSheet}
-                    className="flex items-center gap-3.5 px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                    className="flex items-center gap-3.5 px-5 py-3 hover:bg-raised transition-colors"
                   >
-                    <span className="w-8 h-8 rounded-full bg-purple-50 dark:bg-purple-950/60 flex items-center justify-center shrink-0">
+                    <span className="w-8 h-8 rounded-full bg-vermillion/15 ring-1 ring-vermillion/30 flex items-center justify-center shrink-0">
                       <svg
-                        className="w-4 h-4 text-purple-600 dark:text-purple-400"
+                        className="w-4 h-4 text-vermillion"
                         fill="none"
                         stroke="currentColor"
                         strokeWidth={2}
@@ -296,11 +292,11 @@ export function BottomNav() {
                         />
                       </svg>
                     </span>
-                    <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                    <span className="text-sm font-medium text-text-dim">
                       Quản lý truyện
                     </span>
                   </Link>
-                  <div className="h-px mx-5 bg-gray-100 dark:bg-gray-800 my-1" />
+                  <div className="h-px mx-5 bg-hairline-soft my-1" />
                 </>
               )}
 
@@ -309,11 +305,11 @@ export function BottomNav() {
                   clearAuth();
                   closeSheet();
                 }}
-                className="w-full flex items-center gap-3.5 px-5 py-3 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors"
+                className="w-full flex items-center gap-3.5 px-5 py-3 hover:bg-vermillion/10 transition-colors"
               >
-                <span className="w-8 h-8 rounded-full bg-red-50 dark:bg-red-950/60 flex items-center justify-center shrink-0">
+                <span className="w-8 h-8 rounded-full bg-vermillion/15 ring-1 ring-vermillion/30 flex items-center justify-center shrink-0">
                   <svg
-                    className="w-4 h-4 text-red-600 dark:text-red-400"
+                    className="w-4 h-4 text-vermillion"
                     fill="none"
                     stroke="currentColor"
                     strokeWidth={2}
@@ -326,7 +322,7 @@ export function BottomNav() {
                     />
                   </svg>
                 </span>
-                <span className="text-sm font-medium text-red-600 dark:text-red-400">
+                <span className="text-sm font-medium text-vermillion">
                   Đăng xuất
                 </span>
               </button>

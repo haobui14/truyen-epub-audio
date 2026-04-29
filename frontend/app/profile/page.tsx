@@ -41,7 +41,7 @@ function LevelBadge({ totalExp }: { totalExp: number }) {
             r={r}
             fill="none"
             stroke="currentColor"
-            className="text-gray-200 dark:text-gray-700"
+            className="text-text-dim dark:text-text-dim"
             strokeWidth={stroke}
           />
           <circle
@@ -57,10 +57,10 @@ function LevelBadge({ totalExp }: { totalExp: number }) {
         </svg>
         {/* Level number */}
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-3xl font-black text-gray-900 dark:text-gray-100 leading-none">
+          <span className="text-3xl font-black text-text dark:text-text leading-none">
             {lvl.level}
           </span>
-          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mt-0.5">
+          <span className="text-[10px] font-semibold text-text-mute uppercase tracking-wider mt-0.5">
             Cấp độ
           </span>
         </div>
@@ -73,7 +73,7 @@ function LevelBadge({ totalExp }: { totalExp: number }) {
           {lvl.title}
         </p>
         {lvl.nextExp !== null && (
-          <p className="text-xs text-gray-400 mt-0.5">
+          <p className="text-xs text-text-mute mt-0.5">
             {formatExp(getExpToNextLevel(totalExp))} EXP tới cấp tiếp
           </p>
         )}
@@ -93,12 +93,12 @@ function StatCard({
   icon: React.ReactNode;
 }) {
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-2xl p-4 border border-gray-100 dark:border-gray-700 flex flex-col items-center gap-2">
-      <div className="text-indigo-500 dark:text-indigo-400">{icon}</div>
-      <p className="text-2xl font-black text-gray-900 dark:text-gray-100 tabular-nums">
+    <div className="bg-surface dark:bg-raised rounded-2xl p-4 border border-hairline-soft dark:border-hairline flex flex-col items-center gap-2">
+      <div className="text-accent dark:text-accent">{icon}</div>
+      <p className="text-2xl font-black text-text dark:text-text tabular-nums">
         {value}
       </p>
-      <p className="text-xs font-medium text-gray-400 dark:text-gray-500 text-center">
+      <p className="text-xs font-medium text-text-mute dark:text-text-mute text-center">
         {label}
       </p>
     </div>
@@ -137,10 +137,10 @@ function RealmTable({ totalExp }: { totalExp: number }) {
             key={realm.name}
             className={`flex items-center justify-between px-4 py-2.5 rounded-xl border transition-colors ${
               isCurrentRealm
-                ? "border-2 bg-indigo-50 dark:bg-indigo-950/30"
+                ? "border-2 bg-accent/15 dark:bg-accent/30"
                 : isPassed
-                ? "border-gray-100 dark:border-gray-700/50 bg-gray-50/50 dark:bg-gray-800/30"
-                : "border-gray-100 dark:border-gray-700/50"
+                ? "border-hairline-soft dark:border-hairline/50 bg-ink/50 dark:bg-raised/30"
+                : "border-hairline-soft dark:border-hairline/50"
             }`}
             style={isCurrentRealm ? { borderColor: firstLevel.color } : undefined}
           >
@@ -150,7 +150,7 @@ function RealmTable({ totalExp }: { totalExp: number }) {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
                 </svg>
               ) : isLocked ? (
-                <svg className="w-4 h-4 text-gray-300 dark:text-gray-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-4 h-4 text-text-faint dark:text-text-dim shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                 </svg>
               ) : (
@@ -162,16 +162,16 @@ function RealmTable({ totalExp }: { totalExp: number }) {
               <span
                 className={`text-sm font-semibold ${
                   isCurrentRealm
-                    ? "text-gray-900 dark:text-gray-100"
+                    ? "text-text dark:text-text"
                     : isPassed
-                    ? "text-gray-500 dark:text-gray-400"
-                    : "text-gray-400 dark:text-gray-500"
+                    ? "text-text-mute dark:text-text-mute"
+                    : "text-text-mute dark:text-text-mute"
                 }`}
               >
                 {realm.name}
               </span>
             </div>
-            <span className="text-xs text-gray-400 tabular-nums">
+            <span className="text-xs text-text-mute tabular-nums">
               {formatExp(firstLevel.minExp)} EXP
             </span>
           </div>
@@ -319,7 +319,7 @@ export default function ProfilePage() {
       {/* Back */}
       <Link
         href="/"
-        className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors mb-6"
+        className="inline-flex items-center gap-1.5 text-sm text-text-mute hover:text-text-dim dark:text-text-mute dark:hover:text-text-dim transition-colors mb-6"
       >
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -328,7 +328,7 @@ export default function ProfilePage() {
       </Link>
 
       {/* Header card */}
-      <div className="bg-white dark:bg-gray-800 rounded-3xl border border-gray-100 dark:border-gray-700 p-6 mb-5 shadow-sm">
+      <div className="bg-surface dark:bg-raised rounded-3xl border border-hairline-soft dark:border-hairline p-6 mb-5 shadow-sm">
         <div className="flex items-start gap-4 mb-6">
           {/* Avatar + edit button */}
           <div className="relative shrink-0">
@@ -348,25 +348,25 @@ export default function ProfilePage() {
             )}
             <button
               onClick={openEdit}
-              className="absolute -bottom-1.5 -right-1.5 w-6 h-6 rounded-full bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 shadow flex items-center justify-center"
+              className="absolute -bottom-1.5 -right-1.5 w-6 h-6 rounded-full bg-surface dark:bg-raised-hi border border-hairline-soft dark:border-hairline shadow flex items-center justify-center"
               aria-label="Chỉnh sửa hồ sơ"
             >
-              <svg className="w-3 h-3 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-3 h-3 text-text-dim dark:text-text-faint" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 012.828 0l.172.172a2 2 0 010 2.828L12 16H9v-3z" />
               </svg>
             </button>
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-lg font-bold text-gray-900 dark:text-gray-100 truncate">
+            <p className="text-lg font-bold text-text dark:text-text truncate">
               {user.display_name || user.email}
             </p>
             {user.display_name && (
-              <p className="text-xs text-gray-400 truncate">{user.email}</p>
+              <p className="text-xs text-text-mute truncate">{user.email}</p>
             )}
             <p className="text-sm font-semibold mt-0.5" style={{ color: lvl.color }}>
               {lvl.title}
             </p>
-            <p className="text-xs text-gray-400 mt-1 tabular-nums">
+            <p className="text-xs text-text-mute mt-1 tabular-nums">
               {formatExp(totalExp)} EXP tích lũy
             </p>
           </div>
@@ -375,7 +375,7 @@ export default function ProfilePage() {
         {/* Level ring + title */}
         {statsLoading ? (
           <div className="flex justify-center py-6">
-            <Spinner className="w-6 h-6 text-indigo-500" />
+            <Spinner className="w-6 h-6 text-accent" />
           </div>
         ) : (
           <LevelBadge totalExp={totalExp} />
@@ -384,11 +384,11 @@ export default function ProfilePage() {
         {/* XP progress bar */}
         {!statsLoading && lvl.nextExp !== null && (
           <div className="mt-5">
-            <div className="flex justify-between text-xs text-gray-400 mb-1.5">
+            <div className="flex justify-between text-xs text-text-mute mb-1.5">
               <span>{formatExp(totalExp - lvl.minExp)} / {formatExp(lvl.nextExp - lvl.minExp)} EXP</span>
               <span>{Math.round(progress * 100)}%</span>
             </div>
-            <div className="h-2.5 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+            <div className="h-2.5 bg-raised dark:bg-raised-hi rounded-full overflow-hidden">
               <div
                 className="h-full rounded-full transition-all duration-500"
                 style={{ width: `${progress * 100}%`, backgroundColor: lvl.color }}
@@ -440,14 +440,14 @@ export default function ProfilePage() {
       </div>
 
       {/* How to earn EXP */}
-      <div className="bg-indigo-50 dark:bg-indigo-950/30 rounded-2xl border border-indigo-100 dark:border-indigo-900/40 p-4 mb-5">
-        <h3 className="text-sm font-bold text-indigo-700 dark:text-indigo-300 mb-2 flex items-center gap-1.5">
+      <div className="bg-accent/15 dark:bg-accent/30 rounded-2xl border border-accent/30 dark:border-accent/40/40 p-4 mb-5">
+        <h3 className="text-sm font-bold text-accent-dim dark:text-accent mb-2 flex items-center gap-1.5">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
           </svg>
           Cách nhận EXP
         </h3>
-        <ul className="space-y-1 text-xs text-indigo-600 dark:text-indigo-400">
+        <ul className="space-y-1 text-xs text-accent dark:text-accent">
           <li>• <strong>Đọc chương</strong>: bằng số từ ÷ 50 EXP (tối thiểu 10)</li>
           <li>• <strong>Nghe chương</strong>: ×1.5 EXP so với đọc</li>
           <li>• Phải đọc/nghe đủ, không được bỏ qua để nhận EXP</li>
@@ -456,8 +456,8 @@ export default function ProfilePage() {
       </div>
 
       {/* Realm table */}
-      <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 p-4 shadow-sm">
-        <h3 className="text-sm font-bold text-gray-700 dark:text-gray-300 mb-3">
+      <div className="bg-surface dark:bg-raised rounded-2xl border border-hairline-soft dark:border-hairline p-4 shadow-sm">
+        <h3 className="text-sm font-bold text-text-dim dark:text-text-faint mb-3">
           Bảng cảnh giới tu luyện
         </h3>
         <RealmTable totalExp={totalExp} />
@@ -478,8 +478,8 @@ export default function ProfilePage() {
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
           onClick={(e) => { if (e.target === e.currentTarget) setEditOpen(false); }}
         >
-          <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl p-6 w-full max-w-sm">
-            <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-5">
+          <div className="bg-surface dark:bg-raised rounded-3xl shadow-2xl p-6 w-full max-w-sm">
+            <h2 className="text-lg font-bold text-text dark:text-text mb-5">
               Chỉnh sửa hồ sơ
             </h2>
 
@@ -512,12 +512,12 @@ export default function ProfilePage() {
                   </svg>
                 </div>
               </button>
-              <span className="text-xs text-gray-400">Nhấn để chọn ảnh</span>
+              <span className="text-xs text-text-mute">Nhấn để chọn ảnh</span>
               {editAvatar && (
                 <button
                   type="button"
                   onClick={() => setEditAvatar(null)}
-                  className="text-xs text-red-500 hover:text-red-600"
+                  className="text-xs text-vermillion hover:text-vermillion"
                 >
                   Xoá ảnh
                 </button>
@@ -526,7 +526,7 @@ export default function ProfilePage() {
 
             {/* Display name input */}
             <label className="block mb-4">
-              <span className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5 block">
+              <span className="text-sm font-medium text-text-dim dark:text-text-faint mb-1.5 block">
                 Tên hiển thị
               </span>
               <input
@@ -535,12 +535,12 @@ export default function ProfilePage() {
                 onChange={(e) => setEditName(e.target.value)}
                 placeholder={user.email}
                 maxLength={50}
-                className="w-full rounded-xl border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 px-4 py-2.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                className="w-full rounded-xl border border-hairline-soft dark:border-hairline bg-ink dark:bg-raised-hi px-4 py-2.5 text-sm text-text dark:text-text placeholder-text-faint focus:outline-none focus:ring-2 focus:ring-accent"
               />
             </label>
 
             {saveError && (
-              <p className="text-xs text-red-500 mb-3">{saveError}</p>
+              <p className="text-xs text-vermillion mb-3">{saveError}</p>
             )}
 
             <div className="flex gap-2.5">
@@ -548,7 +548,7 @@ export default function ProfilePage() {
                 type="button"
                 onClick={() => setEditOpen(false)}
                 disabled={saving}
-                className="flex-1 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold border border-hairline-soft dark:border-hairline text-text-dim dark:text-text-mute hover:bg-ink dark:hover:bg-raised-hi transition-colors disabled:opacity-50"
               >
                 Huỷ
               </button>
@@ -556,7 +556,7 @@ export default function ProfilePage() {
                 type="button"
                 onClick={handleSave}
                 disabled={saving}
-                className="flex-1 py-2.5 rounded-xl text-sm font-semibold bg-indigo-600 hover:bg-indigo-700 text-white transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold bg-accent hover:bg-accent-dim text-white transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {saving && <Spinner className="w-4 h-4 text-white" />}
                 Lưu

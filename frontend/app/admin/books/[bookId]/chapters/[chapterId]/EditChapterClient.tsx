@@ -126,15 +126,15 @@ function SplitChapterModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-      <div className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-xl bg-white dark:bg-gray-900 shadow-2xl">
+      <div className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-xl bg-surface dark:bg-surface shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-hairline-soft dark:border-hairline">
           <div>
-            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+            <h2 className="text-base font-semibold text-text dark:text-text">
               Tách chương
             </h2>
             {parts.length >= 2 ? (
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+              <p className="text-xs text-text-mute dark:text-text-mute mt-0.5">
                 Phát hiện {parts.length} phần — chỉnh tiêu đề rồi xác nhận
               </p>
             ) : (
@@ -146,7 +146,7 @@ function SplitChapterModal({
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-lg transition-colors"
+            className="p-1.5 text-text-mute hover:text-text-dim dark:hover:text-text-dim rounded-lg transition-colors"
           >
             <svg
               className="w-5 h-5"
@@ -165,8 +165,8 @@ function SplitChapterModal({
         </div>
 
         {/* Custom delimiter row */}
-        <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-100 dark:border-gray-800">
-          <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0">
+        <div className="flex items-center gap-2 px-5 py-3 border-b border-hairline-soft dark:border-hairline-soft">
+          <span className="text-xs text-text-mute dark:text-text-mute shrink-0">
             Tách theo:
           </span>
           <input
@@ -174,12 +174,12 @@ function SplitChapterModal({
             onChange={(e) => setCustom(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && reSplit()}
             placeholder="Auto-detect (Chương N / Chapter N)"
-            className="flex-1 min-w-0 px-2.5 py-1.5 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+            className="flex-1 min-w-0 px-2.5 py-1.5 text-xs rounded border border-hairline dark:border-hairline bg-surface dark:bg-raised text-text dark:text-text placeholder-text-faint focus:outline-none focus:ring-1 focus:ring-accent"
           />
           <button
             type="button"
             onClick={reSplit}
-            className="px-3 py-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 border border-indigo-300 dark:border-indigo-700 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors"
+            className="px-3 py-1.5 text-xs font-medium text-accent dark:text-accent border border-accent/40 dark:border-accent/40 rounded-lg hover:bg-accent/15 dark:hover:bg-accent/30 transition-colors"
           >
             Phân tích lại
           </button>
@@ -188,7 +188,7 @@ function SplitChapterModal({
         {/* Parts list */}
         <div className="flex-1 overflow-y-auto px-5 py-3 space-y-3">
           {parts.length < 2 ? (
-            <div className="flex flex-col items-center gap-2 py-10 text-gray-400 dark:text-gray-600">
+            <div className="flex flex-col items-center gap-2 py-10 text-text-mute dark:text-text-dim">
               <svg
                 className="w-10 h-10"
                 fill="none"
@@ -210,19 +210,19 @@ function SplitChapterModal({
             parts.map((part, i) => (
               <div
                 key={i}
-                className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 space-y-2"
+                className="rounded-lg border border-hairline-soft dark:border-hairline p-3 space-y-2"
               >
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-mono text-indigo-500 dark:text-indigo-400 shrink-0">
+                  <span className="text-xs font-mono text-accent dark:text-accent shrink-0">
                     #{i + 1}
                   </span>
                   <input
                     value={part.title}
                     onChange={(e) => updateTitle(i, e.target.value)}
                     placeholder="Tiêu đề chương..."
-                    className="flex-1 min-w-0 px-2.5 py-1.5 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                    className="flex-1 min-w-0 px-2.5 py-1.5 text-xs rounded border border-hairline dark:border-hairline bg-surface dark:bg-raised text-text dark:text-text placeholder-text-faint focus:outline-none focus:ring-1 focus:ring-accent"
                   />
-                  <span className="text-xs text-gray-400 dark:text-gray-500 shrink-0">
+                  <span className="text-xs text-text-mute dark:text-text-mute shrink-0">
                     {part.text
                       .split(/\s+/)
                       .filter(Boolean)
@@ -230,7 +230,7 @@ function SplitChapterModal({
                     từ
                   </span>
                 </div>
-                <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed line-clamp-2 font-mono">
+                <p className="text-xs text-text-mute dark:text-text-mute leading-relaxed line-clamp-2 font-mono">
                   {part.text.slice(0, 200)}
                   {part.text.length > 200 ? "…" : ""}
                 </p>
@@ -241,17 +241,17 @@ function SplitChapterModal({
 
         {error && (
           <div className="px-5 pb-2">
-            <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
+            <p className="text-xs text-vermillion dark:text-vermillion">{error}</p>
           </div>
         )}
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-gray-200 dark:border-gray-700">
+        <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-hairline-soft dark:border-hairline">
           <button
             type="button"
             onClick={onClose}
             disabled={confirming}
-            className="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors disabled:opacity-50"
+            className="px-4 py-2 text-sm font-medium text-text-dim dark:text-text-mute hover:text-text dark:hover:text-text transition-colors disabled:opacity-50"
           >
             Huỷ
           </button>
@@ -259,7 +259,7 @@ function SplitChapterModal({
             type="button"
             onClick={handleConfirm}
             disabled={parts.length < 2 || confirming}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-60 active:scale-[0.98] transition-all"
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-accent text-white rounded-lg hover:bg-accent-dim disabled:opacity-60 active:scale-[0.98] transition-all"
           >
             {confirming && <Spinner className="w-3.5 h-3.5" />}
             {confirming ? "Đang tách…" : `Tách thành ${parts.length} chương`}
@@ -509,7 +509,7 @@ export default function EditChapterClient() {
       {/* ─── Sidebar ─── */}
       <aside
         className={`
-        fixed top-16 bottom-0 left-0 z-50 w-72 flex flex-col border-r border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 overflow-hidden
+        fixed top-16 bottom-0 left-0 z-50 w-72 flex flex-col border-r border-hairline-soft dark:border-hairline bg-ink dark:bg-surface overflow-hidden
         transform transition-transform duration-200
         ${mobileSidebarOpen ? "translate-x-0" : "-translate-x-full"}
         sm:sticky sm:top-16 sm:bottom-auto sm:left-auto sm:z-auto sm:translate-x-0
@@ -517,11 +517,11 @@ export default function EditChapterClient() {
       `}
       >
         {/* Header */}
-        <div className="px-3 py-3 border-b border-gray-200 dark:border-gray-700 space-y-2">
+        <div className="px-3 py-3 border-b border-hairline-soft dark:border-hairline space-y-2">
           <div className="flex items-center justify-between">
             <Link
               href={`/admin/edit-book?id=${bookId}`}
-              className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors min-w-0"
+              className="flex items-center gap-1.5 text-xs text-text-mute dark:text-text-mute hover:text-accent dark:hover:text-accent transition-colors min-w-0"
             >
               <svg
                 className="w-3.5 h-3.5 shrink-0"
@@ -543,7 +543,7 @@ export default function EditChapterClient() {
             <button
               type="button"
               onClick={() => setMobileSidebarOpen(false)}
-              className="sm:hidden p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-lg active:bg-gray-200 dark:active:bg-gray-700 transition-colors shrink-0"
+              className="sm:hidden p-1.5 text-text-mute hover:text-text-dim dark:hover:text-text-dim rounded-lg active:bg-raised-hi dark:active:bg-raised-hi transition-colors shrink-0"
             >
               <svg
                 className="w-4 h-4"
@@ -562,7 +562,7 @@ export default function EditChapterClient() {
           </div>
           <Link
             href={`/admin/edit-chapter?bookId=${bookId}&id=new`}
-            className="flex items-center justify-center gap-1.5 w-full px-2 py-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 border border-indigo-300 dark:border-indigo-700 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors"
+            className="flex items-center justify-center gap-1.5 w-full px-2 py-1.5 text-xs font-medium text-accent dark:text-accent border border-accent/40 dark:border-accent/40 rounded-lg hover:bg-accent/15 dark:hover:bg-accent/30 transition-colors"
           >
             <svg
               className="w-3.5 h-3.5"
@@ -585,13 +585,13 @@ export default function EditChapterClient() {
         <div className="flex-1 overflow-y-auto">
           {sidebarLoading ? (
             <div className="flex justify-center py-8">
-              <Spinner className="w-5 h-5 text-indigo-600" />
+              <Spinner className="w-5 h-5 text-accent" />
             </div>
           ) : (
             <ul>
               {isNew && (
                 <li>
-                  <span className="flex items-center gap-2 px-3 py-2.5 bg-indigo-600 text-white text-xs">
+                  <span className="flex items-center gap-2 px-3 py-2.5 bg-accent text-white text-xs">
                     <svg
                       className="w-3 h-3 shrink-0"
                       fill="none"
@@ -617,12 +617,12 @@ export default function EditChapterClient() {
                       href={`${editBasePath}${ch.id}`}
                       className={`flex items-center gap-2 px-3 py-2.5 text-xs transition-colors ${
                         isActive
-                          ? "bg-indigo-600 text-white"
-                          : "text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+                          ? "bg-accent text-white"
+                          : "text-text-dim dark:text-text-faint hover:bg-raised dark:hover:bg-raised"
                       }`}
                     >
                       <span
-                        className={`font-mono shrink-0 w-6 text-right ${isActive ? "text-indigo-200" : "text-gray-400 dark:text-gray-500"}`}
+                        className={`font-mono shrink-0 w-6 text-right ${isActive ? "text-accent" : "text-text-mute dark:text-text-mute"}`}
                       >
                         {ch.chapter_index + 1}
                       </span>
@@ -637,11 +637,11 @@ export default function EditChapterClient() {
 
         {/* Sidebar pagination */}
         {sidebarTotalPages > 1 && (
-          <div className="flex items-center justify-between px-3 py-2 border-t border-gray-200 dark:border-gray-700">
+          <div className="flex items-center justify-between px-3 py-2 border-t border-hairline-soft dark:border-hairline">
             <button
               onClick={() => setSidebarPage((p) => Math.max(1, p - 1))}
               disabled={sidebarPage <= 1}
-              className="p-1.5 rounded text-gray-500 hover:text-indigo-600 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              className="p-1.5 rounded text-text-mute hover:text-accent hover:bg-raised dark:hover:bg-raised disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
               <svg
                 className="w-4 h-4"
@@ -657,7 +657,7 @@ export default function EditChapterClient() {
                 />
               </svg>
             </button>
-            <span className="text-xs text-gray-500 dark:text-gray-400">
+            <span className="text-xs text-text-mute dark:text-text-mute">
               {sidebarPage} / {sidebarTotalPages}
             </span>
             <button
@@ -665,7 +665,7 @@ export default function EditChapterClient() {
                 setSidebarPage((p) => Math.min(sidebarTotalPages, p + 1))
               }
               disabled={sidebarPage >= sidebarTotalPages}
-              className="p-1.5 rounded text-gray-500 hover:text-indigo-600 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              className="p-1.5 rounded text-text-mute hover:text-accent hover:bg-raised dark:hover:bg-raised disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
               <svg
                 className="w-4 h-4"
@@ -691,7 +691,7 @@ export default function EditChapterClient() {
         <button
           type="button"
           onClick={() => setMobileSidebarOpen(true)}
-          className="sm:hidden flex items-center gap-2 mb-4 px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 active:bg-gray-100 dark:active:bg-gray-700 transition-colors"
+          className="sm:hidden flex items-center gap-2 mb-4 px-3 py-2 text-sm font-medium text-text-dim dark:text-text-mute border border-hairline-soft dark:border-hairline rounded-lg hover:bg-ink dark:hover:bg-raised active:bg-raised dark:active:bg-raised-hi transition-colors"
         >
           <svg
             className="w-4 h-4"
@@ -711,12 +711,12 @@ export default function EditChapterClient() {
 
         {isLoading ? (
           <div className="flex justify-center py-24">
-            <Spinner className="w-7 h-7 text-indigo-600" />
+            <Spinner className="w-7 h-7 text-accent" />
           </div>
         ) : (
           <form onSubmit={handleSave} className="space-y-5">
             <div className="flex items-center justify-between">
-              <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">
+              <h1 className="text-xl font-bold text-text dark:text-text">
                 {isNew ? "Thêm chương mới" : "Chỉnh sửa chương"}
               </h1>
               {!isNew && (
@@ -725,7 +725,7 @@ export default function EditChapterClient() {
                     type="button"
                     onClick={() => setSplitModalOpen(true)}
                     disabled={!textContent.trim()}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-600 dark:text-amber-400 border border-amber-300 dark:border-amber-700 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors disabled:opacity-40"
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gold dark:text-gold border border-gold/40 dark:border-amber-700 rounded-lg hover:bg-gold/10 dark:hover:bg-gold/30 transition-colors disabled:opacity-40"
                   >
                     <svg
                       className="w-3.5 h-3.5"
@@ -746,7 +746,7 @@ export default function EditChapterClient() {
                     type="button"
                     onClick={handleDelete}
                     disabled={deleting}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 dark:text-red-400 border border-red-300 dark:border-red-800 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-vermillion dark:text-vermillion border border-vermillion/40 dark:border-vermillion/40 rounded-lg hover:bg-vermillion/10 dark:hover:bg-vermillion/30 transition-colors disabled:opacity-50"
                   >
                     {deleting ? (
                       <Spinner className="w-3 h-3" />
@@ -774,7 +774,7 @@ export default function EditChapterClient() {
             {/* Title + Index row */}
             <div className="grid grid-cols-[1fr_140px] gap-4">
               <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                <label className="block text-xs font-medium text-text-dim dark:text-text-mute mb-1">
                   Tiêu đề chương *
                 </label>
                 <input
@@ -782,11 +782,11 @@ export default function EditChapterClient() {
                   onChange={(e) => setTitle(e.target.value)}
                   required
                   placeholder="Chương 1: Khởi đầu"
-                  className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full px-3 py-2 text-sm rounded-lg border border-hairline dark:border-hairline bg-surface dark:bg-surface text-text dark:text-text placeholder-text-faint focus:outline-none focus:ring-2 focus:ring-accent"
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                <label className="block text-xs font-medium text-text-dim dark:text-text-mute mb-1">
                   Số chương *
                 </label>
                 <input
@@ -795,7 +795,7 @@ export default function EditChapterClient() {
                   value={chapterIndex}
                   onChange={(e) => setChapterIndex(e.target.value)}
                   required
-                  className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full px-3 py-2 text-sm rounded-lg border border-hairline dark:border-hairline bg-surface dark:bg-surface text-text dark:text-text focus:outline-none focus:ring-2 focus:ring-accent"
                 />
               </div>
             </div>
@@ -803,12 +803,12 @@ export default function EditChapterClient() {
             {/* Text content */}
             <div>
               <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                <label className="block text-xs font-medium text-text-dim dark:text-text-mute">
                   Nội dung *
                 </label>
                 <div className="flex items-center gap-2">
                   {textContent && (
-                    <span className="text-xs text-gray-400 dark:text-gray-500">
+                    <span className="text-xs text-text-mute dark:text-text-mute">
                       {textContent
                         .split(/\s+/)
                         .filter(Boolean)
@@ -827,8 +827,8 @@ export default function EditChapterClient() {
                       disabled={!textContent.trim()}
                       className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors disabled:opacity-40 ${
                         aiFixing
-                          ? "bg-purple-50 dark:bg-purple-950/30 border-purple-300 dark:border-purple-700 text-purple-600 dark:text-purple-400 hover:bg-purple-100 dark:hover:bg-purple-950/50"
-                          : "border-purple-200 dark:border-purple-800 text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950/30"
+                          ? "bg-vermillion/15 dark:bg-vermillion/30 border-vermillion/40 dark:border-vermillion/40 text-vermillion dark:text-vermillion hover:bg-vermillion/20 dark:hover:bg-vermillion/50"
+                          : "border-vermillion/30 dark:border-vermillion/40 text-vermillion dark:text-vermillion hover:bg-vermillion/15 dark:hover:bg-vermillion/30"
                       }`}
                     >
                       {aiFixing ? (
@@ -859,7 +859,7 @@ export default function EditChapterClient() {
                 </div>
               </div>
               {aiError && (
-                <div className="mb-2 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+                <div className="mb-2 rounded-lg bg-vermillion/10 dark:bg-vermillion/50 border border-vermillion/30 dark:border-vermillion/40 px-3 py-2 text-xs text-vermillion dark:text-vermillion">
                   {aiError}
                 </div>
               )}
@@ -870,23 +870,23 @@ export default function EditChapterClient() {
                 rows={16}
                 placeholder="Nhập nội dung chương..."
                 disabled={aiFixing}
-                className="w-full px-3 py-2.5 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-y font-mono leading-relaxed disabled:opacity-60"
+                className="w-full px-3 py-2.5 text-sm rounded-lg border border-hairline dark:border-hairline bg-surface dark:bg-surface text-text dark:text-text placeholder-text-faint focus:outline-none focus:ring-2 focus:ring-accent resize-y font-mono leading-relaxed disabled:opacity-60"
               />
               {aiFixing && (
-                <p className="mt-1.5 text-xs text-purple-500 dark:text-purple-400 flex items-center gap-1.5">
-                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
+                <p className="mt-1.5 text-xs text-vermillion dark:text-vermillion flex items-center gap-1.5">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-vermillion animate-pulse" />
                   GPT đang xử lý...
                 </p>
               )}
             </div>
 
             {saveError && (
-              <div className="rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-300">
+              <div className="rounded-lg bg-vermillion/10 dark:bg-vermillion/50 border border-vermillion/30 dark:border-vermillion/40 px-4 py-3 text-sm text-vermillion dark:text-vermillion">
                 {saveError}
               </div>
             )}
             {saveSuccess && (
-              <div className="rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-300">
+              <div className="rounded-lg bg-accent/10 dark:bg-accent/50 border border-accent/30 dark:border-accent/40 px-4 py-3 text-sm text-accent-dim dark:text-accent">
                 ✓ Đã lưu thành công
               </div>
             )}
@@ -895,14 +895,14 @@ export default function EditChapterClient() {
               <button
                 type="submit"
                 disabled={saving}
-                className="flex items-center gap-2 bg-indigo-600 text-white text-sm font-medium px-5 py-2.5 rounded-lg hover:bg-indigo-700 disabled:opacity-60 active:scale-[0.98] transition-all"
+                className="flex items-center gap-2 bg-accent text-white text-sm font-medium px-5 py-2.5 rounded-lg hover:bg-accent-dim disabled:opacity-60 active:scale-[0.98] transition-all"
               >
                 {saving && <Spinner className="w-4 h-4" />}
                 {saving ? "Đang lưu…" : isNew ? "Thêm chương" : "Lưu thay đổi"}
               </button>
               <Link
                 href={`/admin/edit-book?id=${bookId}`}
-                className="px-4 py-2.5 text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
+                className="px-4 py-2.5 text-sm font-medium text-text-dim dark:text-text-mute hover:text-text dark:hover:text-text transition-colors"
               >
                 Huỷ
               </Link>
