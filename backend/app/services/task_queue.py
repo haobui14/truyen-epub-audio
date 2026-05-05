@@ -41,14 +41,15 @@ async def _process_chapter(book_id: str, chapter_id: str) -> None:
     tmp_path = None
 
     try:
-        # Fetch chapter text
-        result = db.table("chapters").select("text_content,title,status").eq("id", chapter_id).single().execute()
+        # Fetch chapter row (status check) and text from Storage
+        result = db.table("chapters").select("title,status").eq("id", chapter_id).single().execute()
         chapter = result.data
 
         if not chapter or chapter.get("status") == "ready":
             return
 
-        if not chapter.get("text_content"):
+        text = await storage_service.get_chapter_text(chapter_id)
+        if not text:
             _mark_chapter_error(chapter_id, "No text content")
             return
 
@@ -62,7 +63,7 @@ async def _process_chapter(book_id: str, chapter_id: str) -> None:
         # Generate audio
         tmp_path = tempfile.mktemp(suffix=".mp3")
         duration = await tts_service.generate_audio(
-            text=chapter["text_content"],
+            text=text,
             voice=voice,
             output_path=tmp_path,
         )

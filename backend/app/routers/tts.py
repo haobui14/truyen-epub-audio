@@ -167,9 +167,10 @@ async def chapter_full_audio(chapter_id: str, voice: str = "vi-VN-HoaiMyNeural")
             pass  # fall through to on-the-fly generation
 
     # ── 2. Fetch chapter text ─────────────────────────────────────────────────
+    from app.services import storage_service
     chapter = (
         db.table("chapters")
-        .select("id,text_content")
+        .select("id")
         .eq("id", chapter_id)
         .maybe_single()
         .execute()
@@ -177,7 +178,7 @@ async def chapter_full_audio(chapter_id: str, voice: str = "vi-VN-HoaiMyNeural")
     if not chapter.data:
         raise HTTPException(status_code=404, detail="Chapter not found")
 
-    text = (chapter.data.get("text_content") or "").strip()
+    text = (await storage_service.get_chapter_text(chapter_id)).strip()
     if not text:
         raise HTTPException(status_code=422, detail="Chapter has no text content")
 

@@ -6,6 +6,7 @@ from app.database import get_client
 from app.dependencies import get_admin_user
 from app.models.chapter import ChapterResponse, AudioSummary
 from app.config import settings
+from app.services import storage_service
 
 router = APIRouter(prefix="/api", tags=["chapters"])
 
@@ -31,10 +32,11 @@ async def get_chapter(chapter_id: str):
 @router.get("/chapters/{chapter_id}/text")
 async def get_chapter_text(chapter_id: str):
     db = get_client()
-    result = db.table("chapters").select("id,text_content").eq("id", chapter_id).maybe_single().execute()
+    result = db.table("chapters").select("id").eq("id", chapter_id).maybe_single().execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Chapter not found")
-    return {"id": result.data["id"], "text_content": result.data.get("text_content") or ""}
+    text = await storage_service.get_chapter_text(chapter_id)
+    return {"id": result.data["id"], "text_content": text}
 
 
 @router.get("/audio/{chapter_id}")
@@ -65,9 +67,10 @@ async def update_chapter(
     _admin: dict = Depends(get_admin_user),
 ):
     db = get_client()
-    result = db.table("chapters").select("id").eq("id", chapter_id).maybe_single().execute()
+    result = db.table("chapters").select("id,book_id").eq("id", chapter_id).maybe_single().execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Chapter not found")
+    book_id = result.data["book_id"]
 
     updates: dict = {}
     if body.title is not None:
@@ -80,7 +83,7 @@ async def update_chapter(
             raise HTTPException(status_code=400, detail="chapter_index must be >= 0")
         updates["chapter_index"] = body.chapter_index
     if body.text_content is not None:
-        updates["text_content"] = body.text_content
+        await storage_service.write_chapter_text(book_id, chapter_id, body.text_content)
         updates["word_count"] = len(body.text_content.split())
 
     if updates:
@@ -99,12 +102,12 @@ async def update_chapter_text(
     _admin: dict = Depends(get_admin_user),
 ):
     db = get_client()
-    result = db.table("chapters").select("id").eq("id", chapter_id).maybe_single().execute()
+    result = db.table("chapters").select("id,book_id").eq("id", chapter_id).maybe_single().execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Chapter not found")
     word_count = len(body.text_content.split())
+    await storage_service.write_chapter_text(result.data["book_id"], chapter_id, body.text_content)
     db.table("chapters").update({
-        "text_content": body.text_content,
         "word_count": word_count,
     }).eq("id", chapter_id).execute()
     return {"id": chapter_id, "word_count": word_count}
@@ -127,8 +130,9 @@ async def delete_chapter(
     book_id = result.data["book_id"]
     deleted_index = result.data["chapter_index"]
 
-    # Delete audio file from storage (best effort)
+    # Delete audio + text files from storage (best effort)
     await storage_service.delete_path("audio", f"{book_id}/{chapter_id}.mp3")
+    await storage_service.delete_chapter_text(book_id, chapter_id)
 
     # Delete the chapter row
     db.table("chapters").delete().eq("id", chapter_id).execute()
@@ -214,9 +218,11 @@ async def split_chapter(
 
     # Update the existing chapter with parts[0]
     first = body.parts[0]
+    first_path = await storage_service.upload_chapter_text(book_id, chapter_id, first.text_content)
     db.table("chapters").update({
         "title": first.title.strip(),
-        "text_content": first.text_content,
+        "text_storage_path": first_path,
+        "text_content": None,
         "word_count": len(first.text_content.split()),
         "status": "pending",
     }).eq("id", chapter_id).execute()
@@ -226,12 +232,13 @@ async def split_chapter(
     for i, part in enumerate(body.parts[1:], start=1):
         new_id = str(_uuid.uuid4())
         new_ids.append(new_id)
+        path = await storage_service.upload_chapter_text(book_id, new_id, part.text_content)
         db.table("chapters").insert({
             "id": new_id,
             "book_id": book_id,
             "chapter_index": base_index + i,
             "title": part.title.strip(),
-            "text_content": part.text_content,
+            "text_storage_path": path,
             "word_count": len(part.text_content.split()),
             "status": "pending",
         }).execute()
@@ -268,10 +275,14 @@ async def bulk_delete_chapters(
     chapters = result.data
     book_ids = list({ch["book_id"] for ch in chapters})
 
-    # Delete audio files from storage (best effort)
+    # Delete audio + text files from storage (best effort)
     for ch in chapters:
         try:
             await storage_service.delete_path("audio", f"{ch['book_id']}/{ch['id']}.mp3")
+        except Exception:
+            pass
+        try:
+            await storage_service.delete_chapter_text(ch["book_id"], ch["id"])
         except Exception:
             pass
 

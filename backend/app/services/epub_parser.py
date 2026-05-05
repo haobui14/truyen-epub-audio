@@ -226,6 +226,21 @@ async def parse_epub_task(book_id: str, epub_bytes: bytes) -> None:
         if not chapters_data:
             raise ValueError("No readable chapters found in EPUB")
 
+        # Upload chapter text to Storage in parallel, then strip text_content from
+        # the row (DB only keeps text_storage_path).
+        UPLOAD_CONCURRENCY = 20
+        sem = asyncio.Semaphore(UPLOAD_CONCURRENCY)
+
+        async def _upload_one(ch: dict) -> None:
+            async with sem:
+                path = await storage_service.upload_chapter_text(
+                    book_id, ch["id"], ch["text_content"]
+                )
+            ch["text_storage_path"] = path
+            del ch["text_content"]
+
+        await asyncio.gather(*(_upload_one(ch) for ch in chapters_data))
+
         # Insert chapters in batches to avoid Supabase statement timeout on large books
         BATCH_SIZE = 100
         for i in range(0, len(chapters_data), BATCH_SIZE):

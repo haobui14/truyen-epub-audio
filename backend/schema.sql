@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS chapters (
     chapter_index           INTEGER NOT NULL,
     title                   TEXT NOT NULL,
     text_content            TEXT,
+    text_storage_path       TEXT,
     word_count              INTEGER DEFAULT 0,
     status                  TEXT NOT NULL DEFAULT 'pending',
     error_message           TEXT,
@@ -41,6 +42,9 @@ CREATE TABLE IF NOT EXISTS chapters (
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE(book_id, chapter_index)
 );
+
+-- For existing DBs created before chapter text moved to Storage:
+ALTER TABLE chapters ADD COLUMN IF NOT EXISTS text_storage_path TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_chapters_book_id ON chapters(book_id);
 CREATE INDEX IF NOT EXISTS idx_chapters_status  ON chapters(book_id, status);
@@ -147,6 +151,7 @@ CREATE TABLE IF NOT EXISTS user_stats (
 DROP POLICY IF EXISTS "Service role full access on epub-uploads" ON storage.objects;
 DROP POLICY IF EXISTS "Service role full access on audio"        ON storage.objects;
 DROP POLICY IF EXISTS "Service role full access on covers"       ON storage.objects;
+DROP POLICY IF EXISTS "Service role full access on chapter-text" ON storage.objects;
 DROP POLICY IF EXISTS "Public read on audio"                     ON storage.objects;
 DROP POLICY IF EXISTS "Public read on covers"                    ON storage.objects;
 
@@ -162,6 +167,10 @@ CREATE POLICY "Service role full access on covers"
 ON storage.objects FOR ALL TO service_role
 USING (bucket_id = 'covers') WITH CHECK (bucket_id = 'covers');
 
+CREATE POLICY "Service role full access on chapter-text"
+ON storage.objects FOR ALL TO service_role
+USING (bucket_id = 'chapter-text') WITH CHECK (bucket_id = 'chapter-text');
+
 -- The "audio" and "covers" buckets are flagged as public on the bucket
 -- itself, so anyone with an object's path can fetch it via
 -- /storage/v1/object/public/<bucket>/<path>. We deliberately do NOT add a
@@ -173,6 +182,7 @@ USING (bucket_id = 'covers') WITH CHECK (bucket_id = 'covers');
 --   "epub-uploads" → private
 --   "audio"        → public
 --   "covers"       → public
+--   "chapter-text" → private
 
 -- ============================================================
 -- Helper functions for chapter re-indexing

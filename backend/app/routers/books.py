@@ -162,6 +162,7 @@ async def delete_book(book_id: str, _admin: dict = Depends(get_admin_user)):
     await storage_service.delete_folder("audio", book_id)
     await storage_service.delete_folder("covers", book_id)
     await storage_service.delete_folder("epub-uploads", book_id)
+    await storage_service.delete_folder("chapter-text", book_id)
 
     # Delete from DB (cascades to chapters)
     db.table("books").delete().eq("id", book_id).execute()
@@ -213,7 +214,8 @@ async def strip_string_from_chapters(
     body: StripStringRequest,
     _admin: dict = Depends(get_admin_user),
 ):
-    """Remove every occurrence of a literal string from all chapters' text_content."""
+    """Remove every occurrence of a literal string from all chapters' text."""
+    import asyncio
     if not body.target:
         raise HTTPException(status_code=400, detail="target string cannot be empty")
 
@@ -222,11 +224,41 @@ async def strip_string_from_chapters(
     if not book.data:
         raise HTTPException(status_code=404, detail="Book not found")
 
-    result = db.rpc("strip_string_from_book_chapters", {
-        "p_book_id": book_id,
-        "p_target": body.target,
-    }).execute()
-    updated_count = result.data if isinstance(result.data, int) else 0
+    # Paginate through all chapters; for each, download text from Storage,
+    # remove every occurrence of target, re-upload + update word_count.
+    PAGE_SIZE = 500
+    CONCURRENCY = 10
+    sem = asyncio.Semaphore(CONCURRENCY)
+    target = body.target
+    updated_count = 0
+
+    async def _strip_one(ch: dict) -> bool:
+        async with sem:
+            text = await storage_service.get_chapter_text(ch["id"])
+            if target not in text:
+                return False
+            new_text = text.replace(target, "")
+            new_word_count = len(new_text.split()) if new_text.strip() else 0
+            await storage_service.write_chapter_text(book_id, ch["id"], new_text)
+            db.table("chapters").update({
+                "word_count": new_word_count,
+            }).eq("id", ch["id"]).execute()
+            return True
+
+    fetch_offset = 0
+    while True:
+        page = db.table("chapters").select("id").eq("book_id", book_id).order(
+            "chapter_index"
+        ).range(fetch_offset, fetch_offset + PAGE_SIZE - 1).execute()
+        batch = page.data or []
+        if not batch:
+            break
+        results = await asyncio.gather(*(_strip_one(ch) for ch in batch))
+        updated_count += sum(1 for r in results if r)
+        if len(batch) < PAGE_SIZE:
+            break
+        fetch_offset += PAGE_SIZE
+
     return {"updated_chapters": updated_count}
 
 
@@ -240,6 +272,7 @@ async def auto_split_book(
     Returns old_count, new_count, and any chapters whose header had no body.
     """
     from app.services.epub_parser import split_text_by_headers
+    import asyncio
     import uuid as _uuid
 
     db = get_client()
@@ -255,7 +288,7 @@ async def auto_split_book(
     fetch_offset = 0
     while True:
         page = db.table("chapters").select(
-            "id,chapter_index,text_content"
+            "id,chapter_index"
         ).eq("book_id", book_id).order("chapter_index").range(
             fetch_offset, fetch_offset + PAGE_SIZE - 1
         ).execute()
@@ -268,10 +301,18 @@ async def auto_split_book(
     if not chapters:
         raise HTTPException(status_code=400, detail="No chapters to split")
 
+    # Download text for each chapter from Storage in parallel.
+    DOWNLOAD_CONCURRENCY = 20
+    dl_sem = asyncio.Semaphore(DOWNLOAD_CONCURRENCY)
+
+    async def _fetch_text(ch: dict) -> str:
+        async with dl_sem:
+            return await storage_service.get_chapter_text(ch["id"])
+
+    chapter_texts = await asyncio.gather(*(_fetch_text(ch) for ch in chapters))
+
     # Merge every chapter's text in reading order, then split by headers.
-    # Using "\n" ensures a line break between chapters even when a chapter's
-    # text_content has no trailing newline.
-    combined = "\n".join((ch.get("text_content") or "") for ch in chapters)
+    combined = "\n".join(chapter_texts)
     parts = split_text_by_headers(combined)
 
     if not parts:
@@ -283,8 +324,8 @@ async def auto_split_book(
         if not p["has_body"]
     ]
 
-    # Build new chapter rows. Use a large offset (1_000_000 + i) so the
-    # temporary indices don't collide with existing rows (which have index < 1_000_000).
+    # Build new chapter rows with pre-generated UUIDs. Use a large offset
+    # (1_000_000 + i) so the temporary indices don't collide with existing rows.
     OFFSET = 1_000_000
     new_chapters = [
         {
@@ -292,12 +333,25 @@ async def auto_split_book(
             "book_id": book_id,
             "chapter_index": OFFSET + i,
             "title": p["title"],
-            "text_content": p["text_content"],
             "word_count": len(p["text_content"].split()),
             "status": "pending",
+            "_text": p["text_content"],
         }
         for i, p in enumerate(parts)
     ]
+
+    # Upload each new chapter's text to Storage in parallel.
+    up_sem = asyncio.Semaphore(20)
+
+    async def _upload_one(ch: dict) -> None:
+        async with up_sem:
+            ch["text_storage_path"] = await storage_service.upload_chapter_text(
+                book_id, ch["id"], ch["_text"]
+            )
+
+    await asyncio.gather(*(_upload_one(ch) for ch in new_chapters))
+    # Strip the in-memory _text field before insert (not a column).
+    insert_rows = [{k: v for k, v in ch.items() if k != "_text"} for ch in new_chapters]
 
     # Clean up any orphaned offset-indexed chapters from a previous failed split
     # attempt. Without this, re-running auto-split hits a unique constraint on
@@ -308,15 +362,15 @@ async def auto_split_book(
         pass
 
     # INSERT new rows first. If this fails (e.g. DB timeout) the old chapters
-    # are still intact and the book is not left empty.
-    # Batch size is kept at 1 to avoid Supabase statement timeouts when
-    # text_content is large (novel chapters can be hundreds of KB each).
-    BATCH_SIZE = 1
+    # are still intact and the book is not left empty. Rows now only carry
+    # text_storage_path — the heavy text lives in Storage — so larger batches
+    # are safe.
+    BATCH_SIZE = 100
     inserted_ids: list[str] = []
     try:
-        for i in range(0, len(new_chapters), BATCH_SIZE):
-            db.table("chapters").insert(new_chapters[i : i + BATCH_SIZE]).execute()
-            inserted_ids.extend(ch["id"] for ch in new_chapters[i : i + BATCH_SIZE])
+        for i in range(0, len(insert_rows), BATCH_SIZE):
+            db.table("chapters").insert(insert_rows[i : i + BATCH_SIZE]).execute()
+            inserted_ids.extend(ch["id"] for ch in insert_rows[i : i + BATCH_SIZE])
     except Exception as insert_err:
         # Roll back any rows we managed to insert before the failure
         if inserted_ids:
@@ -329,11 +383,15 @@ async def auto_split_book(
             detail=f"Failed to insert new chapters (no data was lost): {insert_err}",
         )
 
-    # Only now that new chapters are safely stored: delete old chapters & audio
+    # Only now that new chapters are safely stored: delete old chapters' audio + text
     chapter_ids = [ch["id"] for ch in chapters]
     for ch in chapters:
         try:
             await storage_service.delete_path("audio", f"{book_id}/{ch['id']}.mp3")
+        except Exception:
+            pass
+        try:
+            await storage_service.delete_chapter_text(book_id, ch["id"])
         except Exception:
             pass
     # Delete only the chapters we actually fetched and processed, in batches of
@@ -396,16 +454,31 @@ async def create_chapter(
             "p_insert_index": body.chapter_index,
         }).execute()
 
+    import uuid as _uuid
+    new_chapter_id = str(_uuid.uuid4())
+    text_storage_path = None
+    if text_content:
+        text_storage_path = await storage_service.upload_chapter_text(
+            book_id, new_chapter_id, text_content
+        )
+
     try:
         result = db.table("chapters").insert({
+            "id": new_chapter_id,
             "book_id": book_id,
             "chapter_index": body.chapter_index,
             "title": title,
-            "text_content": text_content,
+            "text_storage_path": text_storage_path,
             "word_count": word_count,
             "status": "pending",
         }).execute()
     except Exception as e:
+        # Clean up the orphaned Storage file before raising
+        if text_storage_path:
+            try:
+                await storage_service.delete_chapter_text(book_id, new_chapter_id)
+            except Exception:
+                pass
         raise HTTPException(status_code=500, detail="Failed to create chapter")
 
     # Recalculate total_chapters
