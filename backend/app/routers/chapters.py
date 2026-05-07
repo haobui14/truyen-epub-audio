@@ -222,7 +222,6 @@ async def split_chapter(
     db.table("chapters").update({
         "title": first.title.strip(),
         "text_storage_path": first_path,
-        "text_content": None,
         "word_count": len(first.text_content.split()),
         "status": "pending",
     }).eq("id", chapter_id).execute()

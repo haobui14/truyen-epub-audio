@@ -73,14 +73,13 @@ async def download_chapter_text(path: str) -> str:
 
 
 async def get_chapter_text(chapter_id: str) -> str:
-    """Fetch chapter text by ID. Reads from Storage via text_storage_path;
-    falls back to in-DB text_content during the migration window.
-    Returns empty string if neither is set."""
+    """Fetch chapter text by ID from Supabase Storage via text_storage_path.
+    Returns empty string if no path set or download fails."""
     from app.database import get_client
     db = get_client()
     result = (
         db.table("chapters")
-        .select("text_storage_path,text_content")
+        .select("text_storage_path")
         .eq("id", chapter_id)
         .maybe_single()
         .execute()
@@ -88,24 +87,23 @@ async def get_chapter_text(chapter_id: str) -> str:
     if not result.data:
         return ""
     path = result.data.get("text_storage_path")
-    if path:
-        try:
-            return await download_chapter_text(path)
-        except Exception as e:
-            logger.warning(f"Storage download failed for chapter {chapter_id} ({path}): {e}")
-            return result.data.get("text_content") or ""
-    return result.data.get("text_content") or ""
+    if not path:
+        return ""
+    try:
+        return await download_chapter_text(path)
+    except Exception as e:
+        logger.warning(f"Storage download failed for chapter {chapter_id} ({path}): {e}")
+        return ""
 
 
 async def write_chapter_text(book_id: str, chapter_id: str, text: str) -> str:
-    """Upload chapter text to Storage and update the row's text_storage_path
-    (and clear text_content). Returns the storage path."""
+    """Upload chapter text to Storage and update the row's text_storage_path.
+    Returns the storage path."""
     from app.database import get_client
     path = await upload_chapter_text(book_id, chapter_id, text)
     db = get_client()
     db.table("chapters").update({
         "text_storage_path": path,
-        "text_content": None,
     }).eq("id", chapter_id).execute()
     return path
 
