@@ -267,6 +267,28 @@ BEGIN
 END;
 $$;
 
+-- Subtract a fixed offset from chapter_index for all chapters of a book
+-- whose chapter_index is at or above the offset. Used by auto-split, which
+-- inserts new chapters at chapter_index = OFFSET + i (to avoid colliding with
+-- existing rows during the safe insert-before-delete phase) and then needs
+-- to renumber them back to 0-based once the old chapters are deleted.
+-- One SQL statement instead of N PostgREST round-trips.
+CREATE OR REPLACE FUNCTION normalize_chapter_offset(p_book_id UUID, p_offset INT)
+RETURNS INTEGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+    updated_count INTEGER;
+BEGIN
+    UPDATE chapters SET chapter_index = chapter_index - p_offset
+    WHERE book_id = p_book_id AND chapter_index >= p_offset;
+    GET DIAGNOSTICS updated_count = ROW_COUNT;
+    RETURN updated_count;
+END;
+$$;
+
 -- Resequence all chapters for a book starting from 0 (repair tool)
 CREATE OR REPLACE FUNCTION reindex_all_chapters(p_book_id UUID)
 RETURNS void
@@ -340,5 +362,6 @@ REVOKE EXECUTE ON FUNCTION
     shift_chapters_up_by_n(UUID, INT, INT),
     reindex_chapters_after_delete(UUID, INT),
     strip_string_from_book_chapters(UUID, TEXT),
+    normalize_chapter_offset(UUID, INT),
     reindex_all_chapters(UUID)
 FROM PUBLIC, anon, authenticated;

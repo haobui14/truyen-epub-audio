@@ -403,21 +403,29 @@ async def auto_split_book(
         db.table("chapters").delete().in_("id", chapter_ids[i : i + DELETE_BATCH]).execute()
 
     # Normalize chapter_index back to 0-based now that old rows are gone.
-    # We can't do "SET chapter_index = chapter_index - OFFSET" via PostgREST,
-    # so update each row individually — but in parallel via a thread pool,
-    # since supabase-py is sync and a serial loop is ~50ms × N round-trips.
-    norm_sem = asyncio.Semaphore(20)
+    # Prefer the single-statement RPC (normalize_chapter_offset); if it's not
+    # deployed yet (older schema), fall back to parallel per-row updates.
+    try:
+        await asyncio.to_thread(
+            lambda: db.rpc("normalize_chapter_offset", {
+                "p_book_id": book_id,
+                "p_offset": OFFSET,
+            }).execute()
+        )
+    except Exception as rpc_err:
+        # Fallback: N parallel UPDATEs via thread pool.
+        norm_sem = asyncio.Semaphore(20)
 
-    async def _renumber_one(ch: dict) -> None:
-        real_index = ch["chapter_index"] - OFFSET
-        async with norm_sem:
-            await asyncio.to_thread(
-                lambda: db.table("chapters").update(
-                    {"chapter_index": real_index}
-                ).eq("id", ch["id"]).execute()
-            )
+        async def _renumber_one(ch: dict) -> None:
+            real_index = ch["chapter_index"] - OFFSET
+            async with norm_sem:
+                await asyncio.to_thread(
+                    lambda: db.table("chapters").update(
+                        {"chapter_index": real_index}
+                    ).eq("id", ch["id"]).execute()
+                )
 
-    await asyncio.gather(*(_renumber_one(ch) for ch in new_chapters))
+        await asyncio.gather(*(_renumber_one(ch) for ch in new_chapters))
 
     new_count = len(new_chapters)
     db.table("books").update({"total_chapters": new_count}).eq("id", book_id).execute()
