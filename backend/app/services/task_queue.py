@@ -48,7 +48,7 @@ async def _process_chapter(book_id: str, chapter_id: str) -> None:
         if not chapter or chapter.get("status") == "ready":
             return
 
-        text = await storage_service.get_chapter_text(chapter_id)
+        text = await storage_service.get_chapter_text_by_ids(book_id, chapter_id)
         if not text:
             _mark_chapter_error(chapter_id, "No text content")
             return

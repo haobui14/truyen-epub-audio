@@ -234,15 +234,17 @@ async def strip_string_from_chapters(
 
     async def _strip_one(ch: dict) -> bool:
         async with sem:
-            text = await storage_service.get_chapter_text(ch["id"])
+            text = await storage_service.get_chapter_text_by_ids(book_id, ch["id"])
             if target not in text:
                 return False
             new_text = text.replace(target, "")
             new_word_count = len(new_text.split()) if new_text.strip() else 0
             await storage_service.write_chapter_text(book_id, ch["id"], new_text)
-            db.table("chapters").update({
-                "word_count": new_word_count,
-            }).eq("id", ch["id"]).execute()
+            await asyncio.to_thread(
+                lambda: db.table("chapters").update({
+                    "word_count": new_word_count,
+                }).eq("id", ch["id"]).execute()
+            )
             return True
 
     fetch_offset = 0
@@ -307,7 +309,7 @@ async def auto_split_book(
 
     async def _fetch_text(ch: dict) -> str:
         async with dl_sem:
-            return await storage_service.get_chapter_text(ch["id"])
+            return await storage_service.get_chapter_text_by_ids(book_id, ch["id"])
 
     chapter_texts = await asyncio.gather(*(_fetch_text(ch) for ch in chapters))
 
@@ -402,10 +404,20 @@ async def auto_split_book(
 
     # Normalize chapter_index back to 0-based now that old rows are gone.
     # We can't do "SET chapter_index = chapter_index - OFFSET" via PostgREST,
-    # so update each row individually. For typical book sizes this is acceptable.
-    for ch in new_chapters:
+    # so update each row individually — but in parallel via a thread pool,
+    # since supabase-py is sync and a serial loop is ~50ms × N round-trips.
+    norm_sem = asyncio.Semaphore(20)
+
+    async def _renumber_one(ch: dict) -> None:
         real_index = ch["chapter_index"] - OFFSET
-        db.table("chapters").update({"chapter_index": real_index}).eq("id", ch["id"]).execute()
+        async with norm_sem:
+            await asyncio.to_thread(
+                lambda: db.table("chapters").update(
+                    {"chapter_index": real_index}
+                ).eq("id", ch["id"]).execute()
+            )
+
+    await asyncio.gather(*(_renumber_one(ch) for ch in new_chapters))
 
     new_count = len(new_chapters)
     db.table("books").update({"total_chapters": new_count}).eq("id", book_id).execute()
