@@ -227,8 +227,10 @@ async def parse_epub_task(book_id: str, epub_bytes: bytes) -> None:
             raise ValueError("No readable chapters found in EPUB")
 
         # Upload chapter text to Storage in parallel, then strip text_content from
-        # the row (DB only keeps text_storage_path).
-        UPLOAD_CONCURRENCY = 20
+        # the row (DB only keeps text_storage_path). Concurrency capped at 8 —
+        # higher values overwhelm storage3's HTTP/2 connection. See
+        # storage_service.STORAGE_CONCURRENCY for the rationale.
+        UPLOAD_CONCURRENCY = 8
         sem = asyncio.Semaphore(UPLOAD_CONCURRENCY)
 
         async def _upload_one(ch: dict) -> None:

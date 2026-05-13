@@ -275,8 +275,9 @@ async def bulk_delete_chapters(
     book_ids = list({ch["book_id"] for ch in chapters})
 
     # Delete audio + text files from storage (best effort, parallel).
+    # Storage fan-out capped at 8 — see storage_service.STORAGE_CONCURRENCY.
     import asyncio
-    del_sem = asyncio.Semaphore(20)
+    del_sem = asyncio.Semaphore(8)
 
     async def _delete_files(ch: dict) -> None:
         async with del_sem:

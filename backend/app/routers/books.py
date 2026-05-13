@@ -230,7 +230,8 @@ async def strip_string_from_chapters(
     # Paginate through all chapters; for each, download text from Storage,
     # remove every occurrence of target, re-upload + update word_count.
     PAGE_SIZE = 500
-    CONCURRENCY = 10
+    # Keep storage fan-out low — see storage_service.STORAGE_CONCURRENCY note.
+    CONCURRENCY = 8
     sem = asyncio.Semaphore(CONCURRENCY)
     target = body.target
     updated_count = 0
@@ -307,7 +308,8 @@ async def auto_split_book(
         raise HTTPException(status_code=400, detail="No chapters to split")
 
     # Download text for each chapter from Storage in parallel.
-    DOWNLOAD_CONCURRENCY = 20
+    # See storage_service.STORAGE_CONCURRENCY for why this is capped low.
+    DOWNLOAD_CONCURRENCY = 8
     dl_sem = asyncio.Semaphore(DOWNLOAD_CONCURRENCY)
 
     async def _fetch_text(ch: dict) -> str:
@@ -346,7 +348,7 @@ async def auto_split_book(
     ]
 
     # Upload each new chapter's text to Storage in parallel.
-    up_sem = asyncio.Semaphore(20)
+    up_sem = asyncio.Semaphore(8)
 
     async def _upload_one(ch: dict) -> None:
         async with up_sem:
@@ -391,7 +393,7 @@ async def auto_split_book(
     # Only now that new chapters are safely stored: delete old chapters' audio + text.
     # Fan out per-chapter deletes — best effort, capped concurrency.
     chapter_ids = [ch["id"] for ch in chapters]
-    del_sem = asyncio.Semaphore(20)
+    del_sem = asyncio.Semaphore(8)
 
     async def _delete_old(ch: dict) -> None:
         async with del_sem:

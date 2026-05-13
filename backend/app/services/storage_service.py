@@ -1,11 +1,19 @@
 import asyncio
 import logging
+import random
+import time
 from storage3 import SyncStorageClient
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 CHAPTER_TEXT_BUCKET = "chapter-text"
+
+# Concurrency limit for any caller fanning storage requests through gather().
+# Higher values overwhelm storage3's shared HTTP/2 connection and Supabase
+# starts closing streams; 8 matches the value the bulk-migration script
+# proved stable for this workload.
+STORAGE_CONCURRENCY = 8
 
 _storage_client: SyncStorageClient | None = None
 
@@ -27,32 +35,89 @@ def _get_storage() -> SyncStorageClient:
 # storage3 is a sync SDK — calling it directly from `async def` blocks the
 # event loop, so asyncio.gather() over these calls gives zero concurrency.
 # Run every storage HTTP call on the default thread pool so gather() actually
-# fans out (default pool size is min(32, os.cpu_count()+4), plenty for our
-# 20-way upload/download semaphores).
+# fans out.
+#
+# Under load Supabase intermittently closes the HTTP/2 stream
+# (httpcore.RemoteProtocolError: Server disconnected). storage3 has a bug
+# where its error handler in _request references an unbound `response`
+# variable in that case, masking the real error as
+# `UnboundLocalError: cannot access local variable 'response'`. Treat that
+# UnboundLocalError as a transient network failure and retry with backoff.
+
+_RETRY_MAX_ATTEMPTS = 4
+
+
+def _is_transient(exc: BaseException) -> bool:
+    if isinstance(exc, UnboundLocalError):
+        return "response" in str(exc)
+    msg = str(exc).lower()
+    return (
+        "server disconnected" in msg
+        or "remoteprotocolerror" in msg
+        or "connection" in msg and ("reset" in msg or "closed" in msg or "aborted" in msg)
+        or "timeout" in msg
+        or "timed out" in msg
+        or "429" in msg
+        or "502" in msg
+        or "503" in msg
+        or "504" in msg
+    )
+
+
+def _retry_sync(fn, *args, what: str = "storage op", **kwargs):
+    last_err: BaseException | None = None
+    for attempt in range(_RETRY_MAX_ATTEMPTS):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            last_err = e
+            if attempt == _RETRY_MAX_ATTEMPTS - 1 or not _is_transient(e):
+                raise
+            sleep = (2 ** attempt) + random.uniform(0, 0.5)
+            logger.warning(
+                f"{what} attempt {attempt + 1}/{_RETRY_MAX_ATTEMPTS} failed "
+                f"({type(e).__name__}: {e}); retrying in {sleep:.1f}s"
+            )
+            time.sleep(sleep)
+    assert last_err is not None
+    raise last_err
+
 
 def _sync_upload(bucket: str, path: str, data: bytes, content_type: str) -> None:
-    _get_storage().from_(bucket).upload(
-        path=path,
-        file=data,
-        file_options={"content-type": content_type, "upsert": "true"},
+    _retry_sync(
+        lambda: _get_storage().from_(bucket).upload(
+            path=path,
+            file=data,
+            file_options={"content-type": content_type, "upsert": "true"},
+        ),
+        what=f"upload {bucket}/{path}",
     )
 
 
 def _sync_download(bucket: str, path: str) -> bytes:
-    return _get_storage().from_(bucket).download(path)
+    return _retry_sync(
+        lambda: _get_storage().from_(bucket).download(path),
+        what=f"download {bucket}/{path}",
+    )
 
 
 def _sync_remove(bucket: str, paths: list[str]) -> None:
-    _get_storage().from_(bucket).remove(paths)
+    _retry_sync(
+        lambda: _get_storage().from_(bucket).remove(paths),
+        what=f"remove {bucket} ({len(paths)} files)",
+    )
 
 
 def _sync_list(bucket: str, prefix: str, *, limit: int = 1000, offset: int = 0) -> list[dict]:
     # storage3's default is limit=100, which silently truncates listings for
     # any book with >100 chapters. Pass an explicit large page size; callers
     # that need all results must still paginate.
-    return _get_storage().from_(bucket).list(
-        prefix,
-        {"limit": limit, "offset": offset, "sortBy": {"column": "name", "order": "asc"}},
+    return _retry_sync(
+        lambda: _get_storage().from_(bucket).list(
+            prefix,
+            {"limit": limit, "offset": offset, "sortBy": {"column": "name", "order": "asc"}},
+        ),
+        what=f"list {bucket}/{prefix}",
     )
 
 
