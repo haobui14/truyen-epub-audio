@@ -920,9 +920,26 @@ export default function ListenPage() {
               // fire for the new chapter and call mergeQueuedChapters() to
               // replenish the queue safely (skipping the in-flight chapter).
               autoPlayNextRef.current = true;
-              router.push(
-                `/listen?id=${bookId}&chapter=${nativeChapterId}&autoplay=1`,
-              );
+              // Only navigate if the user is currently on this book's listen
+              // page. If they've navigated elsewhere (library, book detail,
+              // reader, another book), leave them there — native TTS keeps
+              // playing in the background and syncJsToNativeChapter will
+              // reconcile the URL when they return to /listen.
+              if (typeof window !== "undefined") {
+                const pathname = window.location.pathname;
+                const onListenPage = pathname.includes("/listen");
+                const queryBookId = new URLSearchParams(
+                  window.location.search,
+                ).get("id");
+                const onListenForThisBook =
+                  onListenPage &&
+                  (pathname.includes(bookId) || queryBookId === bookId);
+                if (onListenForThisBook) {
+                  router.push(
+                    `/listen?id=${bookId}&chapter=${nativeChapterId}&autoplay=1`,
+                  );
+                }
+              }
               return;
             }
             // native-tts-done path: queue is exhausted (or web TTS ended).
@@ -942,7 +959,22 @@ export default function ListenPage() {
                 prefetchNextChapterAudio(target.id, td.text_content, v);
             }
             autoPlayNextRef.current = true;
-            navigateTo(target, true);
+            // Same rule as the native auto-advance branch: only navigate if
+            // the user is on this book's listen page. Otherwise let the
+            // player keep advancing in the background.
+            if (typeof window !== "undefined") {
+              const pathname = window.location.pathname;
+              const onListenPage = pathname.includes("/listen");
+              const queryBookId = new URLSearchParams(
+                window.location.search,
+              ).get("id");
+              const onListenForThisBook =
+                onListenPage &&
+                (pathname.includes(bookId) || queryBookId === bookId);
+              if (onListenForThisBook) {
+                navigateTo(target, true);
+              }
+            }
           }
         : undefined,
       neighborChapters,
