@@ -46,8 +46,14 @@ def _sync_remove(bucket: str, paths: list[str]) -> None:
     _get_storage().from_(bucket).remove(paths)
 
 
-def _sync_list(bucket: str, prefix: str) -> list[dict]:
-    return _get_storage().from_(bucket).list(prefix)
+def _sync_list(bucket: str, prefix: str, *, limit: int = 1000, offset: int = 0) -> list[dict]:
+    # storage3's default is limit=100, which silently truncates listings for
+    # any book with >100 chapters. Pass an explicit large page size; callers
+    # that need all results must still paginate.
+    return _get_storage().from_(bucket).list(
+        prefix,
+        {"limit": limit, "offset": offset, "sortBy": {"column": "name", "order": "asc"}},
+    )
 
 
 async def upload_bytes(
@@ -159,11 +165,20 @@ async def delete_path(bucket: str, path: str) -> None:
 
 
 async def delete_folder(bucket: str, prefix: str) -> None:
-    """Delete all files under a prefix in Supabase Storage."""
+    """Delete every file under a prefix in Supabase Storage. Paginates until
+    the listing is empty, since Supabase caps each list() page at 1000 items
+    and a book with N chapters has N files in chapter-text/ and audio/."""
+    PAGE = 1000
     try:
-        files = await asyncio.to_thread(_sync_list, bucket, prefix)
-        if files:
+        while True:
+            # Always list from offset 0: as we remove files they drop out of
+            # the result set, so the next "page" is still at the start.
+            files = await asyncio.to_thread(_sync_list, bucket, prefix, limit=PAGE)
+            if not files:
+                return
             paths = [f"{prefix}/{f['name']}" for f in files]
             await asyncio.to_thread(_sync_remove, bucket, paths)
+            if len(files) < PAGE:
+                return
     except Exception as e:
         logger.warning(f"Could not delete folder {bucket}/{prefix}: {e}")
