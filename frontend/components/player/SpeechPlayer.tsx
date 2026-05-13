@@ -290,7 +290,7 @@ export function SpeechPlayer() {
         <button
           onClick={onPrev ?? undefined}
           disabled={!onPrev}
-          className="p-2 text-text hover:text-accent disabled:text-text-faint disabled:opacity-40 transition-colors"
+          className="min-w-[48px] min-h-[48px] p-3 flex items-center justify-center text-text hover:text-accent active:scale-95 disabled:text-text-faint disabled:opacity-40 disabled:active:scale-100 transition-all"
           title="Chương trước"
         >
           <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
@@ -300,7 +300,7 @@ export function SpeechPlayer() {
         <button
           onClick={() => seekChunk(-1)}
           disabled={!ready || totalChunks === 0}
-          className="p-2 text-text-mute hover:text-accent disabled:text-text-faint disabled:opacity-40 transition-colors"
+          className="min-w-[48px] min-h-[48px] p-3 flex items-center justify-center text-text-mute hover:text-accent active:scale-95 disabled:text-text-faint disabled:opacity-40 disabled:active:scale-100 transition-all"
           title="Lùi đoạn"
         >
           <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
@@ -309,8 +309,8 @@ export function SpeechPlayer() {
         </button>
         <button
           onClick={toggle}
-          disabled={!ready}
-          className="w-[76px] h-[76px] bg-accent text-ink rounded-full flex items-center justify-center hover:bg-accent-dim active:scale-95 disabled:opacity-40 transition-all shadow-[0_0_0_6px_oklch(0.74_0.11_165/0.12),0_0_40px_var(--color-accent-glow)]"
+          disabled={!ready || Boolean(nativeTtsError)}
+          className="w-[76px] h-[76px] bg-accent text-ink rounded-full flex items-center justify-center hover:bg-accent-dim active:scale-95 disabled:opacity-40 disabled:active:scale-100 transition-all shadow-[0_0_0_6px_oklch(0.74_0.11_165/0.12),0_0_40px_var(--color-accent-glow)]"
           title={isPlaying ? "Tạm dừng" : "Phát"}
         >
           {isLoadingText || isBuffering ? (
@@ -337,7 +337,7 @@ export function SpeechPlayer() {
         <button
           onClick={() => seekChunk(1)}
           disabled={!ready || totalChunks === 0}
-          className="p-2 text-text-mute hover:text-accent disabled:text-text-faint disabled:opacity-40 transition-colors"
+          className="min-w-[48px] min-h-[48px] p-3 flex items-center justify-center text-text-mute hover:text-accent active:scale-95 disabled:text-text-faint disabled:opacity-40 disabled:active:scale-100 transition-all"
           title="Tiến đoạn"
         >
           <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
@@ -347,7 +347,7 @@ export function SpeechPlayer() {
         <button
           onClick={onNext ?? undefined}
           disabled={!onNext}
-          className="p-2 text-text hover:text-accent disabled:text-text-faint disabled:opacity-40 transition-colors"
+          className="min-w-[48px] min-h-[48px] p-3 flex items-center justify-center text-text hover:text-accent active:scale-95 disabled:text-text-faint disabled:opacity-40 disabled:active:scale-100 transition-all"
           title="Chương tiếp"
         >
           <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
