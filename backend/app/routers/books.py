@@ -153,16 +153,19 @@ async def update_book(
 
 @router.delete("/{book_id}")
 async def delete_book(book_id: str, _admin: dict = Depends(get_admin_user)):
+    import asyncio
     db = get_client()
     book = db.table("books").select("id").eq("id", book_id).maybe_single().execute()
     if not book.data:
         raise HTTPException(status_code=404, detail="Book not found")
 
-    # Delete from storage (best effort)
-    await storage_service.delete_folder("audio", book_id)
-    await storage_service.delete_folder("covers", book_id)
-    await storage_service.delete_folder("epub-uploads", book_id)
-    await storage_service.delete_folder("chapter-text", book_id)
+    # Delete from storage (best effort, all four buckets in parallel).
+    await asyncio.gather(
+        storage_service.delete_folder("audio", book_id),
+        storage_service.delete_folder("covers", book_id),
+        storage_service.delete_folder("epub-uploads", book_id),
+        storage_service.delete_folder("chapter-text", book_id),
+    )
 
     # Delete from DB (cascades to chapters)
     db.table("books").delete().eq("id", book_id).execute()
@@ -385,17 +388,23 @@ async def auto_split_book(
             detail=f"Failed to insert new chapters (no data was lost): {insert_err}",
         )
 
-    # Only now that new chapters are safely stored: delete old chapters' audio + text
+    # Only now that new chapters are safely stored: delete old chapters' audio + text.
+    # Fan out per-chapter deletes — best effort, capped concurrency.
     chapter_ids = [ch["id"] for ch in chapters]
-    for ch in chapters:
-        try:
-            await storage_service.delete_path("audio", f"{book_id}/{ch['id']}.mp3")
-        except Exception:
-            pass
-        try:
-            await storage_service.delete_chapter_text(book_id, ch["id"])
-        except Exception:
-            pass
+    del_sem = asyncio.Semaphore(20)
+
+    async def _delete_old(ch: dict) -> None:
+        async with del_sem:
+            try:
+                await storage_service.delete_path("audio", f"{book_id}/{ch['id']}.mp3")
+            except Exception:
+                pass
+            try:
+                await storage_service.delete_chapter_text(book_id, ch["id"])
+            except Exception:
+                pass
+
+    await asyncio.gather(*(_delete_old(ch) for ch in chapters))
     # Delete only the chapters we actually fetched and processed, in batches of
     # 100 to stay within URL length limits (each UUID is ~36 chars).
     DELETE_BATCH = 100

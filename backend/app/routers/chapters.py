@@ -274,16 +274,22 @@ async def bulk_delete_chapters(
     chapters = result.data
     book_ids = list({ch["book_id"] for ch in chapters})
 
-    # Delete audio + text files from storage (best effort)
-    for ch in chapters:
-        try:
-            await storage_service.delete_path("audio", f"{ch['book_id']}/{ch['id']}.mp3")
-        except Exception:
-            pass
-        try:
-            await storage_service.delete_chapter_text(ch["book_id"], ch["id"])
-        except Exception:
-            pass
+    # Delete audio + text files from storage (best effort, parallel).
+    import asyncio
+    del_sem = asyncio.Semaphore(20)
+
+    async def _delete_files(ch: dict) -> None:
+        async with del_sem:
+            try:
+                await storage_service.delete_path("audio", f"{ch['book_id']}/{ch['id']}.mp3")
+            except Exception:
+                pass
+            try:
+                await storage_service.delete_chapter_text(ch["book_id"], ch["id"])
+            except Exception:
+                pass
+
+    await asyncio.gather(*(_delete_files(ch) for ch in chapters))
 
     # Delete all chapter rows at once
     db.table("chapters").delete().in_("id", body.chapter_ids).execute()
