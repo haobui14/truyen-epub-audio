@@ -28,6 +28,10 @@ export default function EditBookClient() {
   } | null>(null);
   const [autoSplitError, setAutoSplitError] = useState<string | null>(null);
 
+  const [reparseRunning, setReparseRunning] = useState(false);
+  const [reparseSource, setReparseSource] = useState<string | null>(null);
+  const [reparseError, setReparseError] = useState<string | null>(null);
+
   const [stripTarget, setStripTarget] = useState("");
   const [stripRunning, setStripRunning] = useState(false);
   const [stripResult, setStripResult] = useState<{ updated_chapters: number } | null>(null);
@@ -212,6 +216,70 @@ export default function EditBookClient() {
               />
             )}
           </div>
+        </div>
+      </section>
+
+      {/* Reparse */}
+      <section className="bg-surface dark:bg-raised rounded-2xl border border-hairline-soft dark:border-hairline shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-hairline-soft dark:border-hairline">
+          <h2 className="text-sm font-semibold text-text dark:text-text">
+            Phân tích lại từ file gốc
+          </h2>
+        </div>
+        <div className="p-5 space-y-3">
+          <p className="text-xs text-text-mute dark:text-text-mute">
+            Chạy lại trình phân tích EPUB trên file gốc đã lưu trong{" "}
+            <span className="font-mono bg-raised dark:bg-raised-hi px-1 rounded">
+              epub-uploads
+            </span>
+            . Toàn bộ chương cũ + audio sẽ bị xóa. Dùng khi parser được sửa lỗi
+            mà không muốn upload lại file lớn.
+          </p>
+          <button
+            type="button"
+            disabled={reparseRunning}
+            onClick={async () => {
+              if (
+                !window.confirm(
+                  "Xóa toàn bộ chương + audio hiện tại và phân tích lại từ file gốc?",
+                )
+              )
+                return;
+              setReparseRunning(true);
+              setReparseSource(null);
+              setReparseError(null);
+              try {
+                const result = await api.reparseBook(bookId);
+                setReparseSource(result.source);
+                queryClient.invalidateQueries({ queryKey: ["chapters", bookId] });
+                queryClient.invalidateQueries({ queryKey: ["book", bookId] });
+              } catch (err) {
+                setReparseError(
+                  err instanceof Error ? err.message : "Lỗi không xác định",
+                );
+              } finally {
+                setReparseRunning(false);
+              }
+            }}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-accent dark:text-accent border border-accent/40 dark:border-accent/40 rounded-lg hover:bg-accent/15 dark:hover:bg-accent/30 disabled:opacity-60 transition-colors"
+          >
+            {reparseRunning && <Spinner className="w-4 h-4" />}
+            {reparseRunning ? "Đang khởi chạy…" : "Phân tích lại"}
+          </button>
+          {reparseError && (
+            <p className="text-xs text-vermillion dark:text-vermillion">
+              {reparseError}
+            </p>
+          )}
+          {reparseSource && (
+            <p className="text-xs text-accent dark:text-accent">
+              Đã khởi chạy phân tích lại từ{" "}
+              <span className="font-mono">{reparseSource}</span>. Trạng thái
+              sách sẽ chuyển sang <span className="font-medium">parsing</span>{" "}
+              → <span className="font-medium">parsed</span> →{" "}
+              <span className="font-medium">converting</span>.
+            </p>
+          )}
         </div>
       </section>
 

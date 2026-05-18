@@ -268,6 +268,70 @@ async def strip_string_from_chapters(
     return {"updated_chapters": updated_count}
 
 
+@router.post("/{book_id}/reparse")
+async def reparse_book(
+    book_id: str,
+    _admin: dict = Depends(get_admin_user),
+):
+    """Admin-only: re-run the EPUB parser against the original file stored in
+    the epub-uploads bucket. Use this after a parser fix when re-uploading
+    isn't practical (e.g. large book). Wipes existing chapters + audio first.
+
+    Returns immediately; parsing runs in the background. Poll the book's
+    status field to watch progress (parsing → parsed → converting)."""
+    import asyncio
+    from app.services import epub_parser
+
+    db = get_client()
+    book = db.table("books").select("id").eq("id", book_id).maybe_single().execute()
+    if not book.data:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    # Locate the original upload. We don't store the ext on the book row, so
+    # list the folder and pick the first file (uploads only ever write one).
+    files = await asyncio.to_thread(
+        storage_service._sync_list, "epub-uploads", book_id
+    )
+    if not files:
+        raise HTTPException(
+            status_code=400,
+            detail="No original file in epub-uploads bucket — re-upload required",
+        )
+    original_name = files[0]["name"]
+    ext = "." + original_name.rsplit(".", 1)[-1].lower()
+
+    async def _run() -> None:
+        from app.routers.upload import _convert_and_parse
+        try:
+            raw = await asyncio.to_thread(
+                storage_service._sync_download,
+                "epub-uploads",
+                f"{book_id}/{original_name}",
+            )
+            # Clear stale state before re-parsing: chapter rows + their storage
+            # objects. parse_epub_task uses INSERT (not UPSERT) and would
+            # collide on the (book_id, chapter_index) unique constraint.
+            await storage_service.delete_folder("chapter-text", book_id)
+            await storage_service.delete_folder("audio", book_id)
+            db.table("chapters").delete().eq("book_id", book_id).execute()
+            db.table("books").update(
+                {"status": "parsing", "total_chapters": 0}
+            ).eq("id", book_id).execute()
+            # Re-use the upload converter so non-EPUB originals (PDF/TXT/MOBI)
+            # still work after re-upload to epub-uploads.
+            title = original_name.rsplit(".", 1)[0]
+            await _convert_and_parse(book_id, raw, ext, title)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).exception(
+                f"Reparse failed for book {book_id}: {e}"
+            )
+            db.table("books").update({"status": "error"}).eq("id", book_id).execute()
+
+    asyncio.create_task(_run())
+    return {"book_id": book_id, "status": "parsing", "source": original_name}
+
+
 @router.post("/{book_id}/auto-split")
 async def auto_split_book(
     book_id: str,

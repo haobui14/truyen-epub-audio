@@ -193,18 +193,27 @@ async def parse_epub_task(book_id: str, epub_bytes: bytes) -> None:
                 if i.get_type() == ebooklib.ITEM_DOCUMENT
             ]
 
+        skipped_short = 0
+        skipped_dupe = 0
         for item in ordered_items:
             item_id = item.get_id()
             if item_id in seen_ids:
+                skipped_dupe += 1
                 continue
             seen_ids.add(item_id)
 
-            html_content = item.get_content().decode("utf-8", errors="replace")
+            # ebooklib normally returns bytes from get_content(), but for some
+            # EPUBs (notably EpubNav-derived items, or items whose content was
+            # assigned as a str during parsing) it hands back a str directly.
+            # Decode only when we got bytes.
+            raw = item.get_content()
+            html_content = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw
             soup = BeautifulSoup(html_content, "lxml")
             text = html_to_text(html_content)
 
             # Skip very short items (TOC, copyright pages, etc.)
             if len(text) < 100:
+                skipped_short += 1
                 continue
 
             chapter_title = _extract_chapter_title(
@@ -223,8 +232,28 @@ async def parse_epub_task(book_id: str, epub_bytes: bytes) -> None:
             })
             idx += 1
 
+        logger.info(
+            f"Book {book_id}: spine yielded {len(chapters_data)} chapters "
+            f"(skipped {skipped_short} short, {skipped_dupe} duplicate of "
+            f"{len(ordered_items)} spine items)"
+        )
+
         if not chapters_data:
             raise ValueError("No readable chapters found in EPUB")
+
+        # Many Vietnamese web-novel EPUBs pack 10+ chapters into a single spine
+        # item — each "Chương N" is a header inside the same HTML file rather
+        # than its own item. Re-split by chapter headers; only replaces the
+        # list when strictly more chapters are detected, so well-structured
+        # EPUBs are unaffected.
+        split_chapters, missing_titles = auto_split_chapters(chapters_data)
+        if len(split_chapters) > len(chapters_data):
+            logger.info(
+                f"Book {book_id}: auto-split expanded {len(chapters_data)} → "
+                f"{len(split_chapters)} chapters"
+                + (f" ({len(missing_titles)} headers had no body)" if missing_titles else "")
+            )
+            chapters_data = split_chapters
 
         # Upload chapter text to Storage in parallel, then strip text_content from
         # the row (DB only keeps text_storage_path). Concurrency capped at 8 —

@@ -343,6 +343,15 @@ export const api = {
       missing_chapters: Array<{ title: string; chapter_index: number }>;
     }>(`/api/books/${bookId}/auto-split`, { method: "POST" }),
 
+  // Admin: re-run the EPUB parser against the original file in epub-uploads.
+  // Wipes existing chapters + audio first. Returns immediately; parsing runs
+  // in the background — poll book status (parsing → parsed → converting).
+  reparseBook: (bookId: string) =>
+    request<{ book_id: string; status: string; source: string }>(
+      `/api/books/${bookId}/reparse`,
+      { method: "POST" },
+    ),
+
   // Admin: remove a literal string from all chapters' text_content
   stripStringFromChapters: (bookId: string, target: string) =>
     request<{ updated_chapters: number }>(`/api/books/${bookId}/strip-string`, {
