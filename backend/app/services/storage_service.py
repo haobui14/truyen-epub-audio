@@ -40,7 +40,14 @@ def _get_upload_client() -> httpx.Client:
     and re-raises a bare `StorageException({'statusCode': N})` when the body
     isn't JSON — Supabase's actual error message (e.g. "Duplicate", "Payload
     too large") is discarded. Talking to /storage/v1 directly lets us surface
-    the response body in the exception."""
+    the response body in the exception.
+
+    HTTP/1.1 (NOT HTTP/2): under our 8-way concurrent upload load, Supabase
+    Storage occasionally drops the connection. With HTTP/2 every concurrent
+    upload is multiplexed onto a single TCP connection, so one drop kills
+    every in-flight stream simultaneously (bursts of 8 RemoteProtocolError
+    warnings per disconnect). HTTP/1.1 gives each upload its own TCP socket,
+    so a server-side drop only impacts one request."""
     global _upload_client
     if _upload_client is None:
         _upload_client = httpx.Client(
@@ -50,7 +57,11 @@ def _get_upload_client() -> httpx.Client:
                 "Authorization": f"Bearer {settings.supabase_service_key}",
             },
             timeout=60.0,
-            http2=True,
+            http2=False,
+            limits=httpx.Limits(
+                max_connections=STORAGE_CONCURRENCY * 2,
+                max_keepalive_connections=STORAGE_CONCURRENCY * 2,
+            ),
         )
     return _upload_client
 
