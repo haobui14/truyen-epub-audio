@@ -2,6 +2,7 @@ import asyncio
 import logging
 import random
 import time
+import httpx
 from storage3 import SyncStorageClient
 from app.config import settings
 
@@ -16,6 +17,7 @@ CHAPTER_TEXT_BUCKET = "chapter-text"
 STORAGE_CONCURRENCY = 8
 
 _storage_client: SyncStorageClient | None = None
+_upload_client: httpx.Client | None = None
 
 
 def _get_storage() -> SyncStorageClient:
@@ -32,6 +34,42 @@ def _get_storage() -> SyncStorageClient:
     return _storage_client
 
 
+def _get_upload_client() -> httpx.Client:
+    """Direct httpx client used for uploads only. We bypass storage3's upload
+    path because its error handler calls `response.json()` on non-2xx bodies
+    and re-raises a bare `StorageException({'statusCode': N})` when the body
+    isn't JSON — Supabase's actual error message (e.g. "Duplicate", "Payload
+    too large") is discarded. Talking to /storage/v1 directly lets us surface
+    the response body in the exception."""
+    global _upload_client
+    if _upload_client is None:
+        _upload_client = httpx.Client(
+            base_url=f"{settings.supabase_url}/storage/v1",
+            headers={
+                "apiKey": settings.supabase_service_key,
+                "Authorization": f"Bearer {settings.supabase_service_key}",
+            },
+            timeout=60.0,
+            http2=True,
+        )
+    return _upload_client
+
+
+class StorageUploadError(Exception):
+    """Raised when Supabase Storage returns a non-2xx on upload. Carries the
+    status code and the raw response body so logs name the actual problem."""
+
+    def __init__(self, status: int, body: str, bucket: str, path: str):
+        self.status = status
+        self.body = body
+        self.bucket = bucket
+        self.path = path
+        snippet = body[:500] + ("…" if len(body) > 500 else "")
+        super().__init__(
+            f"upload {bucket}/{path} → HTTP {status}: {snippet}"
+        )
+
+
 # storage3 is a sync SDK — calling it directly from `async def` blocks the
 # event loop, so asyncio.gather() over these calls gives zero concurrency.
 # Run every storage HTTP call on the default thread pool so gather() actually
@@ -45,9 +83,16 @@ def _get_storage() -> SyncStorageClient:
 # UnboundLocalError as a transient network failure and retry with backoff.
 
 _RETRY_MAX_ATTEMPTS = 4
+_TRANSIENT_HTTP_STATUSES = frozenset({408, 425, 429, 500, 502, 503, 504})
 
 
 def _is_transient(exc: BaseException) -> bool:
+    if isinstance(exc, StorageUploadError):
+        return exc.status in _TRANSIENT_HTTP_STATUSES
+    # httpx network/transport errors (connect, read, write, protocol) — but
+    # NOT HTTPStatusError, which we never raise here anyway.
+    if isinstance(exc, httpx.TransportError):
+        return True
     if isinstance(exc, UnboundLocalError):
         return "response" in str(exc)
     msg = str(exc).lower()
@@ -84,14 +129,18 @@ def _retry_sync(fn, *args, what: str = "storage op", **kwargs):
 
 
 def _sync_upload(bucket: str, path: str, data: bytes, content_type: str) -> None:
-    _retry_sync(
-        lambda: _get_storage().from_(bucket).upload(
-            path=path,
-            file=data,
-            file_options={"content-type": content_type, "upsert": "true"},
-        ),
-        what=f"upload {bucket}/{path}",
-    )
+    def _do() -> None:
+        resp = _get_upload_client().post(
+            f"/object/{bucket}/{path}",
+            content=data,
+            headers={
+                "Content-Type": content_type,
+                "x-upsert": "true",
+            },
+        )
+        if resp.status_code >= 400:
+            raise StorageUploadError(resp.status_code, resp.text, bucket, path)
+    _retry_sync(_do, what=f"upload {bucket}/{path}")
 
 
 def _sync_download(bucket: str, path: str) -> bytes:

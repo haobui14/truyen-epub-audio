@@ -235,13 +235,36 @@ async def parse_epub_task(book_id: str, epub_bytes: bytes) -> None:
 
         async def _upload_one(ch: dict) -> None:
             async with sem:
-                path = await storage_service.upload_chapter_text(
-                    book_id, ch["id"], ch["text_content"]
-                )
+                try:
+                    path = await storage_service.upload_chapter_text(
+                        book_id, ch["id"], ch["text_content"]
+                    )
+                except Exception as e:
+                    # One bad chapter must not sink the whole book. Mark this
+                    # row errored and let the parse continue — the user can
+                    # see which chapter failed and re-trigger it later.
+                    logger.exception(
+                        f"Book {book_id} chapter {ch['id']} ({ch.get('title')!r}) "
+                        f"upload failed; marking errored"
+                    )
+                    ch["status"] = "error"
+                    ch["error_message"] = f"{type(e).__name__}: {e}"[:1000]
+                    ch.pop("text_content", None)
+                    return
             ch["text_storage_path"] = path
             del ch["text_content"]
 
         await asyncio.gather(*(_upload_one(ch) for ch in chapters_data))
+
+        errored = sum(1 for ch in chapters_data if ch.get("status") == "error")
+        if errored == len(chapters_data):
+            raise RuntimeError(
+                f"All {len(chapters_data)} chapter uploads failed — aborting parse"
+            )
+        if errored:
+            logger.warning(
+                f"Book {book_id}: {errored}/{len(chapters_data)} chapter uploads failed"
+            )
 
         # Insert chapters in batches to avoid Supabase statement timeout on large books
         BATCH_SIZE = 100
@@ -261,9 +284,12 @@ async def parse_epub_task(book_id: str, epub_bytes: bytes) -> None:
 
         logger.info(f"Book {book_id}: parsed {len(chapters_data)} chapters")
 
-        # Auto-enqueue only the first 3 chapters — the rest are prefetched on demand
+        # Auto-enqueue only the first 3 chapters — the rest are prefetched on demand.
+        # Skip any that errored during upload (no text in Storage to read).
         PREFETCH_AHEAD = 3
         for ch in chapters_data[:PREFETCH_AHEAD]:
+            if ch.get("status") == "error":
+                continue
             await task_queue.enqueue(book_id, ch["id"])
 
         # Mark book as converting
