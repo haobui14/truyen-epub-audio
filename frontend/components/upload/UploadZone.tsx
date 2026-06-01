@@ -1,5 +1,6 @@
 "use client";
 import { useRef, useState } from "react";
+import { ACCEPTED_UPLOAD_EXTS, MAX_UPLOAD_MB } from "@/lib/api";
 
 interface UploadZoneProps {
   onFile: (file: File) => void;
@@ -12,14 +13,8 @@ export function UploadZone({ onFile, disabled }: UploadZoneProps) {
 
   const handleFile = (file: File) => {
     const name = file.name.toLowerCase();
-    if (
-      !name.endsWith(".epub") &&
-      !name.endsWith(".pdf") &&
-      !name.endsWith(".txt") &&
-      !name.endsWith(".prc") &&
-      !name.endsWith(".mobi")
-    ) {
-      alert("Vui lòng chọn file .epub, .pdf, .txt, .prc hoặc .mobi");
+    if (!ACCEPTED_UPLOAD_EXTS.some((ext) => name.endsWith(ext))) {
+      alert(`Vui lòng chọn file ${ACCEPTED_UPLOAD_EXTS.join(", ")}`);
       return;
     }
     onFile(file);
@@ -75,7 +70,7 @@ export function UploadZone({ onFile, disabled }: UploadZoneProps) {
         Kéo thả file vào đây
       </p>
       <p className="text-sm text-text-mute dark:text-text-mute">
-        EPUB · PDF · TXT · PRC · MOBI &nbsp;·&nbsp; tối đa 50MB
+        EPUB · PDF · TXT · PRC · MOBI &nbsp;·&nbsp; tối đa {MAX_UPLOAD_MB}MB
       </p>
     </div>
   );

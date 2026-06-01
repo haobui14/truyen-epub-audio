@@ -11,6 +11,8 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
 import android.media.AudioAttributes;
+import android.media.AudioDeviceCallback;
+import android.media.AudioDeviceInfo;
 import android.media.AudioFocusRequest;
 import android.media.AudioManager;
 import android.media.MediaPlayer;
@@ -354,6 +356,44 @@ public class TtsPlaybackService extends Service {
         }
     };
 
+    // Second, more reliable signal for "the earbuds the user was listening
+    // through are gone". ACTION_AUDIO_BECOMING_NOISY (above) covers wired and
+    // classic A2DP unplugs, but it does not always fire for Bluetooth / LE Audio
+    // earbuds that drop their connection without a clean output-route change
+    // (e.g. battery dies, taken out of range, one bud removed). onAudioDevicesRemoved
+    // catches those cases so playback is always paused instead of suddenly
+    // blasting out of the phone speaker.
+    private boolean deviceCallbackRegistered = false;
+    private final AudioDeviceCallback audioDeviceCallback = new AudioDeviceCallback() {
+        @Override
+        public void onAudioDevicesRemoved(AudioDeviceInfo[] removed) {
+            if (removed == null) return;
+            for (AudioDeviceInfo dev : removed) {
+                if (dev != null && dev.isSink() && isHeadphoneType(dev.getType())) {
+                    Log.d(TAG, "audio output device removed (earbud/headphone) — pausing");
+                    mainHandler.post(() -> { if (isPlaying) pausePlayback(); });
+                    return;
+                }
+            }
+        }
+    };
+
+    /** True for wired / Bluetooth / USB headphone & earbud output device types. */
+    private static boolean isHeadphoneType(int type) {
+        switch (type) {
+            case AudioDeviceInfo.TYPE_WIRED_HEADPHONES:
+            case AudioDeviceInfo.TYPE_WIRED_HEADSET:
+            case AudioDeviceInfo.TYPE_BLUETOOTH_A2DP:
+            case AudioDeviceInfo.TYPE_BLUETOOTH_SCO:
+            case AudioDeviceInfo.TYPE_USB_HEADSET:
+            case AudioDeviceInfo.TYPE_HEARING_AID:   // API 28+, constant inlined at compile time
+            case AudioDeviceInfo.TYPE_BLE_HEADSET:   // API 31+, constant inlined at compile time
+                return true;
+            default:
+                return false;
+        }
+    }
+
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     @Override
@@ -375,6 +415,14 @@ public class TtsPlaybackService extends Service {
             registerReceiver(becomingNoisyReceiver, noisyFilter);
         }
         noisyReceiverRegistered = true;
+
+        // Reliable earbud/headphone-removal detection (covers BT / LE Audio drops
+        // that ACTION_AUDIO_BECOMING_NOISY can miss). registerAudioDeviceCallback
+        // is API 23+; minSdk is 24 so no version guard is needed.
+        if (audioManager != null) {
+            audioManager.registerAudioDeviceCallback(audioDeviceCallback, mainHandler);
+            deviceCallbackRegistered = true;
+        }
     }
 
     @Override
@@ -435,6 +483,10 @@ public class TtsPlaybackService extends Service {
         if (noisyReceiverRegistered) {
             try { unregisterReceiver(becomingNoisyReceiver); } catch (Exception ignored) {}
             noisyReceiverRegistered = false;
+        }
+        if (deviceCallbackRegistered && audioManager != null) {
+            try { audioManager.unregisterAudioDeviceCallback(audioDeviceCallback); } catch (Exception ignored) {}
+            deviceCallbackRegistered = false;
         }
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         if (ioExecutor != null) {

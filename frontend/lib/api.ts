@@ -9,6 +9,12 @@ import type {
   UserStats,
 } from "@/types";
 
+// Must match backend settings.max_upload_size_mb (config.py). Frontend uses
+// this for pre-flight size checks so users get an instant "too large" error
+// instead of streaming 200MB just to get a 413 back.
+export const MAX_UPLOAD_MB = 50;
+export const ACCEPTED_UPLOAD_EXTS = [".epub", ".pdf", ".txt", ".prc", ".mobi"];
+
 // Prevent multiple concurrent refresh attempts
 // Returns: true = success, false = auth error (token invalid → should logout),
 //          null = network/server error (Railway cold start etc. → do NOT logout)
@@ -208,44 +214,63 @@ export const api = {
     voice: string,
     cover: File | null | undefined,
     onProgress: (percent: number) => void,
-  ): Promise<{ book_id: string; status: string }> => {
-    return new Promise((resolve, reject) => {
-      const form = new FormData();
-      form.append("file", file);
-      form.append("voice", voice);
-      if (cover) form.append("cover", cover);
+  ): {
+    promise: Promise<{ book_id: string; status: string }>;
+    abort: () => void;
+  } => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("voice", voice);
+    if (cover) form.append("cover", cover);
 
-      const xhr = new XMLHttpRequest();
-      xhr.open("POST", `${API_URL}/api/upload`);
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_URL}/api/upload`);
 
-      const token = getToken();
-      if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    const token = getToken();
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
 
-      xhr.upload.addEventListener("progress", (e) => {
-        if (e.lengthComputable) {
-          onProgress(Math.round((e.loaded / e.total) * 100));
-        }
-      });
-
-      xhr.addEventListener("load", () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            resolve(JSON.parse(xhr.responseText));
-          } catch {
-            reject(new Error("Invalid response"));
-          }
-        } else {
-          reject(new Error(xhr.responseText || `HTTP ${xhr.status}`));
-        }
-      });
-
-      xhr.addEventListener("error", () => reject(new Error("Network error")));
-      xhr.addEventListener("abort", () =>
-        reject(new Error("Upload cancelled")),
-      );
-
-      xhr.send(form);
+    xhr.upload.addEventListener("progress", (e) => {
+      if (e.lengthComputable) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      }
     });
+
+    const promise = new Promise<{ book_id: string; status: string }>(
+      (resolve, reject) => {
+        xhr.addEventListener("load", () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              resolve(JSON.parse(xhr.responseText));
+            } catch {
+              reject(new Error("Invalid response"));
+            }
+          } else {
+            // Server returns JSON {detail: "..."} on FastAPI errors. Pull out
+            // the human message when available so the user sees "File too large"
+            // instead of raw JSON.
+            let msg = xhr.responseText || `HTTP ${xhr.status}`;
+            try {
+              const parsed = JSON.parse(xhr.responseText);
+              if (parsed?.detail) msg = parsed.detail;
+            } catch {
+              /* not JSON — keep raw */
+            }
+            reject(new Error(msg));
+          }
+        });
+
+        xhr.addEventListener("error", () =>
+          reject(new Error("Network error — check your connection and retry")),
+        );
+        xhr.addEventListener("abort", () =>
+          reject(new DOMException("Upload cancelled", "AbortError")),
+        );
+      },
+    );
+
+    xhr.send(form);
+
+    return { promise, abort: () => xhr.abort() };
   },
 
   // Auth

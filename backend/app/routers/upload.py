@@ -1,5 +1,7 @@
 import asyncio
+import io
 import uuid
+import zipfile
 import logging
 
 from typing import Optional
@@ -21,6 +23,36 @@ _background_tasks: set = set()
 VALID_VOICES = ["vi-VN-HoaiMyNeural", "vi-VN-NamMinhNeural"]
 VALID_COVER_TYPES = {"image/jpeg", "image/png", "image/webp"}
 VALID_EXTENSIONS = {".epub", ".pdf", ".txt", ".prc", ".mobi"}
+
+
+def _validate_upload_shape(content: bytes, ext: str) -> None:
+    """Cheap pre-flight check before we touch Storage or the DB. EPUBs must be
+    valid zip files containing META-INF/container.xml; PDFs must start with the
+    %PDF marker. We catch obvious garbage here so we don't end up with a stuck
+    book row in 'parsing' status while the background task crashes."""
+    if ext == ".epub":
+        if not zipfile.is_zipfile(io.BytesIO(content)):
+            raise HTTPException(
+                status_code=400,
+                detail="File is not a valid EPUB (zip signature missing)",
+            )
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as zf:
+                names = set(zf.namelist())
+                if "META-INF/container.xml" not in names:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="EPUB is missing META-INF/container.xml — file appears corrupt",
+                    )
+        except zipfile.BadZipFile:
+            raise HTTPException(status_code=400, detail="EPUB archive is corrupt")
+    elif ext == ".pdf":
+        if not content.startswith(b"%PDF-"):
+            raise HTTPException(
+                status_code=400,
+                detail="File is not a valid PDF (missing %PDF- header)",
+            )
+    # .txt / .prc / .mobi: no cheap structural check — let the converter try.
 
 
 @router.post("/upload")
@@ -62,37 +94,27 @@ async def upload_book(
             status_code=413,
             detail=f"File too large. Max {settings.max_upload_size_mb}MB",
         )
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    # Pre-flight structural validation — fail fast before we touch Storage or
+    # create a book row. Avoids stuck rows that need manual cleanup later.
+    _validate_upload_shape(content, ext)
 
     book_id = str(uuid.uuid4())
     db = get_client()
     base_title = filename[: -len(ext)]  # strip extension
 
-    # Upload cover
+    # Upload cover + original file in parallel — they're independent and the
+    # cover is usually small enough to finish well before the EPUB. Halves
+    # perceived upload time for users who include a cover. Cover failure is
+    # non-fatal; original-file failure rolls back the whole upload.
     cover_url: Optional[str] = None
+    cover_path: Optional[str] = None
     if cover_content:
         cext = cover_content_type.split("/")[-1].replace("jpeg", "jpg")  # type: ignore[union-attr]
         cover_path = f"{book_id}/cover.{cext}"
-        try:
-            cover_url = await storage_service.upload_bytes(
-                bucket="covers",
-                path=cover_path,
-                data=cover_content,
-                content_type=cover_content_type,  # type: ignore[arg-type]
-            )
-        except Exception as e:
-            logger.warning(f"Cover upload failed for book {book_id}: {e}")
 
-    # Insert book row (status=parsing)
-    db.table("books").insert({
-        "id": book_id,
-        "title": base_title,
-        "voice": voice,
-        "status": "parsing",
-        "total_chapters": 0,
-        **({"cover_url": cover_url} if cover_url else {}),
-    }).execute()
-
-    # Store the original file
     storage_path = f"{book_id}/original{ext}"
     orig_content_type = {
         ".epub": "application/epub+zip",
@@ -101,17 +123,51 @@ async def upload_book(
         ".prc": "application/x-mobipocket-ebook",
         ".mobi": "application/x-mobipocket-ebook",
     }[ext]
-    try:
+
+    async def _upload_cover() -> Optional[str]:
+        if not cover_content or not cover_path:
+            return None
+        try:
+            return await storage_service.upload_bytes(
+                bucket="covers",
+                path=cover_path,
+                data=cover_content,
+                content_type=cover_content_type,  # type: ignore[arg-type]
+            )
+        except Exception as e:
+            logger.warning(f"Cover upload failed for book {book_id}: {e}")
+            return None
+
+    async def _upload_original() -> None:
         await storage_service.upload_bytes(
             bucket="epub-uploads",
             path=storage_path,
             data=content,
             content_type=orig_content_type,
         )
+
+    try:
+        cover_url, _ = await asyncio.gather(_upload_cover(), _upload_original())
     except Exception as e:
-        logger.error(f"Storage upload failed for book {book_id}: {e}")
-        db.table("books").delete().eq("id", book_id).execute()
+        logger.error(f"Original-file upload failed for book {book_id}: {e}")
+        # Roll back the cover we may have already written. Don't await — if it
+        # also fails we don't want to mask the real error.
+        if cover_path:
+            asyncio.create_task(
+                storage_service.delete_path("covers", cover_path)
+            )
         raise HTTPException(status_code=500, detail=f"Storage upload failed: {e}")
+
+    # Insert book row only AFTER both uploads succeeded. If we crash earlier
+    # there's no orphan row in the DB.
+    db.table("books").insert({
+        "id": book_id,
+        "title": base_title,
+        "voice": voice,
+        "status": "parsing",
+        "total_chapters": 0,
+        **({"cover_url": cover_url} if cover_url else {}),
+    }).execute()
 
     # Convert to EPUB if needed, then parse
     task = asyncio.create_task(_convert_and_parse(book_id, content, ext, base_title))

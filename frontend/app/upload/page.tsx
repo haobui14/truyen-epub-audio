@@ -1,10 +1,10 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { UploadZone } from "@/components/upload/UploadZone";
 import { Spinner } from "@/components/ui/Spinner";
-import { api } from "@/lib/api";
+import { api, MAX_UPLOAD_MB } from "@/lib/api";
 import { isLoggedIn, isAdmin, isAuthReady } from "@/lib/auth";
 
 export default function UploadPage() {
@@ -29,37 +29,69 @@ export default function UploadPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // Hold the abort handle so the user can cancel mid-upload. Cleared on
+  // settle (success/error/cancel).
+  const abortRef = useRef<(() => void) | null>(null);
+
+  // Revoke object URLs when the cover changes/unmounts to prevent memory
+  // leaks. coverPreview holds a blob: URL from URL.createObjectURL.
+  useEffect(() => {
+    if (!coverPreview) return;
+    return () => URL.revokeObjectURL(coverPreview);
+  }, [coverPreview]);
 
   const handleCover = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0] ?? null;
-    setCover(f);
-    if (f) {
-      const url = URL.createObjectURL(f);
-      setCoverPreview(url);
-    } else {
-      setCoverPreview(null);
+    if (f && f.size > 5 * 1024 * 1024) {
+      setError("Ảnh bìa phải nhỏ hơn 5MB");
+      return;
     }
+    setCover(f);
+    setCoverPreview(f ? URL.createObjectURL(f) : null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!file) return;
 
+    // Client-side size guard: matches backend MAX_UPLOAD_MB. Without this,
+    // users wait through the full upload only to get a 413 at the end.
+    const maxBytes = MAX_UPLOAD_MB * 1024 * 1024;
+    if (file.size > maxBytes) {
+      setError(
+        `File ${(file.size / 1024 / 1024).toFixed(1)}MB vượt quá giới hạn ${MAX_UPLOAD_MB}MB`,
+      );
+      return;
+    }
+
     setIsUploading(true);
     setUploadProgress(0);
     setError(null);
+    const { promise, abort } = api.uploadEpubWithProgress(
+      file,
+      "vi-VN-HoaiMyNeural",
+      cover,
+      setUploadProgress,
+    );
+    abortRef.current = abort;
     try {
-      const result = await api.uploadEpubWithProgress(
-        file,
-        "vi-VN-HoaiMyNeural",
-        cover,
-        setUploadProgress,
-      );
+      const result = await promise;
       router.push(`/book?id=${result.book_id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload thất bại");
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setError(null); // user-initiated, no need to scare them
+      } else {
+        setError(err instanceof Error ? err.message : "Upload thất bại");
+      }
       setIsUploading(false);
+      setUploadProgress(0);
+    } finally {
+      abortRef.current = null;
     }
+  };
+
+  const handleCancel = () => {
+    abortRef.current?.();
   };
 
   return (
@@ -267,37 +299,48 @@ export default function UploadPage() {
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={!file || isUploading}
-            className="w-full flex items-center justify-center gap-2 bg-accent text-white font-semibold py-3 rounded-xl hover:bg-accent-dim active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md"
-          >
-            {isUploading ? (
-              <>
-                <Spinner className="w-4 h-4" />
-                {uploadProgress < 100
-                  ? `Đang tải lên... ${uploadProgress}%`
-                  : "Đang xử lý..."}
-              </>
-            ) : (
-              <>
-                <svg
-                  className="w-4 h-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
-                  />
-                </svg>
-                Tải lên và chuyển đổi
-              </>
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              disabled={!file || isUploading}
+              className="flex-1 flex items-center justify-center gap-2 bg-accent text-white font-semibold py-3 rounded-xl hover:bg-accent-dim active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md"
+            >
+              {isUploading ? (
+                <>
+                  <Spinner className="w-4 h-4" />
+                  {uploadProgress < 100
+                    ? `Đang tải lên... ${uploadProgress}%`
+                    : "Đang xử lý..."}
+                </>
+              ) : (
+                <>
+                  <svg
+                    className="w-4 h-4"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
+                    />
+                  </svg>
+                  Tải lên và chuyển đổi
+                </>
+              )}
+            </button>
+            {isUploading && (
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="px-4 py-3 rounded-xl border border-hairline dark:border-hairline text-sm font-medium text-text-dim dark:text-text-faint hover:border-vermillion/40 hover:text-vermillion hover:bg-vermillion/10 dark:hover:bg-vermillion/15 active:scale-[0.99] transition-all"
+              >
+                Hủy
+              </button>
             )}
-          </button>
+          </div>
         </form>
       </div>
 

@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { PlayerProvider } from "@/context/PlayerContext";
 import { flushProgressQueue } from "@/lib/progressQueue";
+import { getTtsBridge } from "@/lib/backgroundLock";
 import { hydrateAuthFromNative } from "@/lib/auth";
 import { isNativePlatform } from "@/lib/capacitor";
 import { api, tryRefreshToken } from "@/lib/api";
@@ -155,11 +156,18 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
 /**
  * Saves the current URL to localStorage on every navigation so it can be
- * restored after Android kills the app process (screen-off → process death).
+ * restored after Android kills the app process *while the user was listening*
+ * (screen-off → process death during background playback).
  *
  * Detection: sessionStorage is cleared on process death but localStorage is
- * not. On first mount with no sessionStorage marker → process death → restore
- * from localStorage. On a normal resume sessionStorage still has the marker.
+ * not. On first mount with no sessionStorage marker → fresh process start.
+ *
+ * But a fresh process start happens for BOTH a process-death-during-playback
+ * AND a genuine cold launch (user tapping the app icon). We must not yank the
+ * user away from the homepage on a normal launch. So we only restore the deep
+ * last-URL when the native TTS foreground service is still actively playing —
+ * i.e. the OS killed the WebView out from under ongoing background audio. On a
+ * genuine fresh launch nothing is playing, so we stay on the homepage.
  */
 function NativeUrlRestorer() {
   const router = useRouter();
@@ -169,18 +177,44 @@ function NativeUrlRestorer() {
   // target URL being committed by the router.
   const isRestoringRef = useRef(false);
 
-  // On first mount: if sessionStorage is empty this is a fresh process start
-  // (process death). Try to navigate back to the last visited page.
+  // On first mount with no sessionStorage marker this is a fresh process start.
+  // Restore the last page ONLY if native playback is still running; otherwise
+  // leave the user on the homepage (the default cold-start route).
   useEffect(() => {
     if (!isNativePlatform()) return;
     if (sessionStorage.getItem("app-session")) return; // normal resume
     sessionStorage.setItem("app-session", "1");
 
     const lastUrl = localStorage.getItem("native-last-url");
-    if (lastUrl && lastUrl !== "/" && !lastUrl.startsWith("/login")) {
-      isRestoringRef.current = true;
-      router.replace(lastUrl);
-    }
+    if (!lastUrl || lastUrl === "/" || lastUrl.startsWith("/login")) return;
+
+    // Hold the guard up front so the save-effect below doesn't clobber
+    // native-last-url with the transient "/" before we've decided to restore.
+    isRestoringRef.current = true;
+
+    // The foreground service may still be binding right after process death, so
+    // poll isPlaying() briefly before concluding nothing is playing.
+    let tries = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const decide = () => {
+      const playing = getTtsBridge()?.isPlaying?.() ?? false;
+      if (playing) {
+        isRestoringRef.current = true; // skip the "/" → URL transient save
+        router.replace(lastUrl);
+        return;
+      }
+      if (tries++ < 12) {
+        timer = setTimeout(decide, 150);
+      } else {
+        // Nothing playing → genuine fresh launch. Stay on the homepage and let
+        // normal URL saving resume.
+        isRestoringRef.current = false;
+      }
+    };
+    decide();
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist current URL on every navigation (strip ?autoplay=1 so restoration

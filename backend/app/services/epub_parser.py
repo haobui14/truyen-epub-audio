@@ -17,6 +17,44 @@ from app.services import storage_service, task_queue
 
 logger = logging.getLogger(__name__)
 
+
+def _install_tolerant_epub_reader() -> None:
+    """Make ebooklib tolerate EPUBs whose OPF manifest declares files that are
+    not actually present in the archive.
+
+    ``EpubReader.read_file()`` eagerly reads every manifest item while loading
+    the book and lets zipfile's ``KeyError`` propagate, which aborts the entire
+    parse. Some EPUBs (notably exported Vietnamese web-novel bundles) list e.g.
+    ``OEBPS/notes.html`` in the manifest without shipping the file — that single
+    missing item used to fail the whole upload even though every real chapter is
+    intact. We downgrade the missing-file case to empty content so the rest of
+    the book still imports; an item with empty content yields no text and is
+    skipped by the normal short-item filter downstream.
+
+    Idempotent: safe to call multiple times.
+    """
+    if getattr(epub.EpubReader.read_file, "_tolerant_missing", False):
+        return
+
+    _orig_read_file = epub.EpubReader.read_file
+
+    def _tolerant_read_file(self, name):
+        try:
+            return _orig_read_file(self, name)
+        except KeyError:
+            logger.warning(
+                "EPUB manifest references missing file %r — substituting empty content",
+                name,
+            )
+            return b""
+
+    _tolerant_read_file._tolerant_missing = True
+    epub.EpubReader.read_file = _tolerant_read_file
+
+
+_install_tolerant_epub_reader()
+
+
 _CHAPTER_HEADER_RE = re.compile(
     r'^(?:\d+\.\s*)?'          # optional leading "3. " numbering
     r'(chương|chapter)'        # the keyword
