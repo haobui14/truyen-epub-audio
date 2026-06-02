@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.database import get_client
+from app.gzip_middleware import SmartGZipMiddleware
 from app.services import task_queue
 from app.routers import auth, books, chapters, progress, upload, tts, genres, stats
 from app.routers import settings as settings_router
@@ -80,6 +81,12 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
     max_age=3600,
 )
+
+# Compress JSON/text responses (~3x) over the wire. Biggest win: the Android
+# native self-fetch (HttpURLConnection auto-negotiates gzip) and the WebView get
+# much smaller chapter-text payloads on cellular — no APK change. SSE is skipped
+# inside the middleware so the admin AI-fix token stream stays unbuffered.
+app.add_middleware(SmartGZipMiddleware, minimum_size=512)
 
 
 @app.exception_handler(Exception)
