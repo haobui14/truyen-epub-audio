@@ -22,7 +22,7 @@ def _attach_genres(rows: list) -> list:
 
 
 _BOOK_SELECT = (
-    "id,title,author,description,cover_url,voice,status,total_chapters,created_at,"
+    "id,title,author,description,cover_url,voice,status,error_message,total_chapters,created_at,"
     "is_featured,featured_label,story_status,"
     "book_genres(genres(id,name,color))"
 )
@@ -315,7 +315,7 @@ async def reparse_book(
             await storage_service.delete_folder("audio", book_id)
             db.table("chapters").delete().eq("book_id", book_id).execute()
             db.table("books").update(
-                {"status": "parsing", "total_chapters": 0}
+                {"status": "parsing", "total_chapters": 0, "error_message": None}
             ).eq("id", book_id).execute()
             # Re-use the upload converter so non-EPUB originals (PDF/TXT/MOBI)
             # still work after re-upload to epub-uploads.
@@ -326,7 +326,10 @@ async def reparse_book(
             logging.getLogger(__name__).exception(
                 f"Reparse failed for book {book_id}: {e}"
             )
-            db.table("books").update({"status": "error"}).eq("id", book_id).execute()
+            db.table("books").update({
+                "status": "error",
+                "error_message": f"Phân tích lại thất bại: {type(e).__name__}: {e}"[:1000],
+            }).eq("id", book_id).execute()
 
     asyncio.create_task(_run())
     return {"book_id": book_id, "status": "parsing", "source": original_name}

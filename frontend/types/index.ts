@@ -13,6 +13,7 @@ export interface Book {
   cover_url?: string;
   voice: string;
   status: "pending" | "parsing" | "parsed" | "converting" | "ready" | "error";
+  error_message?: string | null;
   total_chapters: number;
   created_at: string;
   genres: Genre[];

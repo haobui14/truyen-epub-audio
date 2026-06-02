@@ -1,4 +1,5 @@
 import asyncio
+import gzip
 import logging
 import random
 import time
@@ -139,6 +140,34 @@ def _retry_sync(fn, *args, what: str = "storage op", **kwargs):
     raise last_err
 
 
+# ── Chapter-text gzip (de)compression ─────────────────────────────────────────
+# Chapter text is stored gzip-compressed (~3x smaller) but with Content-Type
+# "application/gzip" and NO Content-Encoding header — storage3/httpx would
+# auto-decompress a Content-Encoding: gzip response, defeating app-level control.
+# So Supabase serves the raw gzip bytes back and we (de)compress explicitly.
+# Detection is by magic bytes so legacy plain-UTF-8 objects (uploaded before
+# compression was added) keep reading correctly forever.
+
+def _is_gzip(data: bytes) -> bool:
+    """True if data starts with the gzip magic number (1f 8b). No valid UTF-8
+    text starts with 0x1f, so this reliably distinguishes compressed bytes from
+    legacy plain-text objects."""
+    return len(data) >= 2 and data[0] == 0x1F and data[1] == 0x8B
+
+
+def _gzip_compress(data: bytes) -> bytes:
+    # Level 6: level 9 measured no better (2.87x vs 2.86x) on this prose, for
+    # more CPU. Empty input still produces a valid (~20-byte) gzip stream.
+    return gzip.compress(data, compresslevel=6)
+
+
+def _gunzip_decompress(data: bytes) -> bytes:
+    # Intentionally does NOT catch errors — a corrupt blob must raise so the
+    # get_chapter_text* callers (which swallow exceptions → "") return empty
+    # rather than feeding garbage to the reader / TTS engine.
+    return gzip.decompress(data)
+
+
 def _sync_upload(bucket: str, path: str, data: bytes, content_type: str) -> None:
     def _do() -> None:
         resp = _get_upload_client().post(
@@ -210,18 +239,25 @@ def chapter_text_path(book_id: str, chapter_id: str) -> str:
 
 async def upload_chapter_text(book_id: str, chapter_id: str, text: str) -> str:
     path = chapter_text_path(book_id, chapter_id)
+    # Store gzip-compressed (~3x smaller). Content-Type application/gzip, never
+    # Content-Encoding (see the gzip helpers above). download_chapter_text reverses it.
+    data = _gzip_compress(text.encode("utf-8"))
     await asyncio.to_thread(
         _sync_upload,
         CHAPTER_TEXT_BUCKET,
         path,
-        text.encode("utf-8"),
-        "text/plain; charset=utf-8",
+        data,
+        "application/gzip",
     )
     return path
 
 
 async def download_chapter_text(path: str) -> str:
     data = await asyncio.to_thread(_sync_download, CHAPTER_TEXT_BUCKET, path)
+    # New objects are gzip (magic 1f 8b); legacy objects are plain UTF-8 and skip
+    # the gunzip branch — byte-identical to the pre-compression behaviour.
+    if _is_gzip(data):
+        data = _gunzip_decompress(data)
     return data.decode("utf-8")
 
 

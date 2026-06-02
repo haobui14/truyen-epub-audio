@@ -179,6 +179,28 @@ def _get_cover_image(book: epub.EpubBook) -> Optional[bytes]:
     return None
 
 
+def _friendly_parse_error(exc: Exception) -> str:
+    """Map a parse exception to a short, admin-readable reason (Vietnamese) with
+    the technical detail appended, capped at 1000 chars so it fits the
+    books.error_message column. Surfaced in the admin UI so failures are
+    diagnosable without trawling server logs."""
+    detail = f"{type(exc).__name__}: {exc}"
+    low = str(exc).lower()
+    if isinstance(exc, ValueError) and "no readable chapters" in low:
+        friendly = "Không tìm thấy chương nào có thể đọc — file có thể trống hoặc sai định dạng."
+    elif "there is no item named" in low:
+        friendly = "EPUB tham chiếu tới tệp không tồn tại trong gói."
+    elif "badzipfile" in low or "not a zip" in low or "bad zip" in low:
+        friendly = "File EPUB bị hỏng (không phải tệp nén hợp lệ)."
+    elif isinstance(exc, (KeyError, IndexError)):
+        friendly = "Cấu trúc EPUB không hợp lệ hoặc thiếu thành phần bắt buộc."
+    elif isinstance(exc, UnicodeError):
+        friendly = "Lỗi mã hoá ký tự khi đọc nội dung file."
+    else:
+        friendly = "Phân tích file thất bại."
+    return f"{friendly} ({detail})"[:1000]
+
+
 async def parse_epub_task(book_id: str, epub_bytes: bytes) -> None:
     db = get_client()
     tmp_path = None
@@ -344,6 +366,7 @@ async def parse_epub_task(book_id: str, epub_bytes: bytes) -> None:
             "author": author,
             "total_chapters": len(chapters_data),
             "status": "parsed",
+            "error_message": None,  # clear any prior failure (e.g. after reparse)
         }
         if cover_url:
             update_data["cover_url"] = cover_url
@@ -366,6 +389,7 @@ async def parse_epub_task(book_id: str, epub_bytes: bytes) -> None:
         logger.exception(f"Error parsing book {book_id}: {e}")
         db.table("books").update({
             "status": "error",
+            "error_message": _friendly_parse_error(e),
         }).eq("id", book_id).execute()
     finally:
         if tmp_path and os.path.exists(tmp_path):

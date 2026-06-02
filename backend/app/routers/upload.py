@@ -200,4 +200,7 @@ async def _convert_and_parse(
 
     except Exception as e:
         logger.exception(f"Book {book_id}: conversion failed: {e}")
-        db.table("books").update({"status": "error"}).eq("id", book_id).execute()
+        db.table("books").update({
+            "status": "error",
+            "error_message": f"Chuyển đổi file sang EPUB thất bại: {type(e).__name__}: {e}"[:1000],
+        }).eq("id", book_id).execute()

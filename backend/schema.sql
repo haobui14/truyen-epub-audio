@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS books (
     cover_url       TEXT,
     voice           TEXT NOT NULL DEFAULT 'vi-VN-HoaiMyNeural',
     status          TEXT NOT NULL DEFAULT 'pending',
+    error_message   TEXT,                         -- reason set when status = 'error'
     total_chapters  INTEGER DEFAULT 0,
     is_featured     BOOLEAN NOT NULL DEFAULT FALSE,
     featured_label  TEXT,
@@ -19,6 +20,10 @@ CREATE TABLE IF NOT EXISTS books (
                         CHECK (story_status IN ('ongoing', 'completed', 'unknown')),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Migration for existing databases (idempotent): surface WHY a parse failed
+-- instead of only setting status='error'. Safe to re-run.
+ALTER TABLE books ADD COLUMN IF NOT EXISTS error_message TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_books_created_at  ON books(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_books_status      ON books(status);

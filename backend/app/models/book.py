@@ -17,6 +17,7 @@ class BookResponse(BaseModel):
     cover_url: Optional[str] = None
     voice: str
     status: str
+    error_message: Optional[str] = None  # populated when status == 'error'
     total_chapters: int
     created_at: datetime
     genres: List[GenreInBook] = []

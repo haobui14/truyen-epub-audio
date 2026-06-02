@@ -80,6 +80,18 @@ function BookRow({
         <p className="text-xs text-text-mute dark:text-text-mute truncate mt-0.5">
           {book.author ?? "—"} · {book.total_chapters} chương
         </p>
+        {book.status === "error" && (
+          <Link
+            href={`/admin/edit-book?id=${book.id}`}
+            className="inline-flex items-center gap-1 mt-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-vermillion/10 dark:bg-vermillion/20 text-vermillion hover:bg-vermillion/20 transition-colors"
+            title={book.error_message ?? "Phân tích thất bại"}
+          >
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+            </svg>
+            Lỗi · sửa
+          </Link>
+        )}
       </div>
 
       {/* Actions */}

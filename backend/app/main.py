@@ -1,11 +1,13 @@
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
+from app.database import get_client
 from app.services import task_queue
 from app.routers import auth, books, chapters, progress, upload, tts, genres, stats
 from app.routers import settings as settings_router
@@ -13,10 +15,49 @@ from app.routers import settings as settings_router
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# A book sits in status='parsing' only while an in-memory asyncio task parses
+# it. If the process dies mid-parse (deploy / crash / OOM), that task is lost
+# and the book is stuck in 'parsing' forever. Anything older than this on
+# startup is assumed orphaned — a real parse never takes this long (the slow
+# TTS phase runs under status='converting', not 'parsing').
+STUCK_PARSING_MINUTES = 30
+
+
+def _recover_stuck_parsing_books() -> None:
+    """Mark books orphaned in 'parsing' (interrupted by a restart) as 'error'
+    so they surface in the admin UI and can be re-parsed from the stored
+    original. Best-effort: never blocks startup."""
+    try:
+        db = get_client()
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(minutes=STUCK_PARSING_MINUTES)
+        ).isoformat()
+        res = (
+            db.table("books")
+            .update({
+                "status": "error",
+                "error_message": (
+                    "Quá trình phân tích bị gián đoạn (máy chủ khởi động lại). "
+                    'Bấm "Phân tích lại" để thử lại từ file gốc.'
+                ),
+            })
+            .eq("status", "parsing")
+            .lt("created_at", cutoff)
+            .execute()
+        )
+        n = len(res.data or [])
+        if n:
+            logger.warning("Recovered %d book(s) stuck in 'parsing'", n)
+    except Exception as e:
+        # A missing error_message column (migration not run yet) or any DB
+        # hiccup must not stop the app from starting.
+        logger.warning("Stuck-parsing recovery skipped: %s", e)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: launch TTS queue worker
+    # Startup: recover orphaned parses, then launch TTS queue worker
+    _recover_stuck_parsing_books()
     await task_queue.start_worker()
     logger.info("Application started")
     yield

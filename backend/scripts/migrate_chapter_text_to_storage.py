@@ -89,6 +89,11 @@ def migrate_one(ch: dict) -> tuple[str, bool, str | None]:
             return (chapter_id, False, f"clear-empty failed: {e}")
 
     path = chapter_text_path(book_id, chapter_id)
+    # NOTE: this completed one-shot script uploads PLAIN text directly. Chapter
+    # text is now stored gzip-compressed via storage_service.upload_chapter_text().
+    # If this script is ever re-run, route through that wrapper instead so output
+    # is compressed. Plain objects written here remain readable — download_chapter_text
+    # detects gzip by magic bytes and falls back to plain UTF-8.
     try:
         _retry(
             lambda: storage.from_(CHAPTER_TEXT_BUCKET).upload(
