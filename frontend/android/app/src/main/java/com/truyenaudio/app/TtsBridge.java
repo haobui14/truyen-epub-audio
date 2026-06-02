@@ -52,6 +52,10 @@ public class TtsBridge {
     private String pendingPlaylistBase  = "";
     private String pendingPlaylistToken = "";
 
+    // Cover URL saved when the service is not yet bound (updateCover fires from
+    // PlayerContext as soon as the book loads, often before binding completes).
+    private String pendingCoverUrl = null;
+
     // ── Service connection ────────────────────────────────────────────────────
 
     private final ServiceConnection connection = new ServiceConnection() {
@@ -78,6 +82,10 @@ public class TtsBridge {
                     pendingPlaylistMeta  = null;
                     pendingPlaylistBase  = "";
                     pendingPlaylistToken = "";
+                }
+                if (pendingCoverUrl != null) {
+                    service.updateCover(pendingCoverUrl);
+                    pendingCoverUrl = null;
                 }
             }
         }
@@ -233,6 +241,18 @@ public class TtsBridge {
     public void updateTitle(String title) {
         mainHandler.post(() -> {
             if (service != null) service.updateTitle(title);
+        });
+    }
+
+    @JavascriptInterface
+    public void updateCover(String url) {
+        mainHandler.post(() -> {
+            if (service != null) {
+                service.updateCover(url);
+            } else {
+                // Service not bound yet — apply on connect.
+                pendingCoverUrl = url;
+            }
         });
     }
 

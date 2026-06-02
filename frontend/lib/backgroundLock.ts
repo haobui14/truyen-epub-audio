@@ -25,6 +25,8 @@ interface TtsBridgeNative {
   setRate(rate: number): void;
   setPitch(pitch: number): void;
   updateTitle(title: string): void;
+  /** Set the cover image URL shown on the lockscreen / media notification. */
+  updateCover(url: string): void;
   getCurrentChunk(): number;
   getCurrentChapterId(): string;
   isPlaying(): boolean;

@@ -63,6 +63,17 @@ body {
   padding-right: var(--sar);
 }
 
+/* ─── Native WebView feel (Android) ──────────────────────── */
+/* No rubber-band overscroll glow at page edges. */
+html,
+body {
+  overscroll-behavior: none;
+}
+/* No grey rectangle flash when tapping buttons/links in the Android WebView. */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
 @keyframes slideUp {
   from {
     transform: translateY(100%);

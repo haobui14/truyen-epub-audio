@@ -25,6 +25,7 @@
             android:exported="true"
             android:label="TruyệnAudio"
             android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
             android:theme="@style/AppTheme.NoActionBarLaunch">
 
             <intent-filter>

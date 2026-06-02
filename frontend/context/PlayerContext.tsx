@@ -272,6 +272,13 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
     getTtsBridge()?.updateTitle(track.chapter.title);
   }, [track?.chapter?.title, track?.book?.title]);
 
+  // Push the book cover to the native media notification / lockscreen art.
+  // Fires when the book (cover) changes; "" clears any stale art.
+  useEffect(() => {
+    if (!isNativePlatform()) return;
+    getTtsBridge()?.updateCover?.(track?.book?.cover_url ?? "");
+  }, [track?.book?.cover_url]);
+
   // Stop playback on logout. The native TTS foreground service runs in its
   // own thread and outlives clearAuth(); without this, a signed-out user keeps
   // hearing audio they have no UI to control.

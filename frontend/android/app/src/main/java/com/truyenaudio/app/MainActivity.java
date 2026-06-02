@@ -8,6 +8,8 @@ import android.webkit.WebView;
 
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 
 import com.getcapacitor.BridgeActivity;
 
@@ -17,6 +19,17 @@ public class MainActivity extends BridgeActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        // The UI is dark, so force light (white) status-bar and nav-bar icons.
+        // Without this some OEM/OS versions default to dark icons that vanish
+        // against the dark background.
+        WindowInsetsControllerCompat insets =
+                WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
+        if (insets != null) {
+            insets.setAppearanceLightStatusBars(false);
+            insets.setAppearanceLightNavigationBars(false);
+        }
+
         WebView webView = getBridge().getWebView();
         webView.addJavascriptInterface(new TtsBridge(this, webView), "TtsBridge");
 

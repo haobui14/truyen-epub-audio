@@ -10,6 +10,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.media.AudioAttributes;
 import android.media.AudioDeviceCallback;
 import android.media.AudioDeviceInfo;
@@ -34,8 +36,10 @@ import androidx.core.app.NotificationCompat;
 import androidx.media.app.NotificationCompat.MediaStyle;
 import androidx.media.session.MediaButtonReceiver;
 
+import java.io.BufferedInputStream;
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -230,6 +234,14 @@ public class TtsPlaybackService extends Service {
     private float         currentPitch      = 1.0f;
     private String        currentTitle      = "TruyệnAudio";
 
+    // Cover art for the media notification / lockscreen. Loaded async from the
+    // book's cover_url (set via updateCover) and cached by URL.
+    private String          currentCoverUrl    = "";
+    private Bitmap          currentCoverBitmap = null;
+    private ExecutorService coverExecutor;
+    // Jade accent (matches the web app + res/values/colors.xml colorAccent).
+    private static final int NOTIF_ACCENT = 0xFF46B98E;
+
     // Chapter queue for seamless auto-advance
     private final Queue<ChapterItem> chapterQueue = new LinkedList<>();
 
@@ -400,6 +412,7 @@ public class TtsPlaybackService extends Service {
     public void onCreate() {
         super.onCreate();
         mainHandler   = new Handler(Looper.getMainLooper());
+        coverExecutor = Executors.newSingleThreadExecutor();
         audioManager  = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TruyenAudio::TtsPlayback");
@@ -492,6 +505,10 @@ public class TtsPlaybackService extends Service {
         if (ioExecutor != null) {
             ioExecutor.shutdownNow();
             ioExecutor = null;
+        }
+        if (coverExecutor != null) {
+            coverExecutor.shutdownNow();
+            coverExecutor = null;
         }
         mainHandler.removeCallbacksAndMessages(null);
         abandonAudioFocus();
@@ -946,6 +963,65 @@ public class TtsPlaybackService extends Service {
             currentTitle = title;
             setMetadata(title);
             updateNotification();
+        }
+    }
+
+    /**
+     * Set the book cover shown on the media notification + lockscreen. Loads the
+     * bitmap asynchronously from the cover URL and re-posts the notification and
+     * MediaSession metadata once ready. Cached by URL — repeat calls for the same
+     * book are no-ops.
+     */
+    public void updateCover(String url) {
+        if (url == null) url = "";
+        if (url.equals(currentCoverUrl)) return;   // same cover (or both empty)
+        currentCoverUrl = url;
+        currentCoverBitmap = null;                 // drop stale art right away
+        setMetadata(currentTitle);
+        updateNotification();
+        if (url.isEmpty() || coverExecutor == null) return;
+        final String fUrl = url;
+        coverExecutor.execute(() -> {
+            Bitmap bmp = loadBitmap(fUrl);
+            if (bmp == null) return;
+            mainHandler.post(() -> {
+                // Ignore if the cover changed again while we were loading.
+                if (!fUrl.equals(currentCoverUrl)) return;
+                currentCoverBitmap = bmp;
+                setMetadata(currentTitle);
+                updateNotification();
+            });
+        });
+    }
+
+    /** Download + decode a cover image, downscaled to cap memory. Null on failure. */
+    private Bitmap loadBitmap(String urlStr) {
+        HttpURLConnection conn = null;
+        try {
+            URL url = new URL(urlStr);
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(8_000);
+            conn.setReadTimeout(12_000);
+            conn.setInstanceFollowRedirects(true);
+            if (conn.getResponseCode() != 200) return null;
+            InputStream is = new BufferedInputStream(conn.getInputStream());
+            Bitmap bmp = BitmapFactory.decodeStream(is);
+            is.close();
+            if (bmp == null) return null;
+            final int MAX = 512;  // lockscreen art never needs more than this
+            if (bmp.getWidth() > MAX || bmp.getHeight() > MAX) {
+                float s = Math.min((float) MAX / bmp.getWidth(), (float) MAX / bmp.getHeight());
+                Bitmap scaled = Bitmap.createScaledBitmap(
+                        bmp, Math.round(bmp.getWidth() * s), Math.round(bmp.getHeight() * s), true);
+                if (scaled != bmp) bmp.recycle();
+                bmp = scaled;
+            }
+            return bmp;
+        } catch (Exception e) {
+            Log.w(TAG, "cover load failed for " + urlStr + ": " + e);
+            return null;
+        } finally {
+            if (conn != null) conn.disconnect();
         }
     }
 
@@ -1543,10 +1619,16 @@ public class TtsPlaybackService extends Service {
                                     : android.R.drawable.ic_media_play;
         String toggleLabel = isPlaying ? "Tạm dừng" : "Phát";
 
+        // Chapter title is the prominent line; app name is the subtitle —
+        // the standard audiobook/podcast pattern.
+        String primary = (currentTitle != null && !currentTitle.isEmpty())
+                ? currentTitle : "TruyệnAudio";
+
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("TruyệnAudio")
-                .setContentText(currentTitle)
+                .setContentTitle(primary)
+                .setContentText("TruyệnAudio")
                 .setSmallIcon(android.R.drawable.ic_media_play)
+                .setColor(NOTIF_ACCENT)
                 .setContentIntent(contentIntent)
                 .setOngoing(isPlaying)
                 .setSilent(true)
@@ -1560,6 +1642,11 @@ public class TtsPlaybackService extends Service {
                 .setStyle(new MediaStyle()
                         .setMediaSession(mediaSession != null ? mediaSession.getSessionToken() : null)
                         .setShowActionsInCompactView(0, 1, 2));
+
+        // Book cover as the notification large icon / lockscreen art (once loaded).
+        if (currentCoverBitmap != null) {
+            builder.setLargeIcon(currentCoverBitmap);
+        }
 
         return builder.build();
     }
@@ -1671,10 +1758,14 @@ public class TtsPlaybackService extends Service {
 
     private void setMetadata(String title) {
         if (mediaSession == null) return;
-        mediaSession.setMetadata(new MediaMetadataCompat.Builder()
+        MediaMetadataCompat.Builder b = new MediaMetadataCompat.Builder()
                 .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
                 .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Truy\u1ec7nAudio")
-                .putString(MediaMetadataCompat.METADATA_KEY_ALBUM,  "Truy\u1ec7nAudio")
-                .build());
+                .putString(MediaMetadataCompat.METADATA_KEY_ALBUM,  "Truy\u1ec7nAudio");
+        // Cover art for the lockscreen media card, Android Auto, and BT displays.
+        if (currentCoverBitmap != null) {
+            b.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, currentCoverBitmap);
+        }
+        mediaSession.setMetadata(b.build());
     }
 }

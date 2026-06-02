@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matches the web app's dark "ink" palette + jade accent so native theming
+         (window background, status bar, notification tint) is consistent and the
+         Material default purple no longer leaks through. -->
+    <color name="ink">#1A1A1F</color>
+    <color name="colorPrimary">#1A1A1F</color>
+    <color name="colorPrimaryDark">#141418</color>
+    <color name="colorAccent">#46B98E</color>
+</resources>
