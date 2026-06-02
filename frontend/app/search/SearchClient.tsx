@@ -4,7 +4,6 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { getCachedBooks } from "@/lib/bookCache";
-import { isLoggedIn } from "@/lib/auth";
 import { BookListRow } from "@/components/books/BookListRow";
 import { Spinner } from "@/components/ui/Spinner";
 import type { Genre } from "@/types";
@@ -67,7 +66,7 @@ export default function SearchClient() {
   const { data: genres } = useQuery({
     queryKey: ["genres"],
     queryFn: api.listGenres,
-    enabled: isLoggedIn(),
+    staleTime: 60_000,
   });
 
   // Only show genres that are actually used by at least one book

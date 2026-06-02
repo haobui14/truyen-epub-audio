@@ -9,7 +9,6 @@ import { isAdmin, isLoggedIn } from "@/lib/auth";
 import { SpotlightCard } from "@/components/books/SpotlightCard";
 import { BookScrollRow } from "@/components/books/BookScrollRow";
 import { getColorClasses } from "@/components/books/GenreManager";
-import { Spinner } from "@/components/ui/Spinner";
 
 // ── Recent-progress mini-card ─────────────────────────────────────────────────
 function RecentCard({
@@ -32,8 +31,8 @@ function RecentCard({
 
   return (
     <Link
-      href={`/book?id=${book.id}`}
-      className="flex-none w-28 sm:w-33 group relative"
+      href={`/listen?id=${book.id}&chapter=${chapter.id}`}
+      className="flex-none w-28 sm:w-33 group relative snap-start"
     >
       <div className="aspect-2/3 rounded-md overflow-hidden bg-raised relative ring-1 ring-hairline-soft mb-2 shadow-[0_8px_22px_rgba(0,0,0,0.45)]">
         {book.cover_url ? (
@@ -90,6 +89,29 @@ function RecentCard({
         Ch.{chapter.chapter_index + 1}/{book.total_chapters}
       </p>
     </Link>
+  );
+}
+
+// ── Loading skeleton (fills the layout frame instead of a lone spinner) ───────
+function LibrarySkeleton() {
+  return (
+    <div className="space-y-8" aria-hidden="true">
+      <div className="h-40 sm:h-56 rounded-lg bg-raised animate-pulse" />
+      {[0, 1].map((row) => (
+        <div key={row} className="space-y-3">
+          <div className="h-5 w-32 rounded bg-raised animate-pulse" />
+          <div className="flex gap-3 overflow-hidden">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="flex-none w-28 sm:w-33 space-y-2">
+                <div className="aspect-2/3 rounded-md bg-raised animate-pulse" />
+                <div className="h-3 w-full rounded bg-raised animate-pulse" />
+                <div className="h-2.5 w-2/3 rounded bg-raised animate-pulse" />
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -301,12 +323,7 @@ export default function HomePage() {
         </>
       )}
 
-      {isLoading && (
-        <div className="flex flex-col items-center gap-3 py-24">
-          <Spinner className="w-8 h-8 text-accent" />
-          <p className="text-sm text-text-mute">Đang tải thư viện...</p>
-        </div>
-      )}
+      {isLoading && <LibrarySkeleton />}
 
       {error && (
         <div className="text-center py-24">
@@ -362,7 +379,7 @@ export default function HomePage() {
                   </svg>
                 </Link>
               </div>
-              <div className="flex gap-3 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] pb-1">
+              <div className="flex gap-3 overflow-x-auto snap-x snap-mandatory [scrollbar-width:none] [-ms-overflow-style:none] pb-1">
                 {myBooks.map((item) => (
                   <RecentCard key={item.book.id} item={item} />
                 ))}

@@ -213,26 +213,28 @@ export function SpeechPlayer() {
               seekChunk(Math.round(fraction * totalChunks) - chunkIndex);
             }
           }}
-          className="w-full flex gap-[3px] h-1 cursor-pointer disabled:cursor-default"
+          className="w-full block cursor-pointer disabled:cursor-default py-2 -my-1.5"
           disabled={!ready}
           aria-label="Seek"
         >
-          {Array.from({ length: chunkDotCount }).map((_, i) => {
-            const filled = i < filledDots;
-            const current = i === filledDots;
-            return (
-              <span
-                key={i}
-                className={`flex-1 rounded-[1px] transition-colors ${
-                  filled
-                    ? "bg-accent"
-                    : current
-                      ? "bg-accent/70"
-                      : "bg-hairline"
-                }`}
-              />
-            );
-          })}
+          <span className="flex gap-[3px] h-1">
+            {Array.from({ length: chunkDotCount }).map((_, i) => {
+              const filled = i < filledDots;
+              const current = i === filledDots;
+              return (
+                <span
+                  key={i}
+                  className={`flex-1 rounded-[1px] transition-colors ${
+                    filled
+                      ? "bg-accent"
+                      : current
+                        ? "bg-accent/70"
+                        : "bg-hairline"
+                  }`}
+                />
+              );
+            })}
+          </span>
         </button>
         <div className="flex justify-between items-center mt-1.5 font-mono text-[10px] tracking-widest tabular-nums text-text-faint">
           {totalChunks > 0 ? (

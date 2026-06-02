@@ -49,16 +49,15 @@ function ProgressBar({ value, total }: { value: number; total?: number }) {
 function BookRow({ entry }: { entry: MyBookEntry }) {
   const { book, chapter, progress_value, total_value, updated_at } = entry;
   const href = `/listen?id=${book.id}&chapter=${chapter.id}`;
+  const readHref = `/read?id=${book.id}&chapter=${chapter.id}`;
   const pct =
     total_value && total_value > 0
       ? Math.round((progress_value / total_value) * 100)
       : null;
 
   return (
-    <Link
-      href={href}
-      className="flex gap-3 p-3 bg-surface dark:bg-raised rounded-xl border border-hairline-soft dark:border-hairline/80 hover:shadow-md hover:border-accent/40 dark:hover:border-accent/40 transition-all group"
-    >
+    <div className="relative flex gap-3 p-3 bg-surface dark:bg-raised rounded-xl border border-hairline-soft dark:border-hairline/80 hover:shadow-md hover:border-accent/40 dark:hover:border-accent/40 transition-all group">
+      <Link href={href} className="flex gap-3 flex-1 min-w-0">
       {/* Cover */}
       <div className="w-14 h-[4.67rem] shrink-0 rounded-lg overflow-hidden bg-linear-to-br from-raised to-raised-hi dark:from-raised dark:to-raised-hi relative">
         {book.cover_url ? (
@@ -120,22 +119,46 @@ function BookRow({ entry }: { entry: MyBookEntry }) {
         </div>
       </div>
 
-      <div className="flex items-center self-center shrink-0 text-text-faint dark:text-text-dim group-hover:text-accent transition-colors">
-        <svg
-          className="w-4 h-4"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
+      </Link>
+
+      {/* Quick actions: read or listen from where you left off */}
+      <div className="flex flex-col items-center justify-center gap-1.5 shrink-0">
+        <Link
+          href={readHref}
+          aria-label="Đọc tiếp"
+          title="Đọc tiếp"
+          className="flex items-center justify-center w-9 h-9 rounded-lg text-text-mute hover:text-accent hover:bg-accent/10 dark:hover:bg-accent/20 transition-colors"
         >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M9 5l7 7-7 7"
-          />
-        </svg>
+          <svg
+            className="w-[18px] h-[18px]"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={1.8}
+              d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
+            />
+          </svg>
+        </Link>
+        <Link
+          href={href}
+          aria-label="Nghe tiếp"
+          title="Nghe tiếp"
+          className="flex items-center justify-center w-9 h-9 rounded-lg text-text-mute hover:text-accent hover:bg-accent/10 dark:hover:bg-accent/20 transition-colors"
+        >
+          <svg
+            className="w-[18px] h-[18px]"
+            fill="currentColor"
+            viewBox="0 0 14 14"
+          >
+            <path d="M3 1l10 6-10 6V1z" />
+          </svg>
+        </Link>
       </div>
-    </Link>
+    </div>
   );
 }
 

@@ -27,7 +27,7 @@ export function BookScrollRow({ title, seeAllHref, colorDot, books }: Props) {
         {seeAllHref && (
           <Link
             href={seeAllHref}
-            className="flex items-center gap-0.5 font-mono text-[10px] tracking-widest uppercase text-accent hover:text-accent-dim shrink-0"
+            className="flex items-center gap-0.5 font-mono text-[10px] tracking-widest uppercase text-accent hover:text-accent-dim shrink-0 py-2 pl-3 -my-1.5"
           >
             Xem thêm
             <svg
@@ -47,12 +47,12 @@ export function BookScrollRow({ title, seeAllHref, colorDot, books }: Props) {
         )}
       </div>
 
-      <div className="flex gap-3 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] pb-1">
+      <div className="flex gap-3 overflow-x-auto snap-x snap-mandatory [scrollbar-width:none] [-ms-overflow-style:none] pb-1">
         {books.map((book) => (
           <Link
             key={book.id}
             href={`/book?id=${book.id}`}
-            className="flex-none w-28 sm:w-33 group"
+            className="flex-none w-28 sm:w-33 group snap-start"
           >
             <div className="aspect-2/3 rounded-md overflow-hidden bg-raised relative ring-1 ring-hairline-soft mb-2 shadow-[0_8px_22px_rgba(0,0,0,0.45)] group-hover:ring-accent/30 transition-all">
               {book.cover_url ? (

@@ -91,7 +91,7 @@ export function SpotlightCard({ book }: { book: Book }) {
         )}
 
         <div className="flex items-center gap-3 mt-auto pt-2 sm:pt-0">
-          <span className="inline-flex items-center gap-1.5 bg-accent group-hover:bg-accent-dim text-ink text-xs sm:text-sm font-semibold px-3.5 py-2 rounded-md shadow-[0_0_18px_var(--color-accent-glow)] transition-colors">
+          <span className="inline-flex items-center gap-1.5 bg-accent group-hover:bg-accent-dim text-ink text-xs sm:text-sm font-semibold px-4 py-2.5 rounded-md shadow-[0_0_18px_var(--color-accent-glow)] transition-colors">
             <svg
               className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-none"
               fill="currentColor"
