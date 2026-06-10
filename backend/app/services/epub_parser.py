@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 
 from app.database import get_client
 from app.utils.text_cleaner import html_to_text
-from app.services import storage_service, task_queue
+from app.services import storage_service
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +201,62 @@ def _friendly_parse_error(exc: Exception) -> str:
     return f"{friendly} ({detail})"[:1000]
 
 
+# Parse-time chapter-text uploads run at this concurrency. Capped at 8 because
+# higher values overwhelm storage3's shared connection and Supabase starts
+# closing streams (see storage_service.STORAGE_CONCURRENCY).
+_UPLOAD_CONCURRENCY = 8
+
+# Strong refs to background text-upload tasks so the event loop doesn't GC them
+# mid-flight after parse_epub_task returns.
+_deferred_text_tasks: set = set()
+
+
+async def _upload_deferred_chapter_text(book_id: str, chapters: list[dict]) -> None:
+    """Upload chapter text to Storage AFTER the chapter rows are inserted and the
+    book has flipped to 'converting'. Each row already carries the deterministic
+    text_storage_path ({book_id}/{chapter_id}.txt), so the book is fully browsable
+    the moment it leaves 'parsing'; this just fills in the Storage objects off the
+    parse critical path. A chapter whose upload fails is marked 'error' so it
+    surfaces in the admin UI and can be re-triggered."""
+    db = get_client()
+    sem = asyncio.Semaphore(_UPLOAD_CONCURRENCY)
+
+    async def _one(ch: dict) -> bool:
+        async with sem:
+            try:
+                await storage_service.upload_chapter_text(
+                    book_id, ch["id"], ch["text_content"]
+                )
+                return True
+            except Exception as e:
+                logger.exception(
+                    f"Book {book_id} chapter {ch['id']} ({ch.get('title')!r}) "
+                    f"deferred text upload failed; marking errored"
+                )
+                try:
+                    db.table("chapters").update({
+                        "status": "error",
+                        "error_message": f"{type(e).__name__}: {e}"[:1000],
+                    }).eq("id", ch["id"]).execute()
+                except Exception:
+                    logger.exception(
+                        f"Book {book_id}: could not mark chapter {ch['id']} errored"
+                    )
+                return False
+
+    results = await asyncio.gather(*(_one(ch) for ch in chapters))
+    failed = sum(1 for ok in results if not ok)
+    if failed:
+        logger.warning(
+            f"Book {book_id}: {failed}/{len(chapters)} deferred chapter-text "
+            f"uploads failed"
+        )
+    else:
+        logger.info(
+            f"Book {book_id}: uploaded all {len(chapters)} deferred chapter texts"
+        )
+
+
 async def parse_epub_task(book_id: str, epub_bytes: bytes) -> None:
     db = get_client()
     tmp_path = None
@@ -315,50 +371,58 @@ async def parse_epub_task(book_id: str, epub_bytes: bytes) -> None:
             )
             chapters_data = split_chapters
 
-        # Upload chapter text to Storage in parallel, then strip text_content from
-        # the row (DB only keeps text_storage_path). Concurrency capped at 8 —
-        # higher values overwhelm storage3's HTTP/2 connection. See
-        # storage_service.STORAGE_CONCURRENCY for the rationale.
-        UPLOAD_CONCURRENCY = 8
-        sem = asyncio.Semaphore(UPLOAD_CONCURRENCY)
+        # Chapter text is stored in Storage at the deterministic path
+        # {book_id}/{chapter_id}.txt. Set that path on every row up front so the
+        # rows can be inserted — and the book made browsable — WITHOUT waiting for
+        # the per-chapter Storage uploads, which at thousands of chapters are the
+        # dominant cost of the parse (~N/8 round-trips). Only the first few
+        # chapters are uploaded synchronously (so the opening chapters are
+        # instantly readable, no race with the background upload); the rest upload
+        # in a background task after the book is marked ready.
+        for ch in chapters_data:
+            ch["text_storage_path"] = storage_service.chapter_text_path(
+                book_id, ch["id"]
+            )
 
-        async def _upload_one(ch: dict) -> None:
-            async with sem:
-                try:
-                    path = await storage_service.upload_chapter_text(
-                        book_id, ch["id"], ch["text_content"]
-                    )
-                except Exception as e:
-                    # One bad chapter must not sink the whole book. Mark this
-                    # row errored and let the parse continue — the user can
-                    # see which chapter failed and re-trigger it later.
-                    logger.exception(
-                        f"Book {book_id} chapter {ch['id']} ({ch.get('title')!r}) "
-                        f"upload failed; marking errored"
-                    )
-                    ch["status"] = "error"
-                    ch["error_message"] = f"{type(e).__name__}: {e}"[:1000]
-                    ch.pop("text_content", None)
-                    return
-            ch["text_storage_path"] = path
-            del ch["text_content"]
+        PREFETCH_AHEAD = 3
+        prefetch = chapters_data[:PREFETCH_AHEAD]
+        deferred = chapters_data[PREFETCH_AHEAD:]
 
-        await asyncio.gather(*(_upload_one(ch) for ch in chapters_data))
+        # Upload the first few chapters' text synchronously so the chapters a
+        # reader opens first are instantly available (no race with the background
+        # upload below). A failure here just marks that chapter errored.
+        prefetch_ok = 0
+        for ch in prefetch:
+            try:
+                await storage_service.upload_chapter_text(
+                    book_id, ch["id"], ch["text_content"]
+                )
+                prefetch_ok += 1
+            except Exception as e:
+                logger.exception(
+                    f"Book {book_id} chapter {ch['id']} ({ch.get('title')!r}) "
+                    f"text upload failed; marking errored"
+                )
+                ch["status"] = "error"
+                ch["error_message"] = f"{type(e).__name__}: {e}"[:1000]
 
-        errored = sum(1 for ch in chapters_data if ch.get("status") == "error")
-        if errored == len(chapters_data):
+        # If every prefetch upload failed, Storage is almost certainly down —
+        # abort the parse rather than insert a book whose chapters can never be
+        # filled in. (With no prefetch chapters at all, skip this guard.)
+        if prefetch and prefetch_ok == 0:
             raise RuntimeError(
-                f"All {len(chapters_data)} chapter uploads failed — aborting parse"
-            )
-        if errored:
-            logger.warning(
-                f"Book {book_id}: {errored}/{len(chapters_data)} chapter uploads failed"
+                "All initial chapter-text uploads to Storage failed — aborting parse"
             )
 
-        # Insert chapters in batches to avoid Supabase statement timeout on large books
+        # Insert chapter rows (without the in-memory text_content, which is not a
+        # DB column) in batches to avoid Supabase statement timeouts on large books.
         BATCH_SIZE = 100
-        for i in range(0, len(chapters_data), BATCH_SIZE):
-            db.table("chapters").insert(chapters_data[i:i + BATCH_SIZE]).execute()
+        insert_rows = [
+            {k: v for k, v in ch.items() if k != "text_content"}
+            for ch in chapters_data
+        ]
+        for i in range(0, len(insert_rows), BATCH_SIZE):
+            db.table("chapters").insert(insert_rows[i:i + BATCH_SIZE]).execute()
 
         # Update book metadata
         update_data: dict = {
@@ -374,16 +438,23 @@ async def parse_epub_task(book_id: str, epub_bytes: bytes) -> None:
 
         logger.info(f"Book {book_id}: parsed {len(chapters_data)} chapters")
 
-        # Auto-enqueue only the first 3 chapters — the rest are prefetched on demand.
-        # Skip any that errored during upload (no text in Storage to read).
-        PREFETCH_AHEAD = 3
-        for ch in chapters_data[:PREFETCH_AHEAD]:
-            if ch.get("status") == "error":
-                continue
-            await task_queue.enqueue(book_id, ch["id"])
+        # No audio pre-generation: playback streams TTS on demand (web →
+        # /api/tts/speak, Android → native device TTS), so a parsed book is
+        # immediately usable. Mark it 'ready' straight away rather than
+        # 'converting' (which used to mean "generating MP3s"). Chapters stay
+        # 'pending' — the players read chapter text, not a stored-audio status.
+        db.table("books").update({"status": "ready"}).eq("id", book_id).execute()
 
-        # Mark book as converting
-        db.table("books").update({"status": "converting"}).eq("id", book_id).execute()
+        # Upload the remaining chapters' text in the background. The rows already
+        # point at the right Storage paths, so the book is fully browsable now;
+        # this just fills in the objects, off the parse critical path, so the book
+        # leaves 'parsing' in seconds instead of after thousands of uploads.
+        if deferred:
+            bg = asyncio.create_task(
+                _upload_deferred_chapter_text(book_id, deferred)
+            )
+            _deferred_text_tasks.add(bg)
+            bg.add_done_callback(_deferred_text_tasks.discard)
 
     except Exception as e:
         logger.exception(f"Error parsing book {book_id}: {e}")

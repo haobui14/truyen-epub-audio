@@ -11,14 +11,26 @@ _queue: asyncio.Queue = asyncio.Queue()
 _worker_task: asyncio.Task | None = None
 
 
+# ── Audio pre-generation: DISABLED ───────────────────────────────────────────
+# The app streams TTS on demand — web via POST /api/tts/speak (chunked) and
+# Android via the native device TTS engine — so there's no reason to pre-generate
+# and store one MP3 per chapter in the Supabase `audio` bucket. That pipeline only
+# burned storage (the `audio` bucket was the biggest cost driver). Making enqueue
+# and start_worker no-ops is the single chokepoint that guarantees NOTHING writes
+# to the `audio` bucket, regardless of caller (parser prefetch, /api/tts/* admin
+# endpoints, future code). The generation logic in _process_chapter is left intact
+# but unwired, so re-enabling is just restoring these two function bodies.
+
 async def enqueue(book_id: str, chapter_id: str) -> None:
-    await _queue.put({"book_id": book_id, "chapter_id": chapter_id})
+    logger.debug(
+        "TTS enqueue ignored — audio pre-generation disabled (%s/%s)",
+        book_id,
+        chapter_id,
+    )
 
 
 async def start_worker() -> None:
-    global _worker_task
-    _worker_task = asyncio.create_task(_process_queue())
-    logger.info("TTS queue worker started")
+    logger.info("TTS queue worker disabled — audio pre-generation off")
 
 
 async def _process_queue() -> None:
