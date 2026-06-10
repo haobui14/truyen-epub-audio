@@ -9,6 +9,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -41,6 +42,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
@@ -203,12 +205,18 @@ public class TtsPlaybackService extends Service {
     // player and stops the TTS engine's session from hijacking button events.
     private MediaPlayer silentPlayer;
 
+    // False once playback ends for an external reason (permanent audio-focus
+    // loss, stop): the staggered re-assertions in reassertMediaSession() must
+    // not re-activate a session we have deliberately relinquished. Set true in
+    // requestAudioFocus() — every playback (re)start path goes through it.
+    private boolean sessionWanted = false;
+
     // Periodic re-assertion: TTS engine keeps re-activating its session while
     // speaking. We fight back by re-asserting our session every 3 seconds.
     private static final long REASSERT_INTERVAL_MS = 3_000;
     private final Runnable reassertRunnable = new Runnable() {
         @Override public void run() {
-            if (mediaSession != null && isPlaying) {
+            if (mediaSession != null && sessionWanted && isPlaying) {
                 mediaSession.setActive(true);
                 updatePlaybackState(true);
                 mainHandler.postDelayed(this, REASSERT_INTERVAL_MS);
@@ -232,11 +240,16 @@ public class TtsPlaybackService extends Service {
     private List<String>  currentChunks;
     private float         currentRate       = 1.0f;
     private float         currentPitch      = 1.0f;
-    private String        currentTitle      = "TruyệnAudio";
+    // Read from the WebView JS thread via TtsBridge (getCurrentTitle /
+    // getTotalChunks / getCurrentBookId) — volatile like the fields above.
+    volatile String       currentTitle      = "TruyệnAudio";
+    volatile int          currentTotalChunks = 0;
+    volatile String       currentBookId     = "";
+    volatile String       currentBookTitle  = "";
 
     // Cover art for the media notification / lockscreen. Loaded async from the
     // book's cover_url (set via updateCover) and cached by URL.
-    private String          currentCoverUrl    = "";
+    volatile String         currentCoverUrl    = "";
     private Bitmap          currentCoverBitmap = null;
     private ExecutorService coverExecutor;
     // Jade accent (matches the web app + res/values/colors.xml colorAccent).
@@ -271,6 +284,31 @@ public class TtsPlaybackService extends Service {
     // or setPendingPlaylist), stale callbacks silently exit and a new chain starts.
     private int                prefetchVersion   = 0;
     private boolean            prefetchActive    = false;  // a chain step is in flight
+
+    // ── Durable session persistence + background progress sync ──────────────
+    // The session snapshot (book/chapter/chunk/playlist head) is written to
+    // SharedPreferences on every chunk start and chapter transition so an OS
+    // process kill never loses the listening position. onCreate() restores the
+    // snapshot as a PAUSED session; onStartCommand() auto-resumes it when the
+    // kill→restart gap is short (START_STICKY). Listening progress is also PUT
+    // to the server on a throttle so other devices (and cold starts) stay in
+    // sync even when the WebView has been suspended for hours.
+    // Package-visible: TtsBridge reads PREFS_KEY_LAST_POSITION directly so the
+    // value is available even before the service finishes binding.
+    static final String PREFS_NAME              = "tts_session";
+    static final String PREFS_KEY_SESSION       = "session";
+    // Last listening position. Unlike the session snapshot it SURVIVES
+    // stopPlayback (swipe-away, explicit stop) — it cannot resume a zombie
+    // service, it only tells the UI where listening last stood on this device.
+    static final String PREFS_KEY_LAST_POSITION = "last_position";
+    private static final long   AUTO_RESUME_WINDOW_MS = 2 * 60_000;
+    private static final int    PERSIST_PLAYLIST_CAP  = 50;
+    private static final long   PROGRESS_SYNC_INTERVAL_MS = 30_000;
+    private long    lastProgressSyncMs  = 0;
+    private boolean restoredWasPlaying  = false;
+    private long    restoredAtMs        = 0;     // wall-clock ts of the restored snapshot
+    private boolean autoResumeConsumed  = false; // sticky-restart auto-resume fires once
+    private boolean restoringSession    = false; // restore text-fetch in flight
 
     // Watchdog: if onStart doesn't fire within WATCHDOG_MS after tts.speak(),
     // something went wrong (TTS engine stalled, output error, etc.) — retry.
@@ -322,11 +360,20 @@ public class TtsPlaybackService extends Service {
             focusChange -> mainHandler.post(() -> {
                 switch (focusChange) {
                     case AudioManager.AUDIOFOCUS_LOSS:
-                        // Permanent loss — pause and give up focus
+                        // Permanent loss — another app owns audio now. Pause,
+                        // give up focus AND deactivate the MediaSession so the
+                        // lockscreen/media picker stop advertising this player
+                        // and earbud buttons route to the new owner.
+                        // sessionWanted=false stops the staggered re-assertions
+                        // scheduled by pauseInternal → reassertMediaSession from
+                        // re-activating the session behind our back.
                         Log.d(TAG, "AudioFocus: LOSS (permanent), isPlaying=" + isPlaying);
                         hasFocus = false;
                         pausedByTransientLoss = false;
+                        sessionWanted = false;
                         pauseInternal();
+                        abandonAudioFocus();
+                        if (mediaSession != null) mediaSession.setActive(false);
                         break;
                     case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT:
                     case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK:
@@ -349,10 +396,13 @@ public class TtsPlaybackService extends Service {
                 }
             });
 
-    // Sleep timer
+    // Sleep timer. detail.sleep lets JS distinguish "sleep timer stopped
+    // playback mid-chapter" from "playlist exhausted" — onDone must NOT
+    // auto-advance to the next chapter on a sleep stop.
     private final Runnable sleepRunnable = () -> {
         pauseInternal();
-        dispatchJs("window.dispatchEvent(new Event('native-tts-done'))");
+        dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-done'," +
+                "{detail:{sleep:true}}))");
     };
 
     // Pause when headphones unplug / Bluetooth disconnects, so audio
@@ -421,6 +471,12 @@ public class TtsPlaybackService extends Service {
         setupMediaSession();
         initTts();
 
+        // Restore the last session snapshot (as paused). This gives the bridge
+        // a valid chapter id / chunk index immediately after a process restart
+        // so JS cold-start sync and "continue listening" land where playback
+        // actually stopped — even if it stopped while the screen was off.
+        restoreSession();
+
         IntentFilter noisyFilter = new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(becomingNoisyReceiver, noisyFilter, Context.RECEIVER_NOT_EXPORTED);
@@ -444,6 +500,21 @@ public class TtsPlaybackService extends Service {
         // was used. Do it unconditionally here so we never hit the 5-second ANR
         // window, even when the service is started before playback begins.
         startForegroundNow();
+
+        // START_STICKY restart after the OS killed the process mid-playback:
+        // intent == null only on a system restart (every app-initiated start
+        // carries an intent). If the kill happened moments ago while audio was
+        // playing, pick the session back up — the user perceives an
+        // uninterrupted listen instead of waking up to silence.
+        if (intent == null && !autoResumeConsumed) {
+            autoResumeConsumed = true;
+            if (restoredWasPlaying && currentChunks == null
+                    && !currentChapterId.isEmpty()
+                    && System.currentTimeMillis() - restoredAtMs < AUTO_RESUME_WINDOW_MS) {
+                Log.d(TAG, "auto-resume after process kill: ch=" + currentChapterId);
+                mainHandler.post(this::resumeFromRestoredSession);
+            }
+        }
 
         // Route media button intents (earbuds / BT) to the MediaSession
         if (mediaSession != null && intent != null) {
@@ -621,6 +692,11 @@ public class TtsPlaybackService extends Service {
             dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-state'," +
                     "{detail:{playing:true,index:" + i + "}}))");
         });
+        // Keep the durable snapshot + server progress fresh while the screen is
+        // off and JS can't do it. Both are cheap: one async prefs commit, and a
+        // throttled (30 s) PUT on the io executor.
+        persistSession();
+        maybeSyncProgressToServer(false);
     }
 
     private void onChunkFinished(int idx) {
@@ -763,17 +839,21 @@ public class TtsPlaybackService extends Service {
     private void reassertMediaSession() {
         if (mediaSession == null) return;
         mainHandler.removeCallbacks(reassertRunnable);
+        // sessionWanted=false (permanent focus loss / stop) — never re-activate
+        // a session we deliberately gave up. The staggered lambdas below check
+        // again at fire time because the flag can flip while they are queued.
+        if (!sessionWanted) return;
         // Immediate + staggered re-assertions to win the race against TTS engine
         mediaSession.setActive(true);
         updatePlaybackState(isPlaying);
         mainHandler.postDelayed(() -> {
-            if (mediaSession != null) { mediaSession.setActive(true); updatePlaybackState(isPlaying); }
+            if (mediaSession != null && sessionWanted) { mediaSession.setActive(true); updatePlaybackState(isPlaying); }
         }, 300);
         mainHandler.postDelayed(() -> {
-            if (mediaSession != null) { mediaSession.setActive(true); updatePlaybackState(isPlaying); }
+            if (mediaSession != null && sessionWanted) { mediaSession.setActive(true); updatePlaybackState(isPlaying); }
         }, 1_000);
         mainHandler.postDelayed(() -> {
-            if (mediaSession != null) { mediaSession.setActive(true); updatePlaybackState(isPlaying); }
+            if (mediaSession != null && sessionWanted) { mediaSession.setActive(true); updatePlaybackState(isPlaying); }
         }, 2_500);
         // Start the periodic loop to keep re-asserting while playing
         if (isPlaying) mainHandler.postDelayed(reassertRunnable, REASSERT_INTERVAL_MS);
@@ -797,6 +877,7 @@ public class TtsPlaybackService extends Service {
         currentPitch     = pitch;
         currentTitle     = (title != null && !title.isEmpty()) ? title : currentTitle;
         currentChapterId = (chapterId != null) ? chapterId : "";
+        currentTotalChunks = (chunks != null) ? chunks.size() : 0;
         chapterQueue.clear();
 
         // Cancel any in-flight prefetch chain (new version = stale callbacks ignored)
@@ -825,6 +906,8 @@ public class TtsPlaybackService extends Service {
 
         setMetadata(currentTitle);
         if (mediaSession != null) mediaSession.setActive(true);
+        persistSession();
+        maybeSyncProgressToServer(true);
 
         if (!ttsReady) {
             ChapterItem item = new ChapterItem(chunks, chapterId, title, rate, pitch);
@@ -854,6 +937,13 @@ public class TtsPlaybackService extends Service {
     }
 
     public void resumePlayback() {
+        // Cold resume after a process kill: the persisted session was restored
+        // (chapter id + chunk index) but the chunk text died with the process.
+        // Re-fetch the chapter text and continue from the saved chunk.
+        if (currentChunks == null && !currentChapterId.isEmpty() && !selfFetchBase.isEmpty()) {
+            resumeFromRestoredSession();
+            return;
+        }
         if (currentChunks == null || currentChunkIdx < 0) return;
         isPlaying = true;
         if (wakeLock != null && !wakeLock.isHeld()) wakeLock.acquire();
@@ -861,9 +951,28 @@ public class TtsPlaybackService extends Service {
         requestAudioFocus();
         updatePlaybackState(true);
         updateNotification();
+        // Paused during the between-chapter gap (awaitingFetch): currentChunkIdx
+        // still points at the FINISHED chapter's last chunk — re-speaking it
+        // would duplicate the final sentence. Deliver the queued next chapter
+        // instead, or restart the prefetch chain and let it deliver.
+        // I1 holds in the kickPrefetch branch: queue is empty while waiting.
+        if (awaitingFetch) {
+            ChapterItem next = chapterQueue.poll();
+            if (next != null) {
+                awaitingFetch = false;
+                deliverAutoAdvance(next, currentChapterId);
+            } else {
+                kickPrefetch();
+                dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-state'," +
+                        "{detail:{playing:true,index:" + currentChunkIdx + "}}))");
+            }
+            persistSession();
+            return;
+        }
         speakChunk(currentChunkIdx);
         dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-state'," +
                 "{detail:{playing:true,index:" + currentChunkIdx + "}}))");
+        persistSession();
     }
 
     public void stopPlayback() {
@@ -878,13 +987,18 @@ public class TtsPlaybackService extends Service {
         watchdogRetries = 0;
         pausedByTransientLoss = false;
         isPlaying        = false;
+        sessionWanted    = false;
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         currentChunks    = null;
         currentChunkIdx  = -1;
+        currentTotalChunks = 0;
         currentChapterId = "";
         pendingItem      = null;
         pendingMergeBuffer = null;
         chapterQueue.clear();
+        // A stop is an explicit end of the session — a later service start must
+        // not restore (or auto-resume) it.
+        clearPersistedSession();
         // Cancel prefetch chain but KEEP pendingPlaylist so playChunks → kickPrefetch
         // can re-use it immediately.
         prefetchVersion++;
@@ -921,12 +1035,12 @@ public class TtsPlaybackService extends Service {
             awaitingFetch = true;
             kickPrefetch();
         } else {
-            isPlaying = false;
-            dispatchJs("window.dispatchEvent(new Event('native-tts-done'))");
-            dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-state'," +
-                    "{detail:{playing:false,index:" + currentChunkIdx + "}}))");
-            updateNotification();
-            abandonAudioFocus();
+            // Same terminal path as natural playlist exhaustion: fireDone()
+            // releases the wake lock, records the chapter for the XP drain,
+            // downgrades the MediaSession state, and notifies JS — the inline
+            // version this replaced leaked the wake lock and left the
+            // MediaSession advertising STATE_PLAYING forever.
+            fireDone();
         }
     }
 
@@ -1025,6 +1139,22 @@ public class TtsPlaybackService extends Service {
         }
     }
 
+    /**
+     * Book-level session info from JS. The book id keys the durable session
+     * snapshot, the server progress writes, and the "continue listening"
+     * lookup; the book title shows as the artist/album line on the lockscreen
+     * and Bluetooth displays.
+     */
+    public void setSessionInfo(String bookId, String bookTitle) {
+        if (bookId != null && !bookId.isEmpty()) currentBookId = bookId;
+        if (bookTitle != null && !bookTitle.isEmpty() && !bookTitle.equals(currentBookTitle)) {
+            currentBookTitle = bookTitle;
+            setMetadata(currentTitle);
+            updateNotification();
+        }
+        persistSession();
+    }
+
     public void queueAllChapters(List<ChapterItem> chapters) {
         chapterQueue.clear();
         chapterQueue.addAll(chapters);
@@ -1104,11 +1234,16 @@ public class TtsPlaybackService extends Service {
      * then clears the internal list. Thread-safe for @JavascriptInterface callers.
      */
     public List<String> getAndClearCompletedChapterIds() {
+        List<String> copy;
         synchronized (completedChapterIds) {
-            List<String> copy = new ArrayList<>(completedChapterIds);
+            copy = new ArrayList<>(completedChapterIds);
             completedChapterIds.clear();
-            return copy;
         }
+        // Persist the now-empty list so a later restore can't re-credit
+        // already-drained chapters. (Called from the JS thread — persist on
+        // the main thread where the rest of the snapshot state lives.)
+        mainHandler.post(this::persistSession);
+        return copy;
     }
 
     public void setSleepTimer(long expireAtMs) {
@@ -1155,6 +1290,8 @@ public class TtsPlaybackService extends Service {
             ChapterItem next = chapterQueue.poll();
             if (next != null) deliverAutoAdvance(next, currentChapterId);
         }
+        // Refresh the durable snapshot's upcoming-playlist section.
+        persistSession();
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
@@ -1177,6 +1314,8 @@ public class TtsPlaybackService extends Service {
         updateNotification();
         dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-state'," +
                 "{detail:{playing:false,index:" + currentChunkIdx + "}}))");
+        persistSession();
+        maybeSyncProgressToServer(true);
     }
 
     // ── Self-fetch helpers (always on main thread except ioExecutor lambda) ──
@@ -1358,7 +1497,10 @@ public class TtsPlaybackService extends Service {
         return pm != null && pm.isInteractive();
     }
 
-    /** Called on ioExecutor thread; posts result back to main thread. */
+    /**
+     * Terminal "playback over" path (always on the main thread): playlist
+     * exhausted naturally, or hardware-next pressed on the last chapter.
+     */
     private void fireDone() {
         Log.d(TAG, "fireDone: ch=" + currentChapterId
                 + " queue=" + chapterQueue.size()
@@ -1367,13 +1509,27 @@ public class TtsPlaybackService extends Service {
                 + " selfFetchBase=" + (selfFetchBase.isEmpty() ? "EMPTY" : "set")
                 + " prefetchActive=" + prefetchActive
                 + " prefetchVer=" + prefetchVersion);
+        // Record the just-finished chapter so the screen-on XP drain
+        // (getCompletedChapterIds) credits the FINAL chapter too. The last
+        // chapter ends here via done rather than a chapter-advance, so without
+        // this it would never land in completedChapterIds and its listen XP
+        // would be skipped. The JS drain + backend both dedupe, so a repeat add
+        // is harmless.
+        if (currentChapterId != null && !currentChapterId.isEmpty()) {
+            synchronized (completedChapterIds) {
+                completedChapterIds.add(currentChapterId);
+            }
+        }
         isPlaying = false;
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
+        updatePlaybackState(false);
         dispatchJs("window.dispatchEvent(new Event('native-tts-done'))");
         dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-state'," +
                 "{detail:{playing:false,index:" + currentChunkIdx + "}}))");
         updateNotification();
         abandonAudioFocus();
+        persistSession();
+        maybeSyncProgressToServer(true);
     }
 
     /**
@@ -1402,6 +1558,284 @@ public class TtsPlaybackService extends Service {
         while ((line = reader.readLine()) != null) sb.append(line);
         reader.close();
         return sb.toString();
+    }
+
+    // ── Durable session persistence + background progress sync ───────────────
+
+    /**
+     * Write the resume snapshot to SharedPreferences. Cheap: one JSON string,
+     * async commit. Always called on the main thread (the only thread that
+     * mutates the snapshotted state).
+     */
+    private void persistSession() {
+        if (currentChapterId == null || currentChapterId.isEmpty()) return;
+        try {
+            JSONObject o = new JSONObject();
+            o.put("bookId", currentBookId);
+            o.put("bookTitle", currentBookTitle);
+            o.put("chapterId", currentChapterId);
+            o.put("title", currentTitle);
+            o.put("chunkIdx", Math.max(currentChunkIdx, 0));
+            o.put("totalChunks", currentTotalChunks);
+            o.put("rate", currentRate);
+            o.put("pitch", currentPitch);
+            o.put("playing", isPlaying);
+            // The auth token is deliberately NOT persisted (no JWT at rest in
+            // SharedPreferences). The chapter-text endpoint is public, so
+            // restore + auto-resume work without it; server progress PUTs stay
+            // paused until JS re-supplies the token via setPendingChapters.
+            o.put("apiBase", selfFetchBase);
+            o.put("coverUrl", currentCoverUrl);
+            o.put("ts", System.currentTimeMillis());
+            // Upcoming chapters (strictly after the current one) so auto-advance
+            // also survives a process kill. Chunk text is NOT persisted — it is
+            // re-fetched on demand. If the current chapter isn't in the playlist
+            // (fresh Effect-A seed: playlist already starts after it), keep from 0.
+            int from = 0;
+            for (int i = 0; i < pendingPlaylist.size(); i++) {
+                if (pendingPlaylist.get(i).chapterId.equals(currentChapterId)) {
+                    from = i + 1;
+                    break;
+                }
+            }
+            JSONArray pl = new JSONArray();
+            for (int i = from; i < pendingPlaylist.size()
+                    && pl.length() < PERSIST_PLAYLIST_CAP; i++) {
+                ChapterMeta m = pendingPlaylist.get(i);
+                JSONObject mo = new JSONObject();
+                mo.put("id", m.chapterId);
+                mo.put("title", m.title);
+                mo.put("rate", m.rate);
+                mo.put("pitch", m.pitch);
+                pl.put(mo);
+            }
+            o.put("playlist", pl);
+            JSONArray completed = new JSONArray();
+            synchronized (completedChapterIds) {
+                for (String id : completedChapterIds) completed.put(id);
+            }
+            o.put("completed", completed);
+            SharedPreferences.Editor ed =
+                    getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                            .putString(PREFS_KEY_SESSION, o.toString());
+            // Durable "where listening last stood" pointer for the UI
+            // (BookDetail continue-listening, app-open reconciler). Survives
+            // stopPlayback. Only written once the book id is known so a brand
+            // new play can't blank out the previous book's pointer.
+            if (!currentBookId.isEmpty()) {
+                JSONObject last = new JSONObject();
+                last.put("bookId", currentBookId);
+                last.put("chapterId", currentChapterId);
+                last.put("chunkIdx", Math.max(currentChunkIdx, 0));
+                last.put("ts", System.currentTimeMillis());
+                ed.putString(PREFS_KEY_LAST_POSITION, last.toString());
+            }
+            ed.apply();
+        } catch (Exception e) {
+            Log.w(TAG, "persistSession failed", e);
+        }
+    }
+
+    private void clearPersistedSession() {
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                .remove(PREFS_KEY_SESSION).apply();
+    }
+
+    /**
+     * Restore the snapshot written by {@link #persistSession} as a PAUSED
+     * session (onCreate). The bridge then reports a valid chapter/chunk/book to
+     * JS even though the process was killed, so cold-start sync, "continue
+     * listening", and the notification Play button all land on the position
+     * where playback actually stopped. {@link #resumeFromRestoredSession}
+     * re-fetches the chapter text when playback is actually requested.
+     */
+    private void restoreSession() {
+        try {
+            String raw = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                    .getString(PREFS_KEY_SESSION, null);
+            if (raw == null) return;
+            JSONObject o = new JSONObject(raw);
+            String chId = o.optString("chapterId", "");
+            if (chId.isEmpty()) return;
+            currentBookId      = o.optString("bookId", "");
+            currentBookTitle   = o.optString("bookTitle", "");
+            currentChapterId   = chId;
+            currentTitle       = o.optString("title", currentTitle);
+            currentChunkIdx    = o.optInt("chunkIdx", 0);
+            currentTotalChunks = o.optInt("totalChunks", 0);
+            currentRate        = (float) o.optDouble("rate", 1.0);
+            currentPitch       = (float) o.optDouble("pitch", 1.0);
+            selfFetchBase      = o.optString("apiBase", "");
+            restoredWasPlaying = o.optBoolean("playing", false);
+            restoredAtMs       = o.optLong("ts", 0);
+            JSONArray pl = o.optJSONArray("playlist");
+            if (pl != null) {
+                List<ChapterMeta> list = new ArrayList<>(pl.length());
+                for (int i = 0; i < pl.length(); i++) {
+                    JSONObject mo = pl.optJSONObject(i);
+                    if (mo == null) continue;
+                    String id = mo.optString("id", "");
+                    if (id.isEmpty()) continue;
+                    list.add(new ChapterMeta(id, mo.optString("title", ""),
+                            (float) mo.optDouble("rate", 1.0),
+                            (float) mo.optDouble("pitch", 1.0)));
+                }
+                if (!list.isEmpty()) {
+                    pendingPlaylist = list;
+                    pendingHead     = 0;
+                }
+            }
+            JSONArray completed = o.optJSONArray("completed");
+            if (completed != null) {
+                synchronized (completedChapterIds) {
+                    for (int i = 0; i < completed.length(); i++) {
+                        String id = completed.optString(i, "");
+                        if (!id.isEmpty() && !completedChapterIds.contains(id)) {
+                            completedChapterIds.add(id);
+                        }
+                    }
+                }
+            }
+            isPlaying = false;
+            String cover = o.optString("coverUrl", "");
+            if (!cover.isEmpty()) updateCover(cover);
+            setMetadata(currentTitle);
+            Log.d(TAG, "restoreSession: ch=" + chId + " chunk=" + currentChunkIdx
+                    + " wasPlaying=" + restoredWasPlaying
+                    + " playlist=" + pendingPlaylist.size());
+        } catch (Exception e) {
+            Log.w(TAG, "restoreSession failed", e);
+        }
+    }
+
+    /**
+     * Re-fetch the restored chapter's text and resume speaking from the
+     * persisted chunk. Used by the START_STICKY auto-resume (process killed
+     * mid-playback moments ago) and by {@link #resumePlayback} when the user
+     * hits Play on a restored-but-cold session (notification or JS toggle).
+     */
+    private void resumeFromRestoredSession() {
+        if (restoringSession) return;
+        if (currentChapterId == null || currentChapterId.isEmpty()
+                || selfFetchBase.isEmpty()) return;
+        if (currentChunks != null) {
+            resumePlayback();
+            return;
+        }
+        restoringSession = true;
+        if (ioExecutor == null || ioExecutor.isShutdown()) {
+            ioExecutor = Executors.newCachedThreadPool();
+        }
+        // Claim "playing" right away so the notification reflects intent and a
+        // pause during the fetch is honored by the validity check below.
+        isPlaying = true;
+        if (wakeLock != null && !wakeLock.isHeld()) wakeLock.acquire();
+        updatePlaybackState(true);
+        updateNotification();
+        final String id       = currentChapterId;
+        final String base     = selfFetchBase;
+        final String tok      = selfFetchToken;
+        final String title    = currentTitle;
+        final float  rate     = currentRate;
+        final float  pitch    = currentPitch;
+        final int    startIdx = Math.max(currentChunkIdx, 0);
+        Log.d(TAG, "resumeFromRestoredSession: ch=" + id + " chunk=" + startIdx);
+        ioExecutor.execute(() -> {
+            List<String> chunks = null;
+            try {
+                String body = doHttpGet(base + "/api/chapters/" + id + "/text", tok, true);
+                String text = new JSONObject(body).optString("text_content", "");
+                chunks = splitChunksJava(text, 20, 4000);
+            } catch (Exception e) {
+                Log.w(TAG, "resumeFromRestoredSession fetch failed", e);
+            }
+            final List<String> fChunks = chunks;
+            mainHandler.post(() -> {
+                restoringSession = false;
+                // Abandon if the world changed while fetching: a fresh play
+                // started (currentChunks set), the session was stopped, or the
+                // user paused the pending resume.
+                if (currentChunks != null || !id.equals(currentChapterId) || !isPlaying) return;
+                if (fChunks == null || fChunks.isEmpty()) {
+                    isPlaying = false;
+                    if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
+                    updatePlaybackState(false);
+                    updateNotification();
+                    return;
+                }
+                int idx = Math.min(startIdx, fChunks.size() - 1);
+                ChapterItem item = new ChapterItem(fChunks, id, title, rate, pitch);
+                if (!ttsReady) {
+                    // Fresh process: the TTS engine may still be initialising
+                    // (initTts callback hasn't fired). startChapter→speakChunk
+                    // would silently drop the chunk — buffer it like playChunks
+                    // does; initTts's pendingItem flush starts it when ready.
+                    pendingItem     = item;
+                    pendingStartIdx = idx;
+                    return;
+                }
+                startChapter(item, idx);
+            });
+        });
+    }
+
+    /**
+     * PUT the current listening position to the server so progress stays fresh
+     * even when the WebView has been suspended for hours. Throttled to one
+     * write per {@link #PROGRESS_SYNC_INTERVAL_MS} unless {@code force} (chapter
+     * boundaries, pause, done). Requires the user token + book id provided by
+     * JS — silently skipped otherwise (logged-out users, or before the listen
+     * page has seeded them).
+     */
+    private void maybeSyncProgressToServer(boolean force) {
+        if (currentBookId.isEmpty() || selfFetchBase.isEmpty() || selfFetchToken.isEmpty()) return;
+        if (currentChapterId == null || currentChapterId.isEmpty()) return;
+        List<String> chunks = currentChunks;
+        if (chunks == null || chunks.isEmpty()) return;
+        long now = System.currentTimeMillis();
+        if (!force && now - lastProgressSyncMs < PROGRESS_SYNC_INTERVAL_MS) return;
+        lastProgressSyncMs = now;
+        if (ioExecutor == null || ioExecutor.isShutdown()) {
+            ioExecutor = Executors.newCachedThreadPool();
+        }
+        try {
+            JSONObject o = new JSONObject();
+            o.put("book_id", currentBookId);
+            o.put("chapter_id", currentChapterId);
+            o.put("progress_value", Math.max(currentChunkIdx, 0));
+            o.put("total_value", chunks.size());
+            final String body = o.toString();
+            final String base = selfFetchBase;
+            final String tok  = selfFetchToken;
+            ioExecutor.execute(() -> {
+                try {
+                    doHttpPut(base + "/api/progress", tok, body);
+                } catch (Exception e) {
+                    // Non-fatal: the next throttled write retries naturally.
+                    Log.w(TAG, "progress sync failed: " + e);
+                }
+            });
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void doHttpPut(String urlStr, String token, String jsonBody) throws IOException {
+        URL url = new URL(urlStr);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("PUT");
+        conn.setConnectTimeout(10_000);
+        conn.setReadTimeout(15_000);
+        conn.setRequestProperty("Authorization", "Bearer " + token);
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setDoOutput(true);
+        byte[] payload = jsonBody.getBytes("UTF-8");
+        conn.setFixedLengthStreamingMode(payload.length);
+        OutputStream os = conn.getOutputStream();
+        os.write(payload);
+        os.close();
+        int code = conn.getResponseCode();
+        if (code < 200 || code >= 300) throw new IOException("HTTP " + code);
+        conn.getInputStream().close();
     }
 
     /** Java port of frontend/lib/textChunks.ts splitIntoChunks. */
@@ -1510,6 +1944,7 @@ public class TtsPlaybackService extends Service {
         currentRate      = item.rate;
         currentPitch     = item.pitch;
         currentChapterId = (item.chapterId != null) ? item.chapterId : "";
+        currentTotalChunks = (item.chunks != null) ? item.chunks.size() : 0;
         if (item.title != null && !item.title.isEmpty()) currentTitle = item.title;
 
         awaitingFetch = false;
@@ -1525,6 +1960,8 @@ public class TtsPlaybackService extends Service {
         updateNotification();
         speakChunk(startIdx);
         kickPrefetch();
+        persistSession();
+        maybeSyncProgressToServer(true);
     }
 
     private void startForegroundNow() {
@@ -1547,6 +1984,9 @@ public class TtsPlaybackService extends Service {
     // ── AudioFocus ────────────────────────────────────────────────────────────
 
     private void requestAudioFocus() {
+        // Every playback (re)start path requests focus — the natural single
+        // point to declare that we want the MediaSession active again.
+        sessionWanted = true;
         if (hasFocus || audioManager == null) return;
         int result;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -1619,14 +2059,15 @@ public class TtsPlaybackService extends Service {
                                     : android.R.drawable.ic_media_play;
         String toggleLabel = isPlaying ? "Tạm dừng" : "Phát";
 
-        // Chapter title is the prominent line; app name is the subtitle —
-        // the standard audiobook/podcast pattern.
+        // Chapter title is the prominent line; book title (when known) is the
+        // subtitle — the standard audiobook/podcast pattern.
         String primary = (currentTitle != null && !currentTitle.isEmpty())
                 ? currentTitle : "TruyệnAudio";
+        String subtitle = !currentBookTitle.isEmpty() ? currentBookTitle : "TruyệnAudio";
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle(primary)
-                .setContentText("TruyệnAudio")
+                .setContentText(subtitle)
                 .setSmallIcon(android.R.drawable.ic_media_play)
                 .setColor(NOTIF_ACCENT)
                 .setContentIntent(contentIntent)
@@ -1758,10 +2199,13 @@ public class TtsPlaybackService extends Service {
 
     private void setMetadata(String title) {
         if (mediaSession == null) return;
+        // Book title as artist/album \u2014 what Bluetooth car displays, Android
+        // Auto, and the lockscreen show under the chapter title.
+        String artist = !currentBookTitle.isEmpty() ? currentBookTitle : "Truy\u1ec7nAudio";
         MediaMetadataCompat.Builder b = new MediaMetadataCompat.Builder()
                 .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
-                .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Truy\u1ec7nAudio")
-                .putString(MediaMetadataCompat.METADATA_KEY_ALBUM,  "Truy\u1ec7nAudio");
+                .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist)
+                .putString(MediaMetadataCompat.METADATA_KEY_ALBUM,  artist);
         // Cover art for the lockscreen media card, Android Auto, and BT displays.
         if (currentCoverBitmap != null) {
             b.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, currentCoverBitmap);

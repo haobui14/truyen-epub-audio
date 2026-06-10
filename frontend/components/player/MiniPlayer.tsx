@@ -5,14 +5,34 @@ import { usePlayerContext } from "@/context/PlayerContext";
 import { Spinner } from "@/components/ui/Spinner";
 
 export function MiniPlayer() {
-  const { track, isPlaying, isBuffering, progress, toggle } =
+  const { track, isPlaying, isBuffering, progress, toggle, nativeChapterOverride } =
     usePlayerContext();
 
-  if (!track) return null;
+  // Render even with NO track when the native service holds a session — a
+  // cold start lands on the home page with audio possibly still playing (or a
+  // restored session sitting paused); without this there would be zero UI for
+  // it. Requires the override's bookId so the link can navigate somewhere.
+  if (!track && !nativeChapterOverride?.bookId) return null;
 
-  const { book, chapter } = track;
-  const progressPct = Math.round(progress * 100);
-  const listenUrl = `/listen?id=${track.bookId}&chapter=${track.chapterId}`;
+  // While native auto-advances in the background, the track (set by the listen
+  // page) goes stale — prefer the live native session info when it differs.
+  const bookTitle = nativeChapterOverride?.bookTitle || track?.book.title || "";
+  const coverUrl = nativeChapterOverride?.coverUrl || track?.book.cover_url || null;
+  const displayTitle = nativeChapterOverride?.title || track?.chapter.title || "";
+  const bookId = nativeChapterOverride?.bookId || track?.bookId || "";
+  const displayChapterId =
+    nativeChapterOverride?.chapterId ?? track?.chapterId ?? "";
+  const displayProgress =
+    nativeChapterOverride && nativeChapterOverride.totalChunks > 0
+      ? nativeChapterOverride.chunkIndex / nativeChapterOverride.totalChunks
+      : progress;
+  const displayPlaying = nativeChapterOverride
+    ? nativeChapterOverride.playing
+    : isPlaying;
+  const progressPct = Math.round(
+    Math.max(0, Math.min(1, displayProgress)) * 100,
+  );
+  const listenUrl = `/listen?id=${bookId}&chapter=${displayChapterId}`;
 
   return (
     <div
@@ -29,10 +49,10 @@ export function MiniPlayer() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center gap-3">
         <Link href={listenUrl} className="shrink-0">
           <div className="w-10 h-10 rounded-md overflow-hidden bg-raised-hi ring-1 ring-hairline">
-            {book.cover_url ? (
+            {coverUrl ? (
               <Image
-                src={book.cover_url}
-                alt={book.title}
+                src={coverUrl}
+                alt={bookTitle}
                 width={40}
                 height={40}
                 className="object-cover w-full h-full"
@@ -57,13 +77,13 @@ export function MiniPlayer() {
         >
           <div className="min-w-0 flex-1">
             <p className="font-mono text-[10px] tracking-widest uppercase text-text-faint truncate leading-tight">
-              {book.title}
+              {bookTitle}
             </p>
             <p className="text-sm font-medium text-text truncate leading-tight">
-              {chapter.title}
+              {displayTitle}
             </p>
           </div>
-          {isPlaying && !isBuffering && (
+          {displayPlaying && !isBuffering && (
             <span className="flex items-end gap-0.5 text-accent shrink-0 h-4">
               <span className="sound-bar" />
               <span className="sound-bar" />
@@ -73,8 +93,8 @@ export function MiniPlayer() {
         </Link>
 
         <button
-          onClick={track.onPrev ?? undefined}
-          disabled={!track.onPrev}
+          onClick={track?.onPrev ?? undefined}
+          disabled={!track?.onPrev}
           className="p-2 rounded-full text-text-faint hover:text-text disabled:opacity-25 transition-colors"
           title="Chương trước"
         >
@@ -86,11 +106,11 @@ export function MiniPlayer() {
         <button
           onClick={toggle}
           className="w-10 h-10 bg-accent text-ink rounded-full flex items-center justify-center hover:bg-accent-dim active:scale-95 transition-all shadow-[0_0_18px_var(--color-accent-glow)]"
-          title={isPlaying ? "Tạm dừng" : "Phát"}
+          title={displayPlaying ? "Tạm dừng" : "Phát"}
         >
           {isBuffering ? (
             <Spinner className="w-4 h-4" />
-          ) : isPlaying ? (
+          ) : displayPlaying ? (
             <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 14 14">
               <rect x="2" y="1" width="3.5" height="12" rx="0.5" />
               <rect x="8.5" y="1" width="3.5" height="12" rx="0.5" />
@@ -107,8 +127,8 @@ export function MiniPlayer() {
         </button>
 
         <button
-          onClick={track.onNext ?? undefined}
-          disabled={!track.onNext}
+          onClick={track?.onNext ?? undefined}
+          disabled={!track?.onNext}
           className="p-2 rounded-full text-text-faint hover:text-text disabled:opacity-25 transition-colors"
           title="Chương tiếp"
         >

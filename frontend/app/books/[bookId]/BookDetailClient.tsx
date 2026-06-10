@@ -11,6 +11,7 @@ import { GenreTag } from "@/components/books/GenreManager";
 import { cacheChapterText, isChapterTextCached } from "@/lib/chapterTextCache";
 import { getLocalBookProgress } from "@/lib/progressQueue";
 import { isNativePlatform } from "@/lib/capacitor";
+import { getTtsBridge } from "@/lib/backgroundLock";
 import {
   getCachedBook,
   cacheBook,
@@ -117,6 +118,43 @@ export default function BookDetailPage() {
     [bookId],
   );
 
+  // The native service knows the TRUE last listening position — including
+  // chapters reached while the screen was off and sessions restored after a
+  // process kill — which localStorage (only written while /listen is open)
+  // can trail by dozens of chapters.
+  const nativeListenChapterId = useMemo(() => {
+    if (!isNativePlatform()) return null;
+    try {
+      const bridge = getTtsBridge();
+      if (!bridge) return null;
+      // Live (or restored) session first.
+      if ((bridge.getCurrentBookId?.() ?? "") === bookId) {
+        const id = bridge.getCurrentChapterId?.() || "";
+        if (id) return id;
+      }
+      // Durable last-position: survives stop / swipe-away / process death.
+      // Honored only when fresher than this device's localStorage pointer
+      // (a later /listen visit without playing must still win).
+      const raw = bridge.getLastListenPosition?.() ?? "";
+      if (raw) {
+        const last = JSON.parse(raw) as {
+          bookId?: string;
+          chapterId?: string;
+          ts?: number;
+        };
+        if (last.bookId === bookId && last.chapterId) {
+          const localTs = Number(
+            localStorage.getItem(`listen-chapter-ts:${bookId}`) ?? 0,
+          );
+          if ((last.ts ?? 0) >= localTs) return last.chapterId;
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }, [bookId]);
+
   async function handleDownloadBook() {
     if (dlProgress) return;
     setDlDone(false);
@@ -222,9 +260,13 @@ export default function BookDetailPage() {
   const firstChapter = chapters[0] ?? null;
 
   const listenResumeId =
-    lastListenChapterId ?? bookProgress?.chapter_id ?? firstChapter?.id;
+    nativeListenChapterId ??
+    lastListenChapterId ??
+    bookProgress?.chapter_id ??
+    firstChapter?.id;
   const readResumeId = bookProgress?.chapter_id ?? firstChapter?.id;
-  const hasProgress = !!bookProgress || !!lastListenChapterId;
+  const hasProgress =
+    !!bookProgress || !!lastListenChapterId || !!nativeListenChapterId;
 
   return (
     <div className="max-w-4xl mx-auto">

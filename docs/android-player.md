@@ -37,6 +37,12 @@ See `memory/project_tts_state_machine.md` for the bug-fix history that shaped th
 | `autoAdvancing` | boolean | no | `deliverAutoAdvance` (wraps startChapter) | Suppresses `playFakeSilence` + MediaSession reassertion during chapter transition |
 | `pausedByTransientLoss` | boolean | no | audio-focus listener | If true, auto-resume on focus gain |
 | `hasFocus` | boolean | no | audio-focus listener | Track if we hold audio focus |
+| `sessionWanted` | boolean | no | `requestAudioFocus` (=true), `stopPlayback` / AUDIOFOCUS_LOSS (=false) | Guards `reassertMediaSession`'s staggered re-assertions: never re-activate a session we deliberately gave up |
+| `currentTitle`/`currentTotalChunks`/`currentBookId` | String/int/String | **yes** | `playChunks`, `startChapter`, `setSessionInfo`, `restoreSession` | Read from the WebView JS thread via bridge getters (MiniPlayer override, BookDetail resume) |
+| `currentBookTitle` | String | no | `setSessionInfo`, `restoreSession` | MediaSession ARTIST/ALBUM + notification subtitle |
+| `restoredWasPlaying`/`restoredAtMs`/`autoResumeConsumed` | bool/long/bool | no | `restoreSession`, `onStartCommand` | START_STICKY auto-resume gating (<2 min kill→restart gap) |
+| `restoringSession` | boolean | no | `resumeFromRestoredSession` | Restore text-fetch in flight; async callback validates chapter/playing before starting |
+| `lastProgressSyncMs` | long | no | `maybeSyncProgressToServer` | 30 s throttle for background server progress PUTs |
 | `ttsReady` | boolean | no | `initTts` onInit | TTS engine initialized |
 | `pendingItem`/`pendingStartIdx` | ChapterItem?/int | no | `playChunks` (when !ttsReady), `initTts` onInit (consume) | Defer playback until TTS engine ready |
 | `watchdogRetries` | int | no | `speakChunk`, `watchdogRunnable` | Retry count for stalled TTS engine |
@@ -57,6 +63,7 @@ See `memory/project_tts_state_machine.md` for the bug-fix history that shaped th
 |---|---|
 | `chapterAdvancedRef` | Set by `onChapterAdvance`, read by reset effect to skip `bridge.stopPlayback()` |
 | `lastAdvancedChapterRef` | Dedupes batched chapter-advance events on WebView resume |
+| `advanceTimerRef` | 60 ms coalescing timer: a burst of DISTINCT chapter-advance ids (screen-on flush) navigates only once, to the final id; cancelled by `onDone` and effect teardown |
 | `chapterIdRef` | Always synced to `chapterId` prop; read by async callbacks |
 | `chapterTitleRef` | Always synced to `chapterTitle` prop |
 | `chunksRef`/`chunkRef`/`playingRef` | Mirror of React state for use inside stable callbacks |
@@ -138,7 +145,9 @@ Notes:
 | `clearNextChapter` | (legacy) | clearQueue |
 | `setPendingChapters` | `ListenPageClient` Effect A | `setPendingPlaylist` → replace playlist, pendingHead=0, prefetchVersion++, kickPrefetch; deliver if awaitingFetch |
 | `setSleepTimer`/`cancelSleepTimer` | `useSleepTimer` | Timer runnable |
-| `getCompletedChapterIds` | JS progress sync | Drain `completedChapterIds` |
+| `getCompletedChapterIds` | JS progress sync | Drain `completedChapterIds` (+ persists the drained snapshot) |
+| `setSessionInfo` | `PlayerContext` effect | bookId keys persistence + server progress PUTs; bookTitle → MediaSession artist + notification subtitle (buffered until bound) |
+| `getCurrentTitle`/`getCurrentBookId`/`getTotalChunks` | `PlayerContext` override effect, `BookDetailClient` | (read-only volatile reads) |
 | `isOnline` | network-aware code | (read-only) |
 
 ### Java → JS (dispatched via `webView.post(() -> webView.evaluateJavascript(...))`)
@@ -148,7 +157,8 @@ Notes:
 | `native-tts-chunk` | `speakChunk` start (utterance onStart) | `useNativeTTSPlayer.onChunk` | setChunkIndex |
 | `native-tts-state` | play/pause/stop transitions | `useNativeTTSPlayer.onState` | Sync isPlaying, chunkIndex |
 | `native-tts-chapter-advance` | `deliverAutoAdvance` via `dispatchChapterAdvance` | `useNativeTTSPlayer.onChapterAdvance` | chapterAdvancedRef=true; `onEndedRef.current?.(newChId)` → `ListenPageClient.onEnded` → `router.push(…&autoplay=1)` |
-| `native-tts-done` | `fireDone` (playlist exhausted / grace timeout) | `useNativeTTSPlayer.onDone` | If no onEnded, release background lock |
+| `native-tts-done` | `fireDone` (playlist exhausted, incl. hardware-next on last chapter) | `useNativeTTSPlayer.onDone` | Cancels pending advance-coalesce timer; if no onEnded, release background lock |
+| `native-tts-done` + `detail.sleep` | `sleepRunnable` (sleep timer expired) | `useNativeTTSPlayer.onDone` sleep branch | Update playing state ONLY — no onEnded, no chunk reset (resume continues in place) |
 | `native-tts-error` | `initTts` failure, language-data missing | `useNativeTTSPlayer.onNativeError` | setTtsError |
 
 ### DOM events JS listens to
@@ -162,7 +172,7 @@ Notes:
 
 | Callback | Handler | Purpose |
 |---|---|---|
-| `AudioFocusChangeListener` | TtsPlaybackService | LOSS → stop; LOSS_TRANSIENT → pauseInternal + set pausedByTransientLoss; GAIN → resume if was transient |
+| `AudioFocusChangeListener` | TtsPlaybackService | LOSS → pause + abandon focus + deactivate MediaSession (`sessionWanted=false`); LOSS_TRANSIENT → pauseInternal + set pausedByTransientLoss; GAIN → resume if was transient |
 | TTS `UtteranceProgressListener` onStart/onDone | TtsPlaybackService | Dispatch `native-tts-chunk`; advance to next chunk |
 | `watchdogRunnable` | TtsPlaybackService | 8s watchdog on TTS engine stall → retry |
 | `reassertRunnable` | TtsPlaybackService | 3s periodic MediaSession re-assert (fights TTS engine session-steal) |
@@ -179,8 +189,8 @@ Every path that ends in JS routing to `/listen?chapter=<id>`:
 | `navigateTo(chapter, false)` | in-page prev/next, chapter list | YES (immediate `bridge.stopPlayback()`) | no | yes (new chapterId) | no-op (native already stopped) | Fresh playback on new chapter |
 | `navigateTo(chapter, true)` | `onEnded` non-native fallback | NO (preserve) | yes | yes | skipped (autoplay=1) | Continues on new chapter |
 | `router.push(...&autoplay=1)` from `onChapterAdvance` `onEnded` | `ListenPageClient.setTrack.onEnded` native branch | NO | yes | yes | skipped | Continues (native auto-advanced) |
-| `router.replace(...&autoplay=1)` from visibilitychange handler | `ListenPageClient` | NO | yes | yes (after commit) | skipped | Continues on native's chapter |
-| `router.replace(...&autoplay=1)` from cold-start sync | `ListenPageClient` (once per mount) | NO | yes | yes (after commit) | skipped via `coldStartReplacingRef` (one-render) | Continues on native's chapter |
+| `router.replace(...)` from visibilitychange handler | `ListenPageClient` | NO | only if native `isPlaying()` (a paused/restored session must not autoplay) | yes (after commit) | skipped when autoplay; no-op when native paused | Continues on native's chapter, or lands paused |
+| `router.replace(...)` from cold-start sync | `ListenPageClient` (once per mount) | NO | only if native `isPlaying()` | yes (after commit) | skipped via `coldStartReplacingRef` (one-render) | Continues on native's chapter, or lands paused (restored session) |
 | `<Link href="/listen?…">` from `BookDetailClient` | book detail page | NO | no | yes | **ACTS** (native stopped) | Fresh playback on tapped chapter |
 | `<Link>` from `MiniPlayer` | root layout | NO | no | yes | If native on different chapter, acts; if same, no-op | |
 | `<Link>` from `ChapterList` | book detail page | NO | no | yes | **ACTS** | Fresh playback |
@@ -209,7 +219,71 @@ Reference by ID from code comments (`// see I3 in docs/android-player.md`).
 
 ---
 
-## 6. Known bug history
+## 6. Durable session persistence & background progress sync
+
+Added 2026-06-10 ("seamless background + constant sync").
+
+**Snapshot.** `persistSession()` writes one JSON blob to SharedPreferences
+(`tts_session/session`): bookId, bookTitle, chapterId, title, chunkIdx,
+rate/pitch, playing flag, apiBase, coverUrl, ts, the next ≤50 upcoming
+playlist entries (strictly after the current chapter), and the undrained
+`completedChapterIds`. The auth TOKEN is deliberately NOT persisted (no JWT at
+rest) — the text endpoint is public so restore/auto-resume work without it, and
+server progress PUTs stay paused until JS re-seeds the token (Effect A).
+Written on every chunk start, chapter transition, pause, done, playlist update,
+and `setSessionInfo`; cleared ONLY by `stopPlayback()` (user stop / swipe-away
+/ logout / stale-session guard). Always written on the main thread —
+`getAndClearCompletedChapterIds` (JS thread) posts to main.
+
+**Restore.** `onCreate → restoreSession()` loads the snapshot as a PAUSED
+session: bridge getters immediately report the true last position, so JS
+cold-start sync, BookDetail "continue listening" (`getCurrentBookId` match →
+`getCurrentChapterId`), and the notification Play button all land where
+playback actually stopped — even after a process kill during a screen-off
+session. Chunk text is NOT persisted; `resumeFromRestoredSession()` re-fetches
+it (urgent self-fetch) and `startChapter`s at the saved index. Its async
+callback aborts if `currentChunks != null`, the chapter changed, or the user
+paused meanwhile.
+
+**Auto-resume.** `onStartCommand` with `intent == null` (only the START_STICKY
+system restart path — every app-initiated start carries an intent) auto-resumes
+when the snapshot says `playing=true` and is fresher than 2 minutes: an OS kill
+mid-listen recovers as an uninterrupted session. Older snapshots stay paused.
+
+**Last-position pointer.** `persistSession()` also writes a second prefs key
+`last_position` ({bookId, chapterId, chunkIdx, ts}) that — unlike the session
+snapshot — SURVIVES `stopPlayback()` (swipe-away, explicit stop). It can never
+resume a zombie service; it only tells the UI where listening last stood.
+`TtsBridge.getLastListenPosition()` reads it straight from SharedPreferences so
+it works before the service binds. BookDetail honors it only when its ts beats
+the device's `listen-chapter-ts:` localStorage pointer (a later /listen visit
+without playing must still win).
+
+**App-open reconciler (JS).** A cold start always lands on the home page, so
+`PlayerContext` runs a reconciler on mount (+800 ms/3 s retries for service
+bind/restore lag) and on every visibilitychange: reads the live bridge session
+(or `last_position` fallback) → refreshes `listen-chapter[-ts]:` localStorage,
+`saveLocalProgress`/`saveLocalBookProgress`, pushes `syncBookProgressToServer`
+(Java's own PUTs die with the token on process kill), and drains
+`getCompletedChapterIds()` for XP. ALL XP drains (here and ListenPageClient)
+are gated on the chapter list being loaded: XP = max(10, words/50)·1.5 and the
+backend dedupes the FIRST submission, so draining with word_count 0 would
+permanently under-award. The trackless `nativeChapterOverride` (with
+bookId/bookTitle/coverUrl) also lets MiniPlayer render and control a session
+the WebView never set a track for; `toggle()`'s resume branch therefore must
+not require JS chunks (`getCurrentChunk() >= 0 → resumePlayback()` first).
+
+**Server sync.** `maybeSyncProgressToServer()` PUTs `/api/progress`
+(book_id, chapter_id, progress_value=chunkIdx, total_value=chunk count) with the
+stored bearer token — throttled to 30 s, forced at chapter boundaries / pause /
+done. This keeps the server row fresh during hours of screen-off playback, so
+cross-device resume and post-kill cold starts (`listenProgress` query) are
+accurate. Skipped when bookId/apiBase/token are missing (logged out). JS remains
+a second writer (debounced `saveProgress`) — both upsert the same per-book row.
+
+---
+
+## 7. Known bug history
 
 See `memory/project_tts_state_machine.md` for detail. Summary:
 

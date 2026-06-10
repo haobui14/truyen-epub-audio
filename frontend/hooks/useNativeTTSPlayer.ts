@@ -100,6 +100,13 @@ export function useNativeTTSPlayer(
   // would each call onEnded, causing 10 redundant router.push calls.
   const lastAdvancedChapterRef = useRef<string | undefined>(undefined);
 
+  // Coalesces bursts of chapter-advance events with DISTINCT chapter IDs
+  // (A→B→C, queued while the screen was off, all flushed on resume). The
+  // dedup ref above only catches repeats of the SAME ID — without this timer
+  // each distinct ID would router.push, piling up history entries and
+  // re-seeding Java's playlist once per skipped chapter.
+  const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const chapterIdRef = useRef(chapterId);
   chapterIdRef.current = chapterId;
   const chapterTitleRef = useRef(chapterTitle);
@@ -200,13 +207,47 @@ export function useNativeTTSPlayer(
       // each may resolve the same chapter ID. Only navigate once per chapter.
       if (resolvedChId && resolvedChId === lastAdvancedChapterRef.current) return;
       lastAdvancedChapterRef.current = resolvedChId;
-      onEndedRef.current?.(resolvedChId);
+
+      // Coalesce burst navigation: wait one tick and only navigate to the
+      // FINAL chapter of the burst. A lone advance (the normal screen-on case)
+      // just navigates 60 ms later — imperceptible.
+      const target = resolvedChId;
+      if (advanceTimerRef.current != null) clearTimeout(advanceTimerRef.current);
+      advanceTimerRef.current = setTimeout(() => {
+        advanceTimerRef.current = null;
+        // JS may already be on the target (visibilitychange sync replaced the
+        // URL first) — navigating again would be a redundant history entry.
+        if (target && target === chapterIdRef.current) return;
+        onEndedRef.current?.(target);
+      }, 60);
     };
 
-    const onDone = () => {
+    const onDone = (e: Event) => {
+      // Playback is over — a pending coalesced advance navigation would
+      // re-trigger autoplay on a chapter that already finished. Cancel it.
+      if (advanceTimerRef.current != null) {
+        clearTimeout(advanceTimerRef.current);
+        advanceTimerRef.current = null;
+      }
+
       playingRef.current = false;
       setIsPlaying(false);
       setIsBuffering(false);
+
+      // Sleep-timer stop: Java paused mid-chapter and dispatched done with
+      // detail.sleep. Update the playing state but do NOT treat it as chapter
+      // completion — calling onEnded here would auto-advance to the next
+      // chapter with autoplay, restarting the playback the timer just stopped.
+      // chunkIndex is kept so resume continues from the same spot.
+      if ((e as CustomEvent<{ sleep?: boolean }>).detail?.sleep) {
+        chapterAdvancedRef.current = false;
+        // On the last chapter (no onEnded) playback can't continue anyway —
+        // release the KeepAwake lock like the natural-done path does, or the
+        // screen stays forced-on all night after a sleep stop.
+        if (!onEndedRef.current) releaseBackgroundLock();
+        return;
+      }
+
       setChunkIndex(0);
       chunkRef.current = 0;
 
@@ -228,10 +269,13 @@ export function useNativeTTSPlayer(
 
     const onState = (e: Event) => {
       const { playing, index } = (e as CustomEvent).detail ?? {};
-      // Only sync state if native is still on this JS chapter.
+      // Only sync state if native is still on this JS chapter. When JS has no
+      // chapter at all (cold start, MiniPlayer driving a trackless session),
+      // there is nothing to protect — accept the event so isPlaying is honest.
       const bridge = getTtsBridge();
       const nativeChId = bridge?.getCurrentChapterId?.() ?? "";
-      if (nativeChId && nativeChId !== chapterIdRef.current) return;
+      if (nativeChId && chapterIdRef.current && nativeChId !== chapterIdRef.current)
+        return;
 
       playingRef.current = playing;
       setIsPlaying(playing);
@@ -265,6 +309,10 @@ export function useNativeTTSPlayer(
       window.removeEventListener("native-tts-done", onDone);
       window.removeEventListener("native-tts-state", onState);
       window.removeEventListener("native-tts-error", onNativeError);
+      if (advanceTimerRef.current != null) {
+        clearTimeout(advanceTimerRef.current);
+        advanceTimerRef.current = null;
+      }
     };
   }, [isActive]);
 
@@ -304,11 +352,21 @@ export function useNativeTTSPlayer(
         // chapter) is caught earlier by ListenPageClient's stale-session
         // guard — by the time we reach this effect, nativeIsAhead means a
         // legitimate cascade.
-      } else {
+      } else if (nativeChId === chapterId && !nativePlaying) {
+        // Same chapter, paused: a session restored after a process kill (cold
+        // -start sync just replaced the URL to it, without autoplay) or a
+        // notification pause. Keep it — stopPlayback() would wipe the native
+        // resume position AND its persisted snapshot; toggle() resumes it in
+        // place via resumePlayback().
+      } else if (chapterId) {
         // Normal fresh-start path: native idle, or was on same chapter but
         // paused. Stop to clear any stale state; autoPlay branch starts fresh.
         bridge?.stopPlayback();
       }
+      // chapterId empty (app launch, no track yet): leave native alone — a
+      // session restored after a process kill is sitting there paused, and
+      // stopping it would wipe the resume position before cold-start sync and
+      // "continue listening" can read it.
     }
 
     if (!isActive || !text) {
@@ -467,13 +525,16 @@ export function useNativeTTSPlayer(
     const bridge = getTtsBridge();
     if (!bridge) return;
 
-    // Sync JS state with native before acting — if JS thinks we are playing
-    // but the native service isn't (e.g. playChunksWithId was silently dropped
-    // because the service wasn't bound yet), treat as "not playing" so the
-    // user's first tap starts audio rather than incorrectly pausing.
-    if (playingRef.current && !bridge.isPlaying()) {
-      playingRef.current = false;
-      setIsPlaying(false);
+    // Sync JS state with native before acting — both directions. JS-thinks-
+    // playing/native-isn't: playChunksWithId was silently dropped (service not
+    // bound yet) — first tap must START, not pause. JS-thinks-paused/native-
+    // playing: native advanced chapters in the background while the user was
+    // off /listen — the tap must PAUSE what's audibly playing, not "resume"
+    // (which would restart the current chunk mid-sentence).
+    const nativePlaying = bridge.isPlaying();
+    if (playingRef.current !== nativePlaying) {
+      playingRef.current = nativePlaying;
+      setIsPlaying(nativePlaying);
       setIsBuffering(false);
     }
 
@@ -483,13 +544,16 @@ export function useNativeTTSPlayer(
       setIsPlaying(false);
       setIsBuffering(false);
     } else {
-      if (!chunksRef.current.length) return;
-      // If native has chunks loaded, just resume; otherwise start fresh
+      // Resume whatever session native holds FIRST — its chunks in memory, or
+      // a snapshot restored after a process kill (Java self-fetches the text).
+      // This must not require JS chunks: after a cold start the MiniPlayer can
+      // resume the native session before any page has loaded a track.
       if (bridge.getCurrentChunk() >= 0) {
         bridge.resumePlayback();
         playingRef.current = true;
         setIsPlaying(true);
       } else {
+        if (!chunksRef.current.length) return;
         setIsBuffering(true);
         acquireBackgroundLock();
         startNativePlayback(chunkRef.current);

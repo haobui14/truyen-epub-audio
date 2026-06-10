@@ -21,8 +21,14 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Chapter, Book } from "@/types";
+import {
+  saveLocalProgress,
+  saveLocalBookProgress,
+  syncBookProgressToServer,
+} from "@/lib/progressQueue";
+import { getCachedAllChapters } from "@/lib/bookCache";
 import { useSpeechPlayer } from "@/hooks/useSpeechPlayer";
 import { useNativeTTSPlayer } from "@/hooks/useNativeTTSPlayer";
 import { isNativePlatform } from "@/lib/capacitor";
@@ -86,6 +92,21 @@ interface PlayerContextValue {
 
   // Native TTS error message (null = no error)
   nativeTtsError: string | null;
+
+  // Set when the NATIVE service has a session on a different chapter than the
+  // current track — background auto-advance while the user browses other
+  // pages, or a session that outlived the WebView (cold start with no track
+  // at all). MiniPlayer renders this instead of the stale/absent track.
+  nativeChapterOverride: {
+    bookId: string;
+    bookTitle: string;
+    coverUrl: string;
+    chapterId: string;
+    title: string;
+    chunkIndex: number;
+    totalChunks: number;
+    playing: boolean;
+  } | null;
 
   // Sleep timer
   sleepRemaining: number | null; // seconds remaining, null = inactive
@@ -252,6 +273,19 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
   );
 
   const handleSleepExpire = useCallback(() => {
+    // PAUSE — never toggle. After a screen-off expiry, Java has already
+    // paused and the queued native-tts-* events may not have synced JS state
+    // yet; a toggle() based on that stale state lands in the resume branch
+    // and RESTARTS the playback the timer just stopped. pausePlayback() is
+    // idempotent (no-ops when already paused) and never resumes anything.
+    if (isNativePlatform()) {
+      try {
+        getTtsBridge()?.pausePlayback();
+      } catch {
+        /* bridge unavailable */
+      }
+      return;
+    }
     if (playerStateRef.current.isPlaying) playerStateRef.current.toggle();
   }, []);
   const {
@@ -278,6 +312,233 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
     if (!isNativePlatform()) return;
     getTtsBridge()?.updateCover?.(track?.book?.cover_url ?? "");
   }, [track?.book?.cover_url]);
+
+  // Hand Java the book id + title: the id keys its durable session snapshot
+  // and its background server-progress writes; the title shows as the artist
+  // line on the lockscreen / Bluetooth displays.
+  useEffect(() => {
+    if (!isNativePlatform() || !track?.bookId) return;
+    try {
+      getTtsBridge()?.setSessionInfo?.(track.bookId, track.book?.title ?? "");
+    } catch {
+      /* bridge unavailable */
+    }
+  }, [track?.bookId, track?.book?.title]);
+
+  // ── Background-chapter override for the MiniPlayer ──
+  // While the user browses other pages, native auto-advances chapters but the
+  // track object (set by the listen page) goes stale — the MiniPlayer would
+  // show the old chapter title at ~100% forever. After a cold start there is
+  // no track AT ALL, yet audio may be playing (or a restored session sitting
+  // paused). Mirror the native session into a lightweight override whenever
+  // it differs from the track (or when there is no track).
+  const [nativeChapterOverride, setNativeChapterOverride] = useState<{
+    bookId: string;
+    bookTitle: string;
+    coverUrl: string;
+    chapterId: string;
+    title: string;
+    chunkIndex: number;
+    totalChunks: number;
+    playing: boolean;
+  } | null>(null);
+  const trackChapterId = track?.chapterId ?? "";
+  useEffect(() => {
+    if (!isNativePlatform() || !voice.startsWith("native:")) return;
+    const refresh = () => {
+      const bridge = getTtsBridge();
+      if (!bridge) return;
+      let next: typeof nativeChapterOverride = null;
+      try {
+        const nativeChId = bridge.getCurrentChapterId?.() ?? "";
+        if (nativeChId && nativeChId !== trackChapterId) {
+          next = {
+            bookId: bridge.getCurrentBookId?.() ?? "",
+            bookTitle: bridge.getCurrentBookTitle?.() ?? "",
+            coverUrl: bridge.getCoverUrl?.() ?? "",
+            chapterId: nativeChId,
+            title: bridge.getCurrentTitle?.() ?? "",
+            chunkIndex: Math.max(bridge.getCurrentChunk?.() ?? 0, 0),
+            totalChunks: bridge.getTotalChunks?.() ?? 0,
+            playing: bridge.isPlaying?.() ?? false,
+          };
+        }
+      } catch {
+        /* bridge unavailable */
+      }
+      setNativeChapterOverride((prev) => {
+        if (prev === null && next === null) return prev;
+        if (
+          prev !== null &&
+          next !== null &&
+          prev.bookId === next.bookId &&
+          prev.bookTitle === next.bookTitle &&
+          prev.coverUrl === next.coverUrl &&
+          prev.chapterId === next.chapterId &&
+          prev.title === next.title &&
+          prev.chunkIndex === next.chunkIndex &&
+          prev.totalChunks === next.totalChunks &&
+          prev.playing === next.playing
+        )
+          return prev;
+        return next;
+      });
+    };
+    const onVisible = () => {
+      if (!document.hidden) refresh();
+    };
+    window.addEventListener("native-tts-chapter-advance", refresh);
+    window.addEventListener("native-tts-chunk", refresh);
+    window.addEventListener("native-tts-state", refresh);
+    document.addEventListener("visibilitychange", onVisible);
+    // Service binding + snapshot restore take a moment after app start, and a
+    // restored-PAUSED session emits no events — retry so it still surfaces.
+    refresh();
+    const t1 = setTimeout(refresh, 800);
+    const t2 = setTimeout(refresh, 3000);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      window.removeEventListener("native-tts-chapter-advance", refresh);
+      window.removeEventListener("native-tts-chunk", refresh);
+      window.removeEventListener("native-tts-state", refresh);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [voice, trackChapterId]);
+
+  // ── App-open reconciler: pull everything Java accumulated while the WebView
+  // was suspended or dead, no matter WHICH page the app opens on. The listen
+  // page has its own (richer) sync, but a cold start always lands on the home
+  // page — without this, local progress pointers, the server row, and the XP
+  // for chapters completed in the background would sit in Java untouched
+  // until the user happens to visit /listen.
+  const queryClient = useQueryClient();
+  const xpDrainedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!isNativePlatform()) return;
+    let cancelled = false;
+
+    const reconcile = async () => {
+      const bridge = getTtsBridge();
+      if (!bridge) return;
+      let bookId = "";
+      let chapterId = "";
+      let chunkIdx = 0;
+      let ts = Date.now();
+      let liveSession = false;
+      try {
+        bookId = bridge.getCurrentBookId?.() ?? "";
+        chapterId = bridge.getCurrentChapterId?.() ?? "";
+        chunkIdx = Math.max(bridge.getCurrentChunk?.() ?? 0, 0);
+        liveSession = !!chapterId;
+        if (!chapterId) {
+          // No live/restored session (e.g. user swiped the app away while
+          // listening) — fall back to the durable last-position pointer.
+          const raw = bridge.getLastListenPosition?.() ?? "";
+          if (raw) {
+            const last = JSON.parse(raw) as {
+              bookId?: string;
+              chapterId?: string;
+              chunkIdx?: number;
+              ts?: number;
+            };
+            bookId = last.bookId ?? "";
+            chapterId = last.chapterId ?? "";
+            chunkIdx = Math.max(last.chunkIdx ?? 0, 0);
+            ts = last.ts ?? 0;
+          }
+        }
+      } catch {
+        return;
+      }
+      if (!bookId || !chapterId) return;
+
+      // 1. Device-local pointers — synchronous, so a BookDetail mounted right
+      //    after sees fresh values. Never regress a newer pointer.
+      const prevTs = Number(
+        localStorage.getItem(`listen-chapter-ts:${bookId}`) ?? 0,
+      );
+      if (ts >= prevTs) {
+        localStorage.setItem(`listen-chapter:${bookId}`, chapterId);
+        localStorage.setItem(`listen-chapter-ts:${bookId}`, String(ts));
+      }
+      saveLocalProgress({
+        book_id: bookId,
+        chapter_id: chapterId,
+        progress_value: chunkIdx,
+      });
+
+      // 2. Chapter metadata: index for book-level progress, word_count for XP.
+      //    Shares the listen page's query cache; offline falls back to the
+      //    IndexedDB snapshot.
+      let chapters: Chapter[] = [];
+      try {
+        const data = await queryClient.fetchQuery({
+          queryKey: ["chapters", bookId, "all"],
+          queryFn: () => api.getAllBookChapters(bookId),
+          staleTime: 60_000,
+        });
+        chapters = data?.items ?? [];
+      } catch {
+        const cached = await getCachedAllChapters(bookId).catch(() => null);
+        chapters = cached?.items ?? [];
+      }
+      if (cancelled) return;
+      const ch = chapters.find((c) => c.id === chapterId);
+      if (ch) {
+        saveLocalBookProgress({
+          book_id: bookId,
+          chapter_id: chapterId,
+          chapter_index: ch.chapter_index,
+          progress_value: chunkIdx,
+        });
+      }
+
+      if (!isLoggedIn()) return;
+      // 3. Server: push the position. Matters most after a process kill —
+      //    Java's own background PUTs stop then (the token is never persisted).
+      syncBookProgressToServer(bookId).catch(() => {});
+      // 4. XP for chapters completed while JS was suspended/dead. word_count
+      //    is REQUIRED for correct XP and the backend dedupes the FIRST
+      //    submission — so only drain (which clears Java's list) once the
+      //    chapter list is actually available.
+      if (liveSession && chapters.length > 0) {
+        try {
+          const ids = JSON.parse(bridge.getCompletedChapterIds()) as string[];
+          ids.forEach((completedId) => {
+            if (xpDrainedRef.current.has(completedId)) return;
+            xpDrainedRef.current.add(completedId);
+            const cc = chapters.find((c) => c.id === completedId);
+            api
+              .completeChapter({
+                chapter_id: completedId,
+                book_id: bookId,
+                mode: "listen",
+                word_count: cc?.word_count ?? 0,
+              })
+              .catch(() => {});
+          });
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+
+    const onVisible = () => {
+      if (!document.hidden) reconcile();
+    };
+    // Service binding + snapshot restore take a moment after app start.
+    reconcile();
+    const t1 = setTimeout(reconcile, 800);
+    const t2 = setTimeout(reconcile, 3000);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      clearTimeout(t1);
+      clearTimeout(t2);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [queryClient]);
 
   // Stop playback on logout. The native TTS foreground service runs in its
   // own thread and outlives clearAuth(); without this, a signed-out user keeps
@@ -355,6 +616,7 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
     changePitch: wrappedChangePitch,
     cacheStatuses,
     nativeTtsError: isNativeVoice ? (nativeTtsErr ?? null) : null,
+    nativeChapterOverride: isNativeVoice ? nativeChapterOverride : null,
     sleepRemaining,
     setSleepTimer,
     cancelSleepTimer,

@@ -57,6 +57,7 @@ import {
 import { isNativePlatform } from "@/lib/capacitor";
 import {
   getLocalProgress,
+  saveLocalProgress,
   saveLocalBookProgress,
   syncBookProgressToServer,
 } from "@/lib/progressQueue";
@@ -89,6 +90,9 @@ export default function ListenPage() {
   useEffect(() => {
     if (chapterId && bookId) {
       localStorage.setItem(`listen-chapter:${bookId}`, chapterId);
+      // Timestamp lets BookDetail / the app-open reconciler compare this
+      // pointer's freshness against Java's durable last-position.
+      localStorage.setItem(`listen-chapter-ts:${bookId}`, String(Date.now()));
     }
   }, [bookId, chapterId]);
 
@@ -426,39 +430,65 @@ export default function ListenPage() {
       window.removeEventListener("native-tts-chapter-advance", onAdvance);
   }, [bookId, allChapters]);
 
-  // Screen-on safety net: drain the Java-side completed-chapter list.
-  // If the WebView was completely suspended (deep doze / screen off for a long time),
-  // the queued JS evaluations may not have been processed yet, so the event handler
-  // above might not have fired. Reading the list directly from the bridge ensures
-  // we never miss XP even in that case.
-  useEffect(() => {
+  // Drain the Java-side completed-chapter list and award listen XP for each
+  // newly-completed chapter. getCompletedChapterIds() clears the list as it
+  // reads, and listenXpCompletedRef + the backend both dedupe, so calling this
+  // from multiple triggers is safe.
+  const drainCompletedListenXp = useCallback(() => {
     if (!bookId || !isNativePlatform() || !isLoggedIn()) return;
+    // word_count is REQUIRED for correct XP (max(10, words/50)·1.5) and the
+    // backend dedupes the FIRST submission per chapter — draining before the
+    // chapter list loads would permanently award the 10-XP minimum. The ids
+    // wait in Java (getCompletedChapterIds only clears when called).
+    if (allChapters.length === 0) return;
+    const bridge = getTtsBridge();
+    if (!bridge) return;
+    try {
+      const ids = JSON.parse(bridge.getCompletedChapterIds()) as string[];
+      ids.forEach((completedId) => {
+        if (listenXpCompletedRef.current.has(completedId)) return;
+        listenXpCompletedRef.current.add(completedId);
+        const ch = allChapters.find((c) => c.id === completedId);
+        api
+          .completeChapter({
+            chapter_id: completedId,
+            book_id: bookId,
+            mode: "listen",
+            word_count: ch?.word_count ?? 0,
+          })
+          .catch(() => {});
+      });
+    } catch {
+      /* ignore JSON parse errors */
+    }
+  }, [bookId, allChapters]);
+
+  // Screen-on safety net: drain when the WebView becomes visible again.
+  // If the WebView was completely suspended (deep doze / screen off for a long time),
+  // the queued JS evaluations may not have been processed yet, so the per-advance
+  // handler above might not have fired. Reading the list directly from the bridge
+  // ensures we never miss XP even in that case.
+  useEffect(() => {
     const onVisible = () => {
       if (document.hidden) return;
-      const bridge = getTtsBridge();
-      if (!bridge) return;
-      try {
-        const ids = JSON.parse(bridge.getCompletedChapterIds()) as string[];
-        ids.forEach((completedId) => {
-          if (listenXpCompletedRef.current.has(completedId)) return;
-          listenXpCompletedRef.current.add(completedId);
-          const ch = allChapters.find((c) => c.id === completedId);
-          api
-            .completeChapter({
-              chapter_id: completedId,
-              book_id: bookId,
-              mode: "listen",
-              word_count: ch?.word_count ?? 0,
-            })
-            .catch(() => {});
-        });
-      } catch {
-        /* ignore JSON parse errors */
-      }
+      drainCompletedListenXp();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [bookId, allChapters]);
+  }, [drainCompletedListenXp]);
+
+  // Award the FINAL chapter's XP the instant playback ends. The last chapter
+  // finishes via native-tts-done (there's no chapter-advance), and Java records
+  // it in completedChapterIds right before dispatching the event, so draining
+  // here credits it immediately — including short final chapters that never
+  // cross the ≥80%-listened threshold. The sleep timer also fires
+  // native-tts-done but does NOT add to completedChapterIds, so stopping
+  // mid-chapter on a sleep timer correctly awards nothing.
+  useEffect(() => {
+    const onDone = () => drainCompletedListenXp();
+    window.addEventListener("native-tts-done", onDone);
+    return () => window.removeEventListener("native-tts-done", onDone);
+  }, [drainCompletedListenXp]);
 
   // Auto-sync book progress to server when network comes back online
   useEffect(() => {
@@ -545,21 +575,34 @@ export default function ListenPage() {
     if (!targetChapter) return false;
 
     const nativeChunk = bridge.getCurrentChunk();
+    const nativePlaying = bridge.isPlaying?.() ?? false;
     saveLocalBookProgress({
       book_id: bookId,
       chapter_id: nativeChapterId,
       chapter_index: targetChapter.chapter_index,
       progress_value: nativeChunk >= 0 ? nativeChunk : 0,
     });
+    // Chapter-level row too: the listenProgress query's offline fallback reads
+    // getLocalProgress(chapterId), so without this an offline cold start lands
+    // on the right chapter but at chunk 0.
+    saveLocalProgress({
+      book_id: bookId,
+      chapter_id: nativeChapterId,
+      progress_value: nativeChunk >= 0 ? nativeChunk : 0,
+    });
     localStorage.setItem(`listen-chapter:${bookId}`, nativeChapterId);
+    localStorage.setItem(`listen-chapter-ts:${bookId}`, String(Date.now()));
     syncBookProgressToServer(bookId).catch(() => {});
 
-    // Always autoplay on sync: native was actively listening before the
-    // WebView was suspended/killed, and the user expects playback to continue.
-    // Omitting &autoplay=1 would leave the player paused since setTrack won't
-    // re-fire for the same chapterId.
+    // Autoplay only when native is ACTUALLY playing (the WebView was
+    // suspended mid-listen and the user expects playback to continue —
+    // omitting &autoplay=1 would leave the player paused since setTrack won't
+    // re-fire for the same chapterId). When native is paused — a session
+    // restored after a process kill, or the user paused from the notification
+    // while the screen was off — autoplaying would start audio the user
+    // didn't ask for; land on the chapter paused instead.
     router.replace(
-      `/listen?id=${bookId}&chapter=${nativeChapterId}&autoplay=1`,
+      `/listen?id=${bookId}&chapter=${nativeChapterId}${nativePlaying ? "&autoplay=1" : ""}`,
     );
     return true;
   }, [chapterId, allChapters, bookId, router]);
@@ -673,9 +716,19 @@ export default function ListenPage() {
       .filter((c) => c.chapter_index > currentIndex)
       .sort((a, b) => a.chapter_index - b.chapter_index);
 
-    if (remainingChapters.length === 0) return;
-
     const token = getToken() ?? "";
+
+    if (remainingChapters.length === 0) {
+      // On the last chapter there are no upcoming chapters. Clear any stale
+      // pending playlist left over from an earlier position — otherwise when
+      // this chapter finishes, TtsPlaybackService.onChunkFinished sees
+      // pendingHead < pendingPlaylist.size() and self-fetches back into those
+      // leftover chapters (jumping the listener back toward their saved-progress
+      // chapter) instead of firing native-tts-done and stopping.
+      bridge.setPendingChapters("[]", API_URL, token);
+      return;
+    }
+
     const meta = remainingChapters.map((ch) => ({
       id: ch.id,
       title: ch.title ?? "",

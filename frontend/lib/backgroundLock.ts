@@ -29,7 +29,29 @@ interface TtsBridgeNative {
   updateCover(url: string): void;
   getCurrentChunk(): number;
   getCurrentChapterId(): string;
+  /** Chapter title native is currently playing (optional — newer APKs). */
+  getCurrentTitle?(): string;
+  /** Book id of the native session (optional — newer APKs). */
+  getCurrentBookId?(): string;
+  /** Book title of the native session (optional — newer APKs). */
+  getCurrentBookTitle?(): string;
+  /** Cover URL of the native session's book (optional — newer APKs). */
+  getCoverUrl?(): string;
+  /** Chunk count of the chapter native is playing (optional — newer APKs). */
+  getTotalChunks?(): number;
+  /**
+   * Last listening position on this device as JSON
+   * {bookId, chapterId, chunkIdx, ts}, or "". Survives stop/swipe-away/
+   * process death — unlike the live session. (Optional — newer APKs.)
+   */
+  getLastListenPosition?(): string;
   isPlaying(): boolean;
+  /**
+   * Book-level session info: the id keys Java's durable session snapshot and
+   * its background server-progress writes; the title shows as the artist line
+   * on the lockscreen / Bluetooth displays. (Optional — newer APKs.)
+   */
+  setSessionInfo?(bookId: string, bookTitle: string): void;
   /** Queue next chapter for seamless background auto-advance. */
   queueNextChapter(
     chunksJson: string,

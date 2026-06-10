@@ -56,6 +56,11 @@ public class TtsBridge {
     // PlayerContext as soon as the book loads, often before binding completes).
     private String pendingCoverUrl = null;
 
+    // Book id/title saved when the service is not yet bound (setSessionInfo
+    // fires from PlayerContext as soon as the track loads).
+    private String pendingBookId    = null;
+    private String pendingBookTitle = null;
+
     // ── Service connection ────────────────────────────────────────────────────
 
     private final ServiceConnection connection = new ServiceConnection() {
@@ -86,6 +91,11 @@ public class TtsBridge {
                 if (pendingCoverUrl != null) {
                     service.updateCover(pendingCoverUrl);
                     pendingCoverUrl = null;
+                }
+                if (pendingBookId != null || pendingBookTitle != null) {
+                    service.setSessionInfo(pendingBookId, pendingBookTitle);
+                    pendingBookId    = null;
+                    pendingBookTitle = null;
                 }
             }
         }
@@ -256,6 +266,23 @@ public class TtsBridge {
         });
     }
 
+    /**
+     * Book-level session info: id keys the durable session snapshot and the
+     * Java-side server progress writes; title shows on the lockscreen /
+     * Bluetooth as artist. Buffered until the service binds.
+     */
+    @JavascriptInterface
+    public void setSessionInfo(String bookId, String bookTitle) {
+        mainHandler.post(() -> {
+            if (service != null) {
+                service.setSessionInfo(bookId, bookTitle);
+            } else {
+                pendingBookId    = bookId;
+                pendingBookTitle = bookTitle;
+            }
+        });
+    }
+
     @JavascriptInterface
     public int getCurrentChunk() {
         // Volatile read — safe from any thread
@@ -267,6 +294,54 @@ public class TtsBridge {
     public String getCurrentChapterId() {
         TtsPlaybackService svc = service;
         return svc != null ? svc.currentChapterId : "";
+    }
+
+    @JavascriptInterface
+    public String getCurrentTitle() {
+        TtsPlaybackService svc = service;
+        return svc != null ? svc.currentTitle : "";
+    }
+
+    @JavascriptInterface
+    public String getCurrentBookId() {
+        TtsPlaybackService svc = service;
+        return svc != null ? svc.currentBookId : "";
+    }
+
+    @JavascriptInterface
+    public String getCurrentBookTitle() {
+        TtsPlaybackService svc = service;
+        return svc != null ? svc.currentBookTitle : "";
+    }
+
+    @JavascriptInterface
+    public String getCoverUrl() {
+        TtsPlaybackService svc = service;
+        return svc != null ? svc.currentCoverUrl : "";
+    }
+
+    @JavascriptInterface
+    public int getTotalChunks() {
+        TtsPlaybackService svc = service;
+        return svc != null ? svc.currentTotalChunks : 0;
+    }
+
+    /**
+     * Last listening position on this device as a JSON string
+     * {bookId, chapterId, chunkIdx, ts} — or "" if none. Unlike the live
+     * session it survives stopPlayback / swipe-away / process death. Read
+     * straight from SharedPreferences so it works even before the service
+     * binds.
+     */
+    @JavascriptInterface
+    public String getLastListenPosition() {
+        try {
+            return context.getSharedPreferences(
+                            TtsPlaybackService.PREFS_NAME, Context.MODE_PRIVATE)
+                    .getString(TtsPlaybackService.PREFS_KEY_LAST_POSITION, "");
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     @JavascriptInterface
