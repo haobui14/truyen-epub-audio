@@ -327,7 +327,10 @@ export async function flushProgressQueue(): Promise<number> {
         }
         synced++;
       } catch {
-        break;
+        // One book failing (e.g. a transient 5xx) must not abort syncing the
+        // rest — its entries stay queued (we only delete after a successful
+        // save) and retry on the next flush.
+        continue;
       }
     }
     return synced;

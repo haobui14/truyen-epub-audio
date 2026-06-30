@@ -53,6 +53,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Queue;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import android.util.Log;
@@ -621,6 +623,7 @@ public class TtsPlaybackService extends Service {
                         "{detail:{code:'INIT_FAILED'," +
                         "message:'Kh\u00f4ng th\u1ec3 kh\u1edfi t\u1ea1o gi\u1ecdng \u0111\u1ecdc tr\u00ean thi\u1ebft b\u1ecb.'}}))");
                 pendingItem = null;
+                releaseAfterFailedInit();
                 return;
             }
 
@@ -632,6 +635,7 @@ public class TtsPlaybackService extends Service {
                         "message:'Thi\u1ebft b\u1ecb ch\u01b0a c\u00f3 d\u1eef li\u1ec7u gi\u1ecdng \u0111\u1ecdc ti\u1ebfng Vi\u1ec7t. " +
                         "V\u00e0o C\u00e0i \u0111\u1eb7t \u2192 Tr\u1ee3 n\u0103ng \u2192 Chuy\u1ec3n v\u0103n b\u1ea3n th\u00e0nh gi\u1ecdng n\u00f3i \u0111\u1ec3 c\u00e0i \u0111\u1eb7t.'}}))");
                 pendingItem = null;
+                releaseAfterFailedInit();
                 return;
             }
 
@@ -660,9 +664,22 @@ public class TtsPlaybackService extends Service {
                 }
 
                 @Override
+                public void onError(String utteranceId, int errorCode) {
+                    final int idx = parseChunkIndex(utteranceId);
+                    mainHandler.post(() -> {
+                        // onChunkFinished already no-ops when !isPlaying, so a
+                        // deliberate tts.stop() (which clears isPlaying) won't
+                        // auto-advance. For a genuine synthesis error we skip the
+                        // bad chunk so playback keeps going instead of stalling.
+                        Log.w(TAG, "TTS onError code=" + errorCode + " chunk=" + idx);
+                        onChunkFinished(idx);
+                    });
+                }
+
+                @Override
                 public void onError(String utteranceId) {
-                    int idx = parseChunkIndex(utteranceId);
-                    mainHandler.post(() -> onChunkFinished(idx));
+                    // Deprecated one-arg form (API < 24) — delegate to the new one.
+                    onError(utteranceId, TextToSpeech.ERROR);
                 }
             });
 
@@ -675,6 +692,20 @@ public class TtsPlaybackService extends Service {
                 startChapter(item, idx);
             }
         }));
+    }
+
+    /**
+     * Releases playback resources after the TTS engine fails to initialize
+     * (INIT_FAILED / LANG_UNAVAILABLE) while playChunks had already optimistically
+     * acquired the wake lock and set isPlaying for a buffered (pendingItem) start.
+     * Without this the wake lock leaks (battery drain) and the foreground
+     * notification sticks in a phantom "playing" state with no audio.
+     */
+    private void releaseAfterFailedInit() {
+        isPlaying = false;
+        if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
+        updatePlaybackState(false);
+        updateNotification();
     }
 
     private static int parseChunkIndex(String utteranceId) {
@@ -1901,10 +1932,23 @@ public class TtsPlaybackService extends Service {
         conn.getInputStream().close();
     }
 
+    // Mirror of the JS regex in frontend/lib/textChunks.ts: /[^.!?\n]+[.!?\n]*/g.
+    // MUST stay byte-identical in behavior to the TS splitter — Java's chunk
+    // array indexes the progress JS reads back, but JS divides by ITS own chunk
+    // count, so any tokenization drift skews the progress bar after a screen-off
+    // auto-advance.
+    private static final Pattern SENTENCE_PATTERN = Pattern.compile("[^.!?\\n]+[.!?\\n]*");
+
     /** Java port of frontend/lib/textChunks.ts splitIntoChunks. */
     private List<String> splitChunksJava(String text, int targetCount, int hardMaxLen) {
         if (text == null || text.isEmpty()) return Collections.emptyList();
-        String[] sentences = text.split("(?<=[.!?\\n])");
+        // text.match(/[^.!?\n]+[.!?\n]*/g) ?? [text] — groups trailing delimiters
+        // with the sentence and never yields delimiter-only tokens (unlike the
+        // old lookbehind split, which produced one token per delimiter).
+        List<String> sentences = new ArrayList<>();
+        Matcher m = SENTENCE_PATTERN.matcher(text);
+        while (m.find()) sentences.add(m.group());
+        if (sentences.isEmpty()) sentences.add(text);
         int softMaxLen = Math.max((int) Math.ceil((double) text.length() / targetCount), 50);
         int maxLen = Math.min(softMaxLen, hardMaxLen);
         List<String> chunks  = new ArrayList<>();
@@ -2126,9 +2170,9 @@ public class TtsPlaybackService extends Service {
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
-                .addAction(android.R.drawable.ic_media_previous, "Trước", prevPi)
+                .addAction(android.R.drawable.ic_media_previous, "Đầu chương", prevPi)
                 .addAction(toggleIcon, toggleLabel, playPausePi)
-                .addAction(android.R.drawable.ic_media_next, "Tiếp", nextPi)
+                .addAction(android.R.drawable.ic_media_next, "Chương tiếp", nextPi)
                 .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Dừng", stopPi)
                 .setStyle(new MediaStyle()
                         .setMediaSession(mediaSession != null ? mediaSession.getSessionToken() : null)

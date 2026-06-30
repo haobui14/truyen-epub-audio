@@ -92,6 +92,9 @@ interface PlayerContextValue {
 
   // Native TTS error message (null = no error)
   nativeTtsError: string | null;
+  // Clears the native TTS error (re-enables the play button after the user
+  // installs the missing voice / taps retry). No-op on the web player.
+  clearNativeTtsError: () => void;
 
   // Set when the NATIVE service has a session on a different chapter than the
   // current track — background auto-advance while the user browses other
@@ -616,6 +619,7 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
     changePitch: wrappedChangePitch,
     cacheStatuses,
     nativeTtsError: isNativeVoice ? (nativeTtsErr ?? null) : null,
+    clearNativeTtsError: isNativeVoice ? nativePlayer.clearTtsError : () => {},
     nativeChapterOverride: isNativeVoice ? nativeChapterOverride : null,
     sleepRemaining,
     setSleepTimer,

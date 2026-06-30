@@ -48,6 +48,7 @@ export function SpeechPlayer() {
     seekChunk,
     cacheStatuses,
     nativeTtsError,
+    clearNativeTtsError,
     sleepRemaining,
     setSleepTimer,
     cancelSleepTimer,
@@ -190,9 +191,40 @@ export function SpeechPlayer() {
               clipRule="evenodd"
             />
           </svg>
-          <p className="text-xs text-vermillion leading-snug">
-            {nativeTtsError}
-          </p>
+          <div className="min-w-0">
+            <p className="text-xs text-vermillion leading-snug">
+              {nativeTtsError}
+            </p>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5">
+              {typeof (window as unknown as { TtsBridge?: { openTtsSettings?: () => void } })
+                .TtsBridge?.openTtsSettings === "function" && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    (window as unknown as { TtsBridge: { openTtsSettings: () => void } })
+                      .TtsBridge.openTtsSettings()
+                  }
+                  className="text-xs font-medium text-vermillion underline underline-offset-2 active:opacity-60"
+                >
+                  Mở cài đặt giọng đọc
+                </button>
+              )}
+              {typeof (window as unknown as { TtsBridge?: { retryTts?: () => void } })
+                .TtsBridge?.retryTts === "function" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearNativeTtsError();
+                    (window as unknown as { TtsBridge: { retryTts: () => void } })
+                      .TtsBridge.retryTts();
+                  }}
+                  className="text-xs font-medium text-vermillion underline underline-offset-2 active:opacity-60"
+                >
+                  Thử lại
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -410,7 +442,7 @@ export function SpeechPlayer() {
                   changeRate(s);
                   setOpenPanel(null);
                 }}
-                className={`py-1.5 rounded-sm text-xs font-medium border transition-colors ${
+                className={`min-h-[44px] flex items-center justify-center rounded-sm text-xs font-medium border transition-all active:scale-95 touch-manipulation ${
                   Math.abs(rate - s) < 0.001
                     ? "bg-accent border-accent text-ink"
                     : "border-hairline text-text-mute hover:border-accent/40 hover:text-accent"

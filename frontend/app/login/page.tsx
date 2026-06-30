@@ -80,7 +80,7 @@ export default function LoginPage() {
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full px-3.5 py-2.5 rounded-xl border border-hairline-soft dark:border-hairline bg-ink dark:bg-raised text-text dark:text-text text-sm focus:ring-2 focus:ring-accent focus:border-accent outline-none transition-colors"
+            className="w-full px-3.5 py-2.5 rounded-xl border border-hairline-soft dark:border-hairline bg-ink dark:bg-raised text-text dark:text-text text-base focus:ring-2 focus:ring-accent focus:border-accent outline-none transition-colors"
             placeholder="email@example.com"
           />
         </div>
@@ -95,7 +95,7 @@ export default function LoginPage() {
             minLength={6}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full px-3.5 py-2.5 rounded-xl border border-hairline-soft dark:border-hairline bg-ink dark:bg-raised text-text dark:text-text text-sm focus:ring-2 focus:ring-accent focus:border-accent outline-none transition-colors"
+            className="w-full px-3.5 py-2.5 rounded-xl border border-hairline-soft dark:border-hairline bg-ink dark:bg-raised text-text dark:text-text text-base focus:ring-2 focus:ring-accent focus:border-accent outline-none transition-colors"
             placeholder="Ít nhất 6 ký tự"
           />
         </div>

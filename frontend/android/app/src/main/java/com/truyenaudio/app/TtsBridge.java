@@ -168,6 +168,51 @@ public class TtsBridge {
         });
     }
 
+    /**
+     * Opens the system Text-to-Speech settings so the user can install or
+     * select Vietnamese voice data after a LANG_UNAVAILABLE error. Falls back
+     * to the Accessibility settings screen on OEMs that hide the TTS activity.
+     */
+    @JavascriptInterface
+    public void openTtsSettings() {
+        mainHandler.post(() -> {
+            Intent i = new Intent("com.android.settings.TTS_SETTINGS");
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            try {
+                context.startActivity(i);
+            } catch (Exception e) {
+                Intent fallback = new Intent(
+                        android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS);
+                fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                try {
+                    context.startActivity(fallback);
+                } catch (Exception ignored) {}
+            }
+        });
+    }
+
+    /**
+     * Tears the service down and re-creates it so the TextToSpeech engine
+     * re-initializes — used by the error banner's "retry" button after the
+     * user installs the missing voice. The next playChunks buffers + replays
+     * once the fresh service binds.
+     */
+    @JavascriptInterface
+    public void retryTts() {
+        mainHandler.post(() -> {
+            if (service != null) service.stopPlayback();
+            if (bound) {
+                try {
+                    context.unbindService(connection);
+                } catch (Exception ignored) {}
+                bound   = false;
+                service = null;
+            }
+            context.stopService(new Intent(context, TtsPlaybackService.class));
+            ensureStarted();
+        });
+    }
+
     @JavascriptInterface
     public void playChunks(String chunksJson, double rate, double pitch,
                            int startIdx, String title) {

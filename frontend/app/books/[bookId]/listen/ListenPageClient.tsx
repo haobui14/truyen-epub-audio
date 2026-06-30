@@ -42,6 +42,7 @@ import {
 import Link from "next/link";
 import { useRouter, useSearchParams, useParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { api } from "@/lib/api";
 import { isLoggedIn, getUser, getToken } from "@/lib/auth";
 import { SpeechPlayer } from "@/components/player/SpeechPlayer";
@@ -206,13 +207,23 @@ export default function ListenPage() {
   });
 
   const allChapters = useMemo(() => chaptersData?.items ?? [], [chaptersData]);
-  const currentChapter = allChapters.find((c) => c.id === chapterId) ?? null;
+  // Index by chapter_index once so the many neighbor lookups below are O(1)
+  // instead of O(N) scans — this subtree re-renders on every native-tts-chunk
+  // event (~every 300ms during playback), so on a 2000-chapter book the old
+  // ~14 find() calls per render were a measurable CPU drain on cheap devices.
+  const chapterByIndex = useMemo(() => {
+    const m = new Map<number, (typeof allChapters)[number]>();
+    for (const c of allChapters) m.set(c.chapter_index, c);
+    return m;
+  }, [allChapters]);
+  const currentChapter = useMemo(
+    () => allChapters.find((c) => c.id === chapterId) ?? null,
+    [allChapters, chapterId],
+  );
   const currentIndex = currentChapter?.chapter_index ?? -1;
 
-  const prevChapter =
-    allChapters.find((c) => c.chapter_index === currentIndex - 1) ?? null;
-  const nextChapter =
-    allChapters.find((c) => c.chapter_index === currentIndex + 1) ?? null;
+  const prevChapter = chapterByIndex.get(currentIndex - 1) ?? null;
+  const nextChapter = chapterByIndex.get(currentIndex + 1) ?? null;
 
   // Preload adjacent + upcoming chapter texts.
   // On native, each successful API fetch is persisted to IndexedDB so Java's
@@ -220,16 +231,11 @@ export default function ListenPage() {
   // playback without any network dependency inside the Java service.
   const prevChapterId = prevChapter?.id ?? null;
   const nextChapterId = nextChapter?.id ?? null;
-  const next2Chapter =
-    allChapters.find((c) => c.chapter_index === currentIndex + 2) ?? null;
-  const next3Chapter =
-    allChapters.find((c) => c.chapter_index === currentIndex + 3) ?? null;
-  const next4Chapter =
-    allChapters.find((c) => c.chapter_index === currentIndex + 4) ?? null;
-  const next5Chapter =
-    allChapters.find((c) => c.chapter_index === currentIndex + 5) ?? null;
-  const next6Chapter =
-    allChapters.find((c) => c.chapter_index === currentIndex + 6) ?? null;
+  const next2Chapter = chapterByIndex.get(currentIndex + 2) ?? null;
+  const next3Chapter = chapterByIndex.get(currentIndex + 3) ?? null;
+  const next4Chapter = chapterByIndex.get(currentIndex + 4) ?? null;
+  const next5Chapter = chapterByIndex.get(currentIndex + 5) ?? null;
+  const next6Chapter = chapterByIndex.get(currentIndex + 6) ?? null;
   const next2ChapterId = next2Chapter?.id ?? null;
   const next3ChapterId = next3Chapter?.id ?? null;
   const next4ChapterId = next4Chapter?.id ?? null;
@@ -305,16 +311,18 @@ export default function ListenPage() {
     staleTime: Infinity,
   });
 
-  const neighborChapters = [-2, -1, 0, 1, 2, 3]
-    .map((offset) =>
-      allChapters.find((c) => c.chapter_index === currentIndex + offset),
-    )
-    .filter(
-      (c): c is NonNullable<typeof c> =>
-        !!c && c.id !== chapterId && c.status === "ready",
-    )
-    .concat(currentChapter?.status === "ready" ? [currentChapter] : [])
-    .map((c) => ({ id: c.id }));
+  const neighborChapters = useMemo(
+    () =>
+      [-2, -1, 0, 1, 2, 3]
+        .map((offset) => chapterByIndex.get(currentIndex + offset))
+        .filter(
+          (c): c is NonNullable<typeof c> =>
+            !!c && c.id !== chapterId && c.status === "ready",
+        )
+        .concat(currentChapter?.status === "ready" ? [currentChapter] : [])
+        .map((c) => ({ id: c.id })),
+    [chapterByIndex, currentIndex, chapterId, currentChapter],
+  );
 
   const navigateTo = useCallback(
     (chapter: typeof currentChapter, autoplay = false) => {
@@ -511,8 +519,30 @@ export default function ListenPage() {
   const [editError, setEditError] = useState<string | null>(null);
   const isAdmin = getUser()?.role === "admin";
   const activeChunkRef = useRef<HTMLDivElement>(null);
-  const activeChapterRef = useRef<HTMLButtonElement>(null);
+  const chapterListRef = useRef<HTMLDivElement>(null);
   const chapterListScrolledRef = useRef(false);
+
+  // ── Chapter list (virtualized so big books don't mount thousands of rows) ──
+  const isNative = isNativePlatform();
+  const filteredChapters = useMemo(() => {
+    const q = chapterSearch.trim().toLowerCase();
+    if (!q) return allChapters;
+    return allChapters.filter(
+      (ch) =>
+        ch.title.toLowerCase().includes(q) ||
+        String(ch.chapter_index + 1).includes(q),
+    );
+  }, [allChapters, chapterSearch]);
+  const activeChapterListIndex = useMemo(
+    () => filteredChapters.findIndex((c) => c.id === chapterId),
+    [filteredChapters, chapterId],
+  );
+  const chapterRowVirtualizer = useVirtualizer({
+    count: filteredChapters.length,
+    getScrollElement: () => chapterListRef.current,
+    estimateSize: () => 41,
+    overscan: 8,
+  });
 
   // Signals that the next chapter should auto-play. Set synchronously before
   // navigation so the setTrack effect always sees autoPlay=true on chapter
@@ -896,13 +926,35 @@ export default function ListenPage() {
     }
   }, [chunkIndex, showText]);
 
-  // Auto-scroll chapter list to the active chapter on first render
+  // On open, scroll the chapter list so the currently-playing chapter is
+  // centered — scoped to the list's own scroll container (the virtualizer only
+  // scrolls its element, never the page). One-shot per mount; rAF-deferred so
+  // the container has laid out before measuring.
   useEffect(() => {
-    if (!chapterListScrolledRef.current && activeChapterRef.current) {
+    if (chapterListScrolledRef.current || filteredChapters.length === 0) return;
+    if (activeChapterListIndex < 0) return;
+    const raf = requestAnimationFrame(() => {
+      if (!chapterListRef.current) return;
+      chapterRowVirtualizer.scrollToIndex(activeChapterListIndex, {
+        align: "center",
+      });
       chapterListScrolledRef.current = true;
-      activeChapterRef.current.scrollIntoView({ block: "center" });
-    }
-  }, [chapterId, allChapters]);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [activeChapterListIndex, filteredChapters.length, chapterRowVirtualizer]);
+
+  // On Android, the hardware back button should close the edit modal instead of
+  // navigating away (which would discard unsaved edits). Capacitor dispatches a
+  // 'backbutton' event on document before delegating to the Java activity.
+  useEffect(() => {
+    if (!showEditModal || !isNativePlatform()) return;
+    const handler = (e: Event) => {
+      e.preventDefault();
+      setShowEditModal(false);
+    };
+    document.addEventListener("backbutton", handler);
+    return () => document.removeEventListener("backbutton", handler);
+  }, [showEditModal]);
 
   async function handleSaveOffline() {
     if (!chapterId || !chapterTextContent) return;
@@ -1330,7 +1382,7 @@ export default function ListenPage() {
               value={chapterSearch}
               onChange={(e) => setChapterSearch(e.target.value)}
               placeholder="Tìm chương..."
-              className="w-full pl-8 pr-8 py-2 text-xs rounded-lg border border-hairline-soft dark:border-hairline bg-surface dark:bg-raised text-text-dim dark:text-text-faint placeholder-text-faint dark:placeholder-text-faint focus:outline-none focus:border-accent/40 dark:focus:border-accent transition-colors"
+              className="w-full pl-8 pr-8 py-2 text-base rounded-lg border border-hairline-soft dark:border-hairline bg-surface dark:bg-raised text-text-dim dark:text-text-faint placeholder-text-faint dark:placeholder-text-faint focus:outline-none focus:border-accent/40 dark:focus:border-accent transition-colors"
             />
             {chapterSearch && (
               <button
@@ -1353,41 +1405,46 @@ export default function ListenPage() {
               </button>
             )}
           </div>
-          {/* Chapter rows */}
-          {(() => {
-            const q = chapterSearch.trim().toLowerCase();
-            const filtered = q
-              ? allChapters.filter(
-                  (ch) =>
-                    ch.title.toLowerCase().includes(q) ||
-                    String(ch.chapter_index + 1).includes(q),
-                )
-              : allChapters;
-            return (
-              <div className="max-h-60 overflow-y-auto rounded-xl border border-hairline-soft dark:border-hairline-soft divide-y divide-hairline-soft dark:divide-hairline-soft">
-                {filtered.length === 0 ? (
-                  <p className="px-4 py-4 text-xs text-text-mute dark:text-text-mute text-center">
-                    Không tìm thấy chương nào
-                  </p>
-                ) : (
-                  filtered.map((ch) => (
+          {/* Chapter rows (virtualized) */}
+          <div
+            ref={chapterListRef}
+            className="max-h-60 overflow-y-auto rounded-xl border border-hairline-soft dark:border-hairline-soft"
+          >
+            {filteredChapters.length === 0 ? (
+              <p className="px-4 py-4 text-xs text-text-mute dark:text-text-mute text-center">
+                Không tìm thấy chương nào
+              </p>
+            ) : (
+              <div
+                style={{
+                  height: chapterRowVirtualizer.getTotalSize(),
+                  position: "relative",
+                }}
+              >
+                {chapterRowVirtualizer.getVirtualItems().map((vi) => {
+                  const ch = filteredChapters[vi.index];
+                  const isActiveRow = ch.id === chapterId;
+                  return (
                     <button
                       key={ch.id}
-                      ref={ch.id === chapterId ? activeChapterRef : null}
                       onClick={() => navigateTo(ch)}
-                      className={`w-full text-left px-4 py-2.5 text-sm transition-colors flex items-center justify-between gap-2 ${
-                        ch.id === chapterId
+                      style={{
+                        height: vi.size,
+                        transform: `translateY(${vi.start}px)`,
+                      }}
+                      className={`absolute left-0 top-0 w-full text-left px-4 py-2.5 text-sm transition-colors flex items-center justify-between gap-2 select-none border-b border-hairline-soft dark:border-hairline-soft ${
+                        isActiveRow
                           ? "bg-accent/15 dark:bg-accent/60 text-accent-dim dark:text-accent font-medium"
                           : "text-text-dim dark:text-text-mute hover:bg-ink dark:hover:bg-raised/60"
                       }`}
                     >
-                      <span>
+                      <span className="truncate">
                         <span className="text-[11px] font-mono text-text-faint dark:text-text-dim mr-2 tabular-nums">
                           {String(ch.chapter_index + 1).padStart(2, "0")}
                         </span>
                         {ch.title}
                       </span>
-                      {isNativePlatform() && cachedIds.has(ch.id) && (
+                      {isNative && cachedIds.has(ch.id) && (
                         <svg
                           className="w-3 h-3 shrink-0 text-accent dark:text-accent"
                           fill="none"
@@ -1403,11 +1460,11 @@ export default function ListenPage() {
                         </svg>
                       )}
                     </button>
-                  ))
-                )}
+                  );
+                })}
               </div>
-            );
-          })()}
+            )}
+          </div>
         </div>
       )}
 
@@ -1421,7 +1478,7 @@ export default function ListenPage() {
               </h2>
               <button
                 onClick={() => setShowEditModal(false)}
-                className="text-text-mute hover:text-text-dim dark:hover:text-text-dim transition-colors"
+                className="p-2 -mr-2 flex items-center justify-center text-text-mute hover:text-text-dim dark:hover:text-text-dim transition-colors"
               >
                 <svg
                   className="w-5 h-5"
@@ -1439,7 +1496,7 @@ export default function ListenPage() {
               </button>
             </div>
             <textarea
-              className="flex-1 resize-none px-5 py-4 text-sm text-text dark:text-text bg-transparent focus:outline-none font-mono leading-relaxed overflow-y-auto"
+              className="flex-1 resize-none px-5 py-4 text-base text-text dark:text-text bg-transparent focus:outline-none font-mono leading-relaxed overflow-y-auto"
               value={editText}
               onChange={(e) => setEditText(e.target.value)}
               spellCheck={false}

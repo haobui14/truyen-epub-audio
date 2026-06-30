@@ -47,6 +47,8 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
+    private long lastBackPressedMs = 0;
+
     @Override
     public void onBackPressed() {
         // Pop WebView history first so the hardware back button navigates
@@ -58,6 +60,16 @@ public class MainActivity extends BridgeActivity {
             webView.goBack();
             return;
         }
-        super.onBackPressed();
+        // At the root with no history: require a second press within 2s before
+        // exiting, so a stray back tap can't kill the app (and stop playback)
+        // out from under the user.
+        long now = System.currentTimeMillis();
+        if (now - lastBackPressedMs < 2000) {
+            super.onBackPressed();
+        } else {
+            lastBackPressedMs = now;
+            android.widget.Toast.makeText(
+                    this, "Nhấn back lần nữa để thoát", android.widget.Toast.LENGTH_SHORT).show();
+        }
     }
 }

@@ -292,6 +292,11 @@ export function useNativeTTSPlayer(
       playingRef.current = false;
       setIsPlaying(false);
       setIsBuffering(false);
+      // Defense in depth: ensure the service tears down so a CPU wake lock
+      // acquired before a failed TTS init can't leak and drain the battery.
+      try {
+        getTtsBridge()?.stopPlayback();
+      } catch {}
     };
 
     window.addEventListener("native-tts-chunk", onChunk);
@@ -615,6 +620,11 @@ export function useNativeTTSPlayer(
   const progress =
     totalChunks > 0 ? Math.max(0, Math.min(1, chunkIndex / totalChunks)) : 0;
 
+  // Lets the error banner's "retry" button re-enable the play button after the
+  // user fixes the missing voice (the play button is disabled while ttsError
+  // is set, so toggle() can't clear it on its own).
+  const clearTtsError = useCallback(() => setTtsError(null), []);
+
   return {
     isPlaying: isPlaying || isBuffering,
     isBuffering,
@@ -631,5 +641,6 @@ export function useNativeTTSPlayer(
     restartChunk,
     seekChunk,
     ttsError,
+    clearTtsError,
   };
 }

@@ -48,6 +48,17 @@ export function BottomNav() {
     return () => window.removeEventListener("auth-change", sync);
   }, []);
 
+  // Lock body scroll while the profile sheet is open so dragging the backdrop
+  // doesn't scroll the library page behind it.
+  useEffect(() => {
+    if (!sheetOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [sheetOpen]);
+
   const at = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);
 
@@ -173,6 +184,7 @@ export function BottomNav() {
         <>
           <div
             className="fixed inset-0 z-40 bg-black/60"
+            style={{ touchAction: "none" }}
             onClick={closeSheet}
           />
           <div

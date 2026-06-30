@@ -22,6 +22,11 @@ export function useSleepTimer(onExpire: () => void) {
   const onExpireRef = useRef(onExpire);
   onExpireRef.current = onExpire;
 
+  // Guards against firing onExpire twice for one timer — the 1s tick and the
+  // visibilitychange handler can both observe expiry in the same instant
+  // (setExpireAt(null) is async), which would pause+advance unexpectedly.
+  const firedRef = useRef(false);
+
   // Helper: tell the native Android service about the timer so it can fire
   // even when the WebView (and JS timers) are suspended by the OS.
   const notifyNative = useCallback((expMs: number | null) => {
@@ -54,7 +59,10 @@ export function useSleepTimer(onExpire: () => void) {
       if (left <= 0) {
         setExpireAt(null);
         setRemaining(null);
-        onExpireRef.current();
+        if (!firedRef.current) {
+          firedRef.current = true;
+          onExpireRef.current();
+        }
       } else {
         setRemaining(left);
       }
@@ -78,7 +86,10 @@ export function useSleepTimer(onExpire: () => void) {
       if (Date.now() >= expireAt) {
         setExpireAt(null);
         setRemaining(null);
-        onExpireRef.current();
+        if (!firedRef.current) {
+          firedRef.current = true;
+          onExpireRef.current();
+        }
       }
     };
 
@@ -89,6 +100,7 @@ export function useSleepTimer(onExpire: () => void) {
   const setTimer = useCallback(
     (minutes: number) => {
       const exp = Date.now() + Math.max(0.016, minutes) * 60 * 1000;
+      firedRef.current = false; // arm a fresh timer
       setExpireAt(exp);
       notifyNative(exp);
     },

@@ -33,12 +33,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" />
-            </intent-filter>
+            <!-- NOTE: removed an unrestricted VIEW/BROWSABLE intent-filter with
+                 scheme="https" and no host — it made the app a candidate handler
+                 for ANY https link on the device. Re-add with android:host and
+                 android:autoVerify + a valid assetlinks.json if App Links are
+                 wanted later. -->
 
         </activity>
 

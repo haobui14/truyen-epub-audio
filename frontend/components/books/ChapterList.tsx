@@ -63,12 +63,12 @@ function ChapterRow({
           </>
         )}
       </div>
-      <div className="flex items-center gap-1.5 shrink-0">
+      <div className="flex items-center gap-1.5 shrink-0 touch-manipulation">
         {!editBasePath && (
           <>
             <Link
               href={`/read?id=${bookId}&chapter=${chapter.id}`}
-              className="p-2 text-text-mute hover:text-accent bg-raised-hi hover:bg-accent/15 rounded-md transition-colors"
+              className="min-w-[44px] min-h-[44px] flex items-center justify-center text-text-mute hover:text-accent bg-raised-hi hover:bg-accent/15 rounded-md transition-colors"
               title="Đọc"
             >
               <svg
@@ -87,7 +87,7 @@ function ChapterRow({
             </Link>
             <Link
               href={`/listen?id=${bookId}&chapter=${chapter.id}`}
-              className="p-2 bg-accent text-ink rounded-md hover:bg-accent-dim active:scale-95 transition-all shadow-[0_0_12px_var(--color-accent-glow)]"
+              className="min-w-[44px] min-h-[44px] flex items-center justify-center bg-accent text-ink rounded-md hover:bg-accent-dim active:scale-95 transition-all shadow-[0_0_12px_var(--color-accent-glow)]"
               title="Nghe"
             >
               <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 14 14">

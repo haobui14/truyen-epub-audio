@@ -4,6 +4,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { getCachedBooks } from "@/lib/bookCache";
+import { isNativePlatform } from "@/lib/capacitor";
 import { BookListRow } from "@/components/books/BookListRow";
 import { Spinner } from "@/components/ui/Spinner";
 import type { Genre } from "@/types";
@@ -40,9 +41,11 @@ export default function SearchClient() {
     router.replace(newUrl, { scroll: false });
   }, [query, storyFilter, genreFilter, router]);
 
-  // Auto-focus the search bar on mount (good UX on mobile too)
+  // Auto-focus the search bar on mount — but NOT on native Android, where it
+  // pops the soft keyboard the instant the page opens, hiding the filter chips
+  // and results and making the page feel broken.
   useEffect(() => {
-    inputRef.current?.focus();
+    if (!isNativePlatform()) inputRef.current?.focus();
   }, []);
 
   const {

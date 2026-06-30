@@ -15,6 +15,11 @@ import type {
 export const MAX_UPLOAD_MB = 50;
 export const ACCEPTED_UPLOAD_EXTS = [".epub", ".pdf", ".txt", ".prc", ".mobi"];
 
+// Per-request timeout. Generous enough to ride out a Railway cold start but
+// short enough that a truly dead request surfaces a retryable error instead of
+// an infinite spinner.
+const REQUEST_TIMEOUT_MS = 30_000;
+
 // Prevent multiple concurrent refresh attempts
 // Returns: true = success, false = auth error (token invalid → should logout),
 //          null = network/server error (Railway cold start etc. → do NOT logout)
@@ -84,7 +89,29 @@ async function request<T>(
   if (token) {
     headers.set("Authorization", `Bearer ${token}`);
   }
-  const res = await fetch(`${API_URL}${path}`, { ...init, headers });
+  // Time out a stuck request (e.g. a Railway cold start) so the UI shows a
+  // retryable error instead of spinning forever. Skipped when the caller passes
+  // its own signal — it owns cancellation then.
+  const ctrl = init?.signal ? null : new AbortController();
+  const timeoutId = ctrl
+    ? setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS)
+    : null;
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}${path}`, {
+      ...init,
+      headers,
+      signal: init?.signal ?? ctrl?.signal,
+    });
+  } catch (err) {
+    // A timeout/abort is NOT an auth failure — never clearAuth here.
+    if ((err as Error)?.name === "AbortError") {
+      throw new Error("Máy chủ phản hồi chậm, vui lòng thử lại.");
+    }
+    throw err;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
   if (!res.ok) {
     if (res.status === 401 && token && _retry) {
       // Token expired — try to refresh once, then retry the original request.
@@ -151,7 +178,9 @@ export const api = {
       `/api/books/${bookId}/chapters?page=${page}&page_size=${pageSize}`,
     ),
   getAllBookChapters: async (bookId: string): Promise<PaginatedChapters> => {
-    const PAGE_SIZE = 1000;
+    // One request covers any real catalog (backend caps page_size at 10000),
+    // avoiding the N-1 parallel page fetches a 1000-cap triggered on big books.
+    const PAGE_SIZE = 10000;
     const first = await request<PaginatedChapters>(
       `/api/books/${bookId}/chapters?page=1&page_size=${PAGE_SIZE}`,
     );

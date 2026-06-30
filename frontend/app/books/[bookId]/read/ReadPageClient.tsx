@@ -3,6 +3,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams, useParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { api } from "@/lib/api";
 import { isLoggedIn } from "@/lib/auth";
 import { isNativePlatform } from "@/lib/capacitor";
@@ -14,6 +15,12 @@ import {
   cacheChapterText,
   getAllCachedChapterIds,
 } from "@/lib/chapterTextCache";
+import {
+  getCachedBook,
+  cacheBook,
+  getCachedAllChapters,
+  cacheAllChapters,
+} from "@/lib/bookCache";
 import { acquireScreenWake, releaseScreenWake } from "@/lib/backgroundLock";
 import type { Chapter } from "@/types";
 
@@ -217,14 +224,44 @@ export default function ReadPage() {
 
   const queryClient = useQueryClient();
 
-  const { data: book } = useQuery({
+  const {
+    data: book,
+    isError: bookError,
+  } = useQuery({
     queryKey: ["book", bookId],
-    queryFn: () => api.getBook(bookId),
+    queryFn: async () => {
+      try {
+        const data = await api.getBook(bookId);
+        cacheBook(data).catch(() => {});
+        return data;
+      } catch {
+        const cached = await getCachedBook(bookId);
+        if (cached) return cached;
+        throw new Error("offline");
+      }
+    },
+    retry: false,
+    staleTime: 60_000,
   });
 
-  const { data: chaptersData } = useQuery({
+  const {
+    data: chaptersData,
+    isError: chaptersError,
+  } = useQuery({
     queryKey: ["chapters", bookId, "all"],
-    queryFn: () => api.getAllBookChapters(bookId),
+    queryFn: async () => {
+      try {
+        const data = await api.getAllBookChapters(bookId);
+        cacheAllChapters(bookId, data).catch(() => {});
+        return data;
+      } catch {
+        const cached = await getCachedAllChapters(bookId);
+        if (cached) return cached;
+        throw new Error("offline");
+      }
+    },
+    retry: false,
+    staleTime: 60_000,
   });
 
   const { data: chapterText, isLoading: isLoadingText } = useQuery({
@@ -511,10 +548,47 @@ export default function ReadPage() {
     );
   }, [allChapters, tocSearch]);
 
+  // Virtualize the TOC so a 2000-chapter book doesn't mount thousands of rows.
+  const tocScrollRef = useRef<HTMLDivElement>(null);
+  const tocActiveIndex = useMemo(
+    () => filteredChapters.findIndex((c) => c.id === chapterId),
+    [filteredChapters, chapterId],
+  );
+  const tocVirtualizer = useVirtualizer({
+    count: filteredChapters.length,
+    getScrollElement: () => tocScrollRef.current,
+    estimateSize: () => 48,
+    overscan: 8,
+  });
+
+  // Center the current chapter when the TOC opens.
+  useEffect(() => {
+    if (!showToc || tocActiveIndex < 0) return;
+    const raf = requestAnimationFrame(() => {
+      if (tocScrollRef.current) {
+        tocVirtualizer.scrollToIndex(tocActiveIndex, { align: "center" });
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [showToc, tocActiveIndex, tocVirtualizer]);
+
   if (!chapterId) {
     return (
       <div className="text-center py-24 text-text-mute">
         Không có chương nào được chọn.{" "}
+        <Link href={`/book?id=${bookId}`} className="text-accent underline">
+          Quay lại
+        </Link>
+      </div>
+    );
+  }
+
+  // Offline with nothing cached: the queries reject ("offline") instead of
+  // spinning forever. Show a retryable message + a way back.
+  if (bookError || chaptersError) {
+    return (
+      <div className="text-center py-24 text-text-mute">
+        Không thể tải nội dung. Vui lòng kiểm tra kết nối mạng và thử lại.{" "}
         <Link href={`/book?id=${bookId}`} className="text-accent underline">
           Quay lại
         </Link>
@@ -965,7 +1039,9 @@ export default function ReadPage() {
       {/* TOC drawer */}
       {showToc && (
         <div
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm"
+          className={`fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 ${
+            isNativePlatform() ? "" : "backdrop-blur-sm"
+          }`}
           onClick={() => setShowToc(false)}
         >
           <div
@@ -1001,70 +1077,79 @@ export default function ReadPage() {
               <input
                 type="text"
                 inputMode="search"
-                autoFocus
+                autoFocus={!isNativePlatform()}
                 value={tocSearch}
                 onChange={(e) => setTocSearch(e.target.value)}
                 placeholder="Tìm chương theo số hoặc tiêu đề..."
-                className="w-full text-sm bg-ink dark:bg-raised border border-hairline-soft dark:border-hairline rounded-lg px-3 py-2 text-text-dim dark:text-text-dim focus:ring-2 focus:ring-accent focus:border-accent outline-none"
+                className="w-full text-base bg-ink dark:bg-raised border border-hairline-soft dark:border-hairline rounded-lg px-3 py-2 text-text-dim dark:text-text-dim focus:ring-2 focus:ring-accent focus:border-accent outline-none"
               />
             </div>
-            <div className="flex-1 overflow-y-auto px-2 pb-2">
+            <div ref={tocScrollRef} className="flex-1 overflow-y-auto px-2 pb-2">
               {filteredChapters.length === 0 ? (
                 <p className="text-center text-sm text-text-mute py-8">
                   Không tìm thấy chương nào.
                 </p>
               ) : (
-                <ul className="divide-y divide-hairline-soft dark:divide-hairline-soft">
-                  {filteredChapters.map((ch) => {
+                <div
+                  style={{
+                    height: tocVirtualizer.getTotalSize(),
+                    position: "relative",
+                  }}
+                >
+                  {tocVirtualizer.getVirtualItems().map((vi) => {
+                    const ch = filteredChapters[vi.index];
                     const isCurrent = ch.id === chapterId;
                     const isCached = cachedIds.has(ch.id);
                     return (
-                      <li key={ch.id}>
-                        <button
-                          onClick={() => {
-                            setShowToc(false);
-                            setTocSearch("");
-                            navigateTo(ch);
-                          }}
-                          className={`w-full flex items-center gap-3 px-3 py-2.5 text-left rounded-lg transition-colors ${
+                      <button
+                        key={ch.id}
+                        onClick={() => {
+                          setShowToc(false);
+                          setTocSearch("");
+                          navigateTo(ch);
+                        }}
+                        style={{
+                          height: vi.size,
+                          transform: `translateY(${vi.start}px)`,
+                        }}
+                        className={`absolute left-0 top-0 w-full flex items-center gap-3 px-3 text-left rounded-lg select-none transition-colors ${
+                          isCurrent
+                            ? "bg-accent/15 dark:bg-accent/40 text-accent-dim dark:text-accent"
+                            : "text-text-dim dark:text-text-faint hover:bg-ink dark:hover:bg-raised"
+                        }`}
+                      >
+                        <span
+                          className={`shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-full text-[11px] font-semibold ${
                             isCurrent
-                              ? "bg-accent/15 dark:bg-accent/40 text-accent-dim dark:text-accent"
-                              : "text-text-dim dark:text-text-faint hover:bg-ink dark:hover:bg-raised"
+                              ? "bg-accent text-white"
+                              : "bg-raised dark:bg-raised text-text-mute dark:text-text-mute"
                           }`}
                         >
-                          <span
-                            className={`shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-full text-[11px] font-semibold ${
-                              isCurrent
-                                ? "bg-accent text-white"
-                                : "bg-raised dark:bg-raised text-text-mute dark:text-text-mute"
-                            }`}
+                          {ch.chapter_index + 1}
+                        </span>
+                        <span className="flex-1 min-w-0 text-sm truncate">
+                          {ch.title}
+                        </span>
+                        {isCached && (
+                          <svg
+                            className="w-4 h-4 shrink-0 text-accent"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                            aria-label="Đã lưu offline"
                           >
-                            {ch.chapter_index + 1}
-                          </span>
-                          <span className="flex-1 min-w-0 text-sm truncate">
-                            {ch.title}
-                          </span>
-                          {isCached && (
-                            <svg
-                              className="w-4 h-4 shrink-0 text-accent"
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
-                              aria-label="Đã lưu offline"
-                            >
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M5 13l4 4L19 7"
-                              />
-                            </svg>
-                          )}
-                        </button>
-                      </li>
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M5 13l4 4L19 7"
+                            />
+                          </svg>
+                        )}
+                      </button>
                     );
                   })}
-                </ul>
+                </div>
               )}
             </div>
           </div>
