@@ -4,6 +4,12 @@ const TOKEN_KEY = "auth_token";
 const USER_KEY = "auth_user";
 const REFRESH_TOKEN_KEY = "auth_refresh_token";
 
+// True while setAuth() is mid-write. hydrateAuthFromNative() must not overwrite
+// localStorage from (possibly stale) SharedPreferences during this window: a
+// queued visibilitychange firing hydrate in the middle of a token rotation
+// would otherwise clobber the just-set fresh tokens with the old ones.
+let _setAuthInFlight = false;
+
 export interface AuthUser {
   user_id: string;
   email: string;
@@ -38,15 +44,24 @@ export async function setAuth(
   user: AuthUser,
   refreshToken?: string,
 ): Promise<void> {
-  localStorage.setItem(TOKEN_KEY, token);
-  localStorage.setItem(USER_KEY, JSON.stringify(user));
-  if (refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
-  // Await native persistence so the new refresh token is safely written to
-  // SharedPreferences before we return. If the app is killed immediately after
-  // a token rotation and native storage still has the old token, Supabase will
-  // treat it as a compromised token replay and revoke the entire session.
-  await persistAuthToNative(token, user, refreshToken);
-  window.dispatchEvent(new Event("auth-change"));
+  _setAuthInFlight = true;
+  try {
+    // Persist to native SharedPreferences FIRST, then localStorage. On Android,
+    // SharedPreferences is the durable copy that survives a process kill — the
+    // killed WebView's localStorage is gone on next launch. If we wrote
+    // localStorage first and the OS killed the process mid-write, the next cold
+    // start would hydrate the OLD refresh token from SharedPreferences. (The
+    // backend now keeps rotated tokens valid until expiry rather than revoking
+    // on use, so such a replay no longer logs the user out — but keeping the
+    // durable copy authoritative-and-current is the right invariant regardless.)
+    await persistAuthToNative(token, user, refreshToken);
+    localStorage.setItem(TOKEN_KEY, token);
+    localStorage.setItem(USER_KEY, JSON.stringify(user));
+    if (refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+    window.dispatchEvent(new Event("auth-change"));
+  } finally {
+    _setAuthInFlight = false;
+  }
 }
 
 export function clearAuth() {
@@ -116,11 +131,17 @@ export async function hydrateAuthFromNative(): Promise<void> {
     const { value: refreshToken } = await Preferences.get({
       key: REFRESH_TOKEN_KEY,
     });
-    // Always overwrite localStorage with native preferences — this ensures
-    // tokens survive app kills where the WebView's localStorage may be cleared.
-    if (token) localStorage.setItem(TOKEN_KEY, token);
-    if (user) localStorage.setItem(USER_KEY, user);
-    if (refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+    // Hydrate localStorage from native preferences ONLY when localStorage is
+    // empty (the cold-start case this exists for) and no setAuth() is mid-write.
+    // Overwriting unconditionally used to clobber a fresher in-flight rotation
+    // when a queued visibilitychange fired hydrate during setAuth(), replaying
+    // the old refresh token. A surviving WebView keeps its localStorage, so a
+    // present token there is never staler than SharedPreferences.
+    if (!_setAuthInFlight && !localStorage.getItem(TOKEN_KEY)) {
+      if (token) localStorage.setItem(TOKEN_KEY, token);
+      if (user) localStorage.setItem(USER_KEY, user);
+      if (refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+    }
   } catch {
     // Plugin not available — ignore
   } finally {

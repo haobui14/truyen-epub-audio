@@ -633,13 +633,36 @@ export default function ListenPage() {
   useEffect(() => {
     if (!voice.startsWith("native:") || allChapters.length === 0) return;
     if (nativeInitSyncDoneRef.current) return;
-    nativeInitSyncDoneRef.current = true;
-    const replaced = syncJsToNativeChapter();
-    if (replaced) {
-      // Stale-session guard (below) will otherwise see the pre-replace state
-      // and stop native before the replace commits. Skip the guard for one render.
-      coldStartReplacingRef.current = true;
-    }
+
+    // After a process kill the foreground service rebinds asynchronously
+    // (~100-500ms). Until it does, bridge.getCurrentChapterId() returns "" and
+    // syncJsToNativeChapter() no-ops. Latching nativeInitSyncDoneRef before the
+    // service is ready would permanently skip the sync, stranding the listener
+    // on the wrong chapter URL with no correction. So poll briefly for the
+    // service to bind before giving up (a genuine cold launch with nothing
+    // playing simply exhausts the retries and no-ops — harmless).
+    let tries = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const attempt = () => {
+      if (nativeInitSyncDoneRef.current) return;
+      const bridge = getTtsBridge();
+      const serviceReady = !!bridge?.getCurrentChapterId?.();
+      if (!serviceReady && tries++ < 12) {
+        timer = setTimeout(attempt, 250);
+        return;
+      }
+      nativeInitSyncDoneRef.current = true;
+      const replaced = syncJsToNativeChapter();
+      if (replaced) {
+        // Stale-session guard (below) will otherwise see the pre-replace state
+        // and stop native before the replace commits. Skip the guard for one render.
+        coldStartReplacingRef.current = true;
+      }
+    };
+    attempt();
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
   }, [voice, allChapters, syncJsToNativeChapter]);
 
   // ── Stale-session guard ─────────────────────────────────────────────────
@@ -660,11 +683,23 @@ export default function ListenPage() {
   // user navs are still caught.
   useEffect(() => {
     if (!voice.startsWith("native:") || !chapterId) return;
-    if (autoPlay) return;
+    // Consume the cold-start replace flag FIRST — before the autoPlay/pending
+    // checks — so it can never linger past the one render it's meant to cover.
+    // (The async service-bind retry in cold-start sync can set this flag in a
+    // tick where the very next guard run already sees autoplay=1, which would
+    // otherwise leave the flag set and skip a later legitimate stale-stop.)
     if (coldStartReplacingRef.current) {
       coldStartReplacingRef.current = false;
       return;
     }
+    if (autoPlay) return;
+    // Wait until the chapter list has loaded. While chaptersPending, the
+    // cold-start sync effect above has bailed (allChapters empty) without
+    // claiming coldStartReplacingRef — so running now against a live background
+    // session on a different chapter would stopPlayback() and KILL it before
+    // cold-start sync ever adopts it. Once chapters load both effects re-run in
+    // declaration order (sync first), and coldStartReplacingRef guards us.
+    if (chaptersPending) return;
     const bridge = getTtsBridge();
     if (!bridge) return;
     const nativeChId = bridge.getCurrentChapterId?.() ?? "";
@@ -683,7 +718,7 @@ export default function ListenPage() {
         bridge.setPendingChapters?.("[]", "", "");
       } catch {}
     }
-  }, [chapterId, voice, autoPlay]);
+  }, [chapterId, voice, autoPlay, chaptersPending]);
 
   // ── Native TTS: seed the Java queue and hand it the full chapter playlist ──
   //
@@ -710,26 +745,28 @@ export default function ListenPage() {
     const bridge = getTtsBridge();
     if (!bridge || typeof bridge.setPendingChapters !== "function") return;
 
+    // Seed the upcoming playlist INCLUSIVE of the current chapter. Java's
+    // self-fetch (TtsPlaybackService.doPrefetchStep) locates the current chapter
+    // inside this list to decide what to fetch next; if the current chapter is
+    // absent it treats the playlist as stale and STOPS instead of jumping. So
+    // the current chapter must be present — and re-seeding on every chapterId
+    // change keeps the playlist aligned with where playback actually is, even
+    // after the user jumps to an earlier chapter (the bug this fixes: leftover
+    // playlist from the old position would otherwise leap the listener forward
+    // to ~that chapter once the JS-preloaded queue drained while the screen
+    // was off).
     // No status filter: native device TTS needs text content, not server audio.
     // Chapters with status "converting" or "error" may still have text available.
-    const remainingChapters = allChapters
-      .filter((c) => c.chapter_index > currentIndex)
+    const playlistChapters = allChapters
+      .filter((c) => c.chapter_index >= currentIndex)
       .sort((a, b) => a.chapter_index - b.chapter_index);
 
     const token = getToken() ?? "";
 
-    if (remainingChapters.length === 0) {
-      // On the last chapter there are no upcoming chapters. Clear any stale
-      // pending playlist left over from an earlier position — otherwise when
-      // this chapter finishes, TtsPlaybackService.onChunkFinished sees
-      // pendingHead < pendingPlaylist.size() and self-fetches back into those
-      // leftover chapters (jumping the listener back toward their saved-progress
-      // chapter) instead of firing native-tts-done and stopping.
-      bridge.setPendingChapters("[]", API_URL, token);
-      return;
-    }
-
-    const meta = remainingChapters.map((ch) => ({
+    // On the last chapter this is just [current]: Java aligns on it, finds
+    // nothing after it, and fires native-tts-done — and because it OVERWRITES
+    // any leftover playlist, no stale entries survive to jump back into.
+    const meta = playlistChapters.map((ch) => ({
       id: ch.id,
       title: ch.title ?? "",
       rate,

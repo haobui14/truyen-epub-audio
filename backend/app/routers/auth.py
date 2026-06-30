@@ -70,6 +70,23 @@ def _revoke_refresh_token(token: str) -> None:
     db.table("refresh_tokens").delete().eq("token", token).execute()
 
 
+def _cleanup_expired_tokens(user_id: str) -> None:
+    """Delete this user's already-expired refresh tokens.
+
+    Keeps the table bounded now that /refresh no longer hard-revokes the
+    presented token on rotation (see refresh()). Best-effort only — a cleanup
+    failure must never fail the refresh itself.
+    """
+    try:
+        db = get_client()
+        now = datetime.now(timezone.utc).isoformat()
+        db.table("refresh_tokens").delete().eq("user_id", user_id).lt(
+            "expires_at", now
+        ).execute()
+    except Exception:
+        pass
+
+
 @router.post("/signup", response_model=AuthResponse)
 async def signup(body: AuthRequest):
     db = get_client()
@@ -204,8 +221,18 @@ async def refresh(body: RefreshRequest):
 
         u = user_row.data
         email = u["email"]
-        # Rotate: revoke old token and issue a fresh one
-        _revoke_refresh_token(body.refresh_token)
+        # Issue a fresh refresh token but DO NOT hard-revoke the presented one.
+        # Destructive rotation (delete-before-confirm) is the main cause of the
+        # "randomly logged out" reports: if the response is lost (mobile screen
+        # off, gateway timeout after the server already rotated), the app is
+        # killed mid-persist, or two contexts (a second tab, or a rebinding
+        # Android WebView) refresh near-simultaneously, the old token gets
+        # replayed — and a hard-revoke would 401, which the client treats as
+        # "session dead" → clearAuth → logout. Leaving the old token valid until
+        # its natural 90-day expiry makes any such replay simply succeed. We
+        # still roll forward (a new token every refresh) and prune this user's
+        # already-expired tokens so the table stays bounded.
+        _cleanup_expired_tokens(user_id)
         new_refresh_token = _create_refresh_token(user_id)
         access_token = _create_access_token(user_id, email)
         return AuthResponse(

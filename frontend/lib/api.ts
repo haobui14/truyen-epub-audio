@@ -41,16 +41,22 @@ export async function tryRefreshToken(): Promise<boolean | null> {
         return false;
       }
       const data = await res.json();
-      const user = getUser();
-      if (data.access_token && user) {
+      // Build the user from the refresh RESPONSE, not from localStorage. After an
+      // Android process death the tokens can hydrate from SharedPreferences while
+      // auth_user does not — gating on a non-null getUser() would turn a
+      // SUCCESSFUL refresh into a logout (return false → caller calls clearAuth).
+      // The /refresh response carries user_id/email/role, so trust it and use any
+      // existing fields only to fill gaps.
+      if (data.access_token && data.user_id) {
+        const existing = getUser();
         await setAuth(
           data.access_token,
           {
-            user_id: data.user_id ?? user.user_id,
-            email: data.email ?? user.email,
-            role: data.role ?? user.role,
-            display_name: data.display_name ?? user.display_name,
-            avatar_base64: data.avatar_base64 ?? user.avatar_base64,
+            user_id: data.user_id,
+            email: data.email ?? existing?.email ?? "",
+            role: data.role ?? existing?.role,
+            display_name: data.display_name ?? existing?.display_name,
+            avatar_base64: data.avatar_base64 ?? existing?.avatar_base64,
           },
           data.refresh_token ?? refreshToken,
         );

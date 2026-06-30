@@ -42,7 +42,14 @@ export function Providers({ children }: { children: React.ReactNode }) {
       if (isNativePlatform()) {
         await hydrateAuthFromNative();
         window.dispatchEvent(new Event("auth-change"));
-        queryClient.invalidateQueries();
+        // Exclude "progress" queries: on a fresh Android process start the
+        // foreground service may already be playing. Refetching progress here
+        // re-fires setTrack() with a stale server chunk index and jumps the
+        // player back. (The visibilitychange handler below already excludes
+        // them — this mirrors that.) Role / book-list freshness still flows.
+        queryClient.invalidateQueries({
+          predicate: (query) => query.queryKey[0] !== "progress",
+        });
       }
       // Proactively refresh the access token on every app start. Track whether
       // it succeeded — if the refresh fails (expired refresh token OR network

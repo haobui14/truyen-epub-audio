@@ -106,10 +106,13 @@ import org.json.JSONObject;
  *   <li><b>I3</b>: {@code autoAdvancing=true} only inside
  *       {@link #deliverAutoAdvance}'s call to {@link #startChapter} — suppresses
  *       playFakeSilence + MediaSession re-assertion at chapter boundaries.</li>
- *   <li><b>I7</b>: After {@code chapterQueue.clear()}, {@code pendingHead}
- *       MUST be re-scanned (see {@link #rescanPendingHead}) — otherwise the
- *       skip-loop leaves it stale at a forward offset and
- *       {@link #doPrefetchStep} fetches the wrong chapter (50-chapter jump).</li>
+ *   <li><b>I7</b>: {@link #doPrefetchStep} re-derives {@code pendingHead} from
+ *       the current chapter's position in {@code pendingPlaylist} every step, so
+ *       a stale {@code pendingHead} (left forward by a {@code chapterQueue.clear()}
+ *       or behind by a screen-off advance) can never fetch the wrong chapter. If
+ *       the current chapter isn't in the playlist at all, the playlist is stale
+ *       (seeded for a different position; the screen-off WebView couldn't
+ *       re-seed it) and self-fetch stops rather than jumping the listener.</li>
  * </ol>
  *
  * <h2>Helpers</h2>
@@ -117,8 +120,6 @@ import org.json.JSONObject;
  *   <li>{@link #deliverAutoAdvance(ChapterItem, String)} — single entry point
  *       for auto-advance chapter transitions (5 call sites).</li>
  *   <li>{@link #dispatchChapterAdvance(String, String)} — emits the JS event.</li>
- *   <li>{@link #rescanPendingHead()} — used by {@link #doPrefetchStep} skip-loop
- *       and the {@link #onChunkFinished} FAILSAFE.</li>
  * </ul>
  */
 public class TtsPlaybackService extends Service {
@@ -284,6 +285,10 @@ public class TtsPlaybackService extends Service {
     // or setPendingPlaylist), stale callbacks silently exit and a new chain starts.
     private int                prefetchVersion   = 0;
     private boolean            prefetchActive    = false;  // a chain step is in flight
+    // Chapter IDs that self-fetch found to have no text (e.g. still converting).
+    // Tracked so doPrefetchStep's pendingHead re-derivation skips past them
+    // instead of re-selecting the same empty chapter forever. Cleared on stop.
+    private final Set<String>  emptyChapterIds   = new HashSet<>();
 
     // ── Durable session persistence + background progress sync ──────────────
     // The session snapshot (book/chapter/chunk/playlist head) is written to
@@ -735,17 +740,15 @@ public class TtsPlaybackService extends Service {
                 // Kick prefetch in case it's not already running
                 kickPrefetch();
             } else {
-                // FAILSAFE: queue empty, prefetch idle, and pendingHead says the
-                // playlist is exhausted — but the playlist may still contain
-                // un-queued chapters (prefetch chain was killed by a
-                // prefetchVersion bump from setPendingPlaylist racing with
-                // playChunks). rescanPendingHead + kickPrefetch re-scans from 0;
-                // doPrefetchStep's skip-loop will advance past truly-queued
-                // entries, and its exhausted-branch will fire done if nothing
-                // is left. See invariant I7.
-                rescanPendingHead();
-                Log.d(TAG, "→ FAILSAFE: rescanned pendingHead=" + pendingHead
-                        + "/" + pendingPlaylist.size() + ", retrying prefetch");
+                // FAILSAFE: queue empty, prefetch idle, and pendingHead is past the
+                // playlist end — but the playlist may still hold un-queued chapters
+                // (a prefetchVersion bump from setPendingPlaylist racing playChunks
+                // killed the previous chain). kickPrefetch → doPrefetchStep re-derives
+                // pendingHead from the current chapter's position, so a stale-high
+                // pendingHead can't hide remaining chapters; its exhausted/stale
+                // branches fire done if nothing valid is left. See invariant I7.
+                Log.d(TAG, "→ FAILSAFE: retrying prefetch from ch=" + currentChapterId
+                        + " (playlist=" + pendingPlaylist.size() + ")");
                 awaitingFetch = true;
                 prefetchActive = false; // force kickPrefetch to start
                 kickPrefetch();
@@ -1005,6 +1008,7 @@ public class TtsPlaybackService extends Service {
         prefetchActive  = false;
         pendingHead     = 0;
         awaitingFetch   = false;
+        emptyChapterIds.clear();
         if (tts != null) tts.stop();
         updatePlaybackState(false);
         if (mediaSession != null) mediaSession.setActive(false);
@@ -1274,6 +1278,11 @@ public class TtsPlaybackService extends Service {
                 + " prefetchVer=" + prefetchVersion);
         pendingPlaylist = playlist != null ? playlist : Collections.emptyList();
         pendingHead     = 0;
+        // Fresh JS view of the upcoming chapters → give chapters that were empty
+        // earlier (e.g. text not yet parsed when first self-fetched) another
+        // chance; they may have gained text since. Safe: the new prefetch chain
+        // re-adds any that are still empty, so the re-selection loop can't return.
+        emptyChapterIds.clear();
         selfFetchBase   = apiBase != null ? apiBase : "";
         selfFetchToken  = token  != null ? token  : "";
         if (ioExecutor == null || ioExecutor.isShutdown()) {
@@ -1356,13 +1365,51 @@ public class TtsPlaybackService extends Service {
             return;
         }
 
-        // See invariant I7: queue-cleared-but-pendingHead-stale rescue.
-        rescanPendingHead();
+        // ── Align pendingHead to the genuine next chapter (invariant I7) ──────
+        // setPendingChapters seeds the playlist INCLUSIVE of the current chapter,
+        // so locate it and only ever fetch what comes AFTER it. If the current
+        // chapter isn't in the playlist, this playlist was seeded for a DIFFERENT
+        // position and JS hasn't re-seeded it (screen off → listen-page effects
+        // suspended). Self-fetching from it is exactly what jumped the listener
+        // back to a stale chapter — e.g. picking ch.75 while at ch.100, then a
+        // few chapters later leaping to ~100/101 (the leftover playlist). Stop
+        // instead; JS re-seeds on screen-on and the chain resumes correctly.
+        if (!currentChapterId.isEmpty()) {
+            int curPos = -1;
+            for (int i = 0; i < pendingPlaylist.size(); i++) {
+                if (currentChapterId.equals(pendingPlaylist.get(i).chapterId)) {
+                    curPos = i;
+                    break;
+                }
+            }
+            if (curPos < 0) {
+                Log.d(TAG, "doPrefetchStep: current ch " + currentChapterId
+                        + " not in playlist (size=" + pendingPlaylist.size()
+                        + ") — stale playlist, not self-fetching");
+                prefetchActive = false;
+                if (awaitingFetch) {
+                    // Nothing valid to advance into. End cleanly (releases the
+                    // wake lock, credits XP) rather than leaving a silent
+                    // playing-but-stuck state; JS onDone navigates to the real
+                    // next chapter once the screen comes back on.
+                    awaitingFetch = false;
+                    fireDone();
+                }
+                return;
+            }
+            // Re-derive (not just clamp) from the current chapter's position so a
+            // stale-HIGH pendingHead — left forward when playChunks cleared the
+            // queue — can't skip past un-queued chapters either. The skip-loop
+            // below then advances past anything already queued/empty.
+            pendingHead = curPos + 1;
+        }
 
-        // Skip chapters already queued or currently playing
+        // Skip chapters already queued, currently playing, or known to be empty.
+        // (Known-empty must be skipped here too, otherwise re-deriving pendingHead
+        // would re-select the same empty chapter every step → infinite loop.)
         while (pendingHead < pendingPlaylist.size()) {
             String id = pendingPlaylist.get(pendingHead).chapterId;
-            if (!isAlreadyQueued(id)) break;
+            if (!isAlreadyQueued(id) && !emptyChapterIds.contains(id)) break;
             pendingHead++;
         }
 
@@ -1414,6 +1461,7 @@ public class TtsPlaybackService extends Service {
 
                     if (chunks.isEmpty()) {
                         Log.d(TAG, "doPrefetchStep: empty chapter " + id + ", skipping");
+                        emptyChapterIds.add(id); // so the re-derive loop won't re-pick it
                         doPrefetchStep(version); // skip and continue
                         return;
                     }
@@ -1587,27 +1635,34 @@ public class TtsPlaybackService extends Service {
             o.put("apiBase", selfFetchBase);
             o.put("coverUrl", currentCoverUrl);
             o.put("ts", System.currentTimeMillis());
-            // Upcoming chapters (strictly after the current one) so auto-advance
-            // also survives a process kill. Chunk text is NOT persisted — it is
-            // re-fetched on demand. If the current chapter isn't in the playlist
-            // (fresh Effect-A seed: playlist already starts after it), keep from 0.
-            int from = 0;
+            // Upcoming chapters, current chapter INCLUSIVE, so auto-advance also
+            // survives a process kill. doPrefetchStep aligns by locating the
+            // current chapter inside the (restored) playlist, so it MUST be
+            // present. Chunk text is NOT persisted — it is re-fetched on demand.
+            int from = -1;
             for (int i = 0; i < pendingPlaylist.size(); i++) {
                 if (pendingPlaylist.get(i).chapterId.equals(currentChapterId)) {
-                    from = i + 1;
+                    from = i;
                     break;
                 }
             }
+            // Only persist the playlist when it actually contains the current
+            // chapter. If it doesn't, the playlist is stale relative to where
+            // playback is (a brief window before JS re-seeds) — persisting it
+            // would let a process-kill restore self-fetch into the wrong
+            // chapters. An empty playlist makes restore wait for JS instead.
             JSONArray pl = new JSONArray();
-            for (int i = from; i < pendingPlaylist.size()
-                    && pl.length() < PERSIST_PLAYLIST_CAP; i++) {
-                ChapterMeta m = pendingPlaylist.get(i);
-                JSONObject mo = new JSONObject();
-                mo.put("id", m.chapterId);
-                mo.put("title", m.title);
-                mo.put("rate", m.rate);
-                mo.put("pitch", m.pitch);
-                pl.put(mo);
+            if (from >= 0) {
+                for (int i = from; i < pendingPlaylist.size()
+                        && pl.length() < PERSIST_PLAYLIST_CAP; i++) {
+                    ChapterMeta m = pendingPlaylist.get(i);
+                    JSONObject mo = new JSONObject();
+                    mo.put("id", m.chapterId);
+                    mo.put("title", m.title);
+                    mo.put("rate", m.rate);
+                    mo.put("pitch", m.pitch);
+                    pl.put(mo);
+                }
             }
             o.put("playlist", pl);
             JSONArray completed = new JSONArray();
@@ -1679,6 +1734,14 @@ public class TtsPlaybackService extends Service {
                     list.add(new ChapterMeta(id, mo.optString("title", ""),
                             (float) mo.optDouble("rate", 1.0),
                             (float) mo.optDouble("pitch", 1.0)));
+                }
+                // doPrefetchStep aligns by locating the current chapter in the
+                // playlist, so it must head the list. New snapshots persist it
+                // inclusive; snapshots written before that change (or any that
+                // start past the current chapter) get it prepended here.
+                if (!list.isEmpty() && !chId.equals(list.get(0).chapterId)) {
+                    list.add(0, new ChapterMeta(chId, currentTitle,
+                            currentRate, currentPitch));
                 }
                 if (!list.isEmpty()) {
                     pendingPlaylist = list;
@@ -1906,19 +1969,6 @@ public class TtsPlaybackService extends Service {
                 "window.dispatchEvent(new CustomEvent('native-tts-chapter-advance'," +
                 "{detail:{completedChapterId:'" + completedChapterId +
                 "',newChapterId:'" + newChapterId + "'}}))");
-    }
-
-    /**
-     * Reset {@code pendingHead=0} if the queue has been drained behind our
-     * back (e.g. {@code playChunks} cleared it) while pendingHead points
-     * dozens of entries ahead. The subsequent skip-loop in
-     * {@code doPrefetchStep} re-advances past already-queued chapters and
-     * the currentChapter via {@code isAlreadyQueued}. See invariant I7.
-     */
-    private void rescanPendingHead() {
-        if (chapterQueue.isEmpty() && pendingHead > 0) {
-            pendingHead = 0;
-        }
     }
 
     /**

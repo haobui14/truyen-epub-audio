@@ -33,7 +33,16 @@ async def get_current_user(authorization: str = Header(...)) -> dict:
         raise HTTPException(status_code=401, detail="Invalid authorization header")
     token = authorization[7:]
     try:
-        payload = jwt.decode(token, settings.jwt_secret, algorithms=[_ALGORITHM])
+        # leeway (seconds) tolerates minor clock skew between this API server and
+        # the issuer/client so a token that's a few seconds past exp by the
+        # server clock isn't rejected — which would force an unnecessary refresh
+        # round-trip (and a logout if that refresh then fails on a cold start).
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=[_ALGORITHM],
+            options={"leeway": 30},
+        )
         user_id: str = payload.get("sub")
         email: str = payload.get("email", "")
         if not user_id:
