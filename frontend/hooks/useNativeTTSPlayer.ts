@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { isNativePlatform } from "@/lib/capacitor";
 import {
   acquireBackgroundLock,
@@ -8,18 +8,92 @@ import {
 } from "@/lib/backgroundLock";
 import { splitIntoChunks } from "@/lib/textChunks";
 
+export interface NativeVoiceOption {
+  /** Player voice value: "native:vi-VN-default" or "native:voice:<name>". */
+  value: string;
+  /** Label for the picker, e.g. "Giọng nữ 1 · mạng". */
+  label: string;
+}
+
+/** Best-effort friendly label — Google voice names encode gender as vif/vim. */
+function nativeVoiceLabel(name: string, network: boolean, ordinal: number) {
+  const lower = name.toLowerCase();
+  let base = `Giọng ${ordinal}`;
+  // "female" first — it contains "male" as a substring.
+  if (lower.includes("female") || lower.includes("vif")) {
+    base = `Giọng nữ ${ordinal}`;
+  } else if (lower.includes("male") || lower.includes("vim")) {
+    base = `Giọng nam ${ordinal}`;
+  }
+  return network ? `${base} · mạng` : base;
+}
+
+/** "native:voice:<name>" → "<name>"; anything else → "" (engine default). */
+function deviceVoiceFromValue(v: string | null | undefined): string {
+  return v?.startsWith("native:voice:")
+    ? v.slice("native:voice:".length)
+    : "";
+}
+
 /**
- * Returns available native TTS voices for the given language.
- * On native platform we only expose a single "device default" voice.
+ * Device TTS voices for the native voice picker. Always contains the engine
+ * default; fills with the device's installed Vietnamese voices once the TTS
+ * engine reports them (the service initialises ~1 s after app start, so a
+ * couple of delayed retries cover the cold-start window).
  */
-export function useNativeTTSVoices(lang = "vi") {
-  return useMemo(
-    () =>
-      isNativePlatform()
-        ? [{ index: 0, name: "Giọng thiết bị", lang: `${lang}-VN` }]
-        : [],
-    [lang],
+export function useNativeTTSVoices(): NativeVoiceOption[] {
+  const [voices, setVoices] = useState<NativeVoiceOption[]>(() =>
+    isNativePlatform()
+      ? [{ value: "native:vi-VN-default", label: "Hệ thống (mặc định)" }]
+      : [],
   );
+
+  useEffect(() => {
+    if (!isNativePlatform()) return;
+    let cancelled = false;
+    const load = (): boolean => {
+      const bridge = getTtsBridge();
+      // Old APK without the voice catalogue — nothing to retry for.
+      if (typeof bridge?.getNativeVoices !== "function") return true;
+      let parsed: { name?: string; quality?: number; network?: boolean }[];
+      try {
+        parsed = JSON.parse(bridge.getNativeVoices());
+      } catch {
+        return false;
+      }
+      if (!Array.isArray(parsed) || parsed.length === 0) return false;
+      // Local (offline) voices first, then stable by name.
+      parsed.sort(
+        (a, b) =>
+          Number(a.network ?? false) - Number(b.network ?? false) ||
+          (a.name ?? "").localeCompare(b.name ?? ""),
+      );
+      const opts: NativeVoiceOption[] = [
+        { value: "native:vi-VN-default", label: "Hệ thống (mặc định)" },
+      ];
+      let ordinal = 0;
+      for (const v of parsed) {
+        if (!v.name) continue;
+        ordinal += 1;
+        opts.push({
+          value: `native:voice:${v.name}`,
+          label: nativeVoiceLabel(v.name, v.network ?? false, ordinal),
+        });
+      }
+      if (!cancelled && opts.length > 1) setVoices(opts);
+      return opts.length > 1;
+    };
+    if (load()) return;
+    const t1 = setTimeout(load, 1500);
+    const t2 = setTimeout(load, 5000);
+    return () => {
+      cancelled = true;
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, []);
+
+  return voices;
 }
 
 /**
@@ -111,6 +185,8 @@ export function useNativeTTSPlayer(
   chapterIdRef.current = chapterId;
   const chapterTitleRef = useRef(chapterTitle);
   chapterTitleRef.current = chapterTitle;
+  const voiceNameRef = useRef(voiceName);
+  voiceNameRef.current = voiceName;
 
   // Send chunks to native and start playback
   const startNativePlayback = useCallback((startIdx: number) => {
@@ -123,6 +199,13 @@ export function useNativeTTSPlayer(
     const chunksJson = JSON.stringify(chunksRef.current);
     const notifTitle = chapterTitleRef.current ?? "Đang phát...";
     try {
+      // Make sure Java speaks with the picked device voice — playback starts
+      // are the authoritative re-seed point (survives service restarts).
+      try {
+        bridge.setNativeVoice?.(deviceVoiceFromValue(voiceNameRef.current));
+      } catch {
+        /* older APK */
+      }
       // Use playChunksWithId (sends chapterId to native) if available,
       // fall back to playChunks for older APKs that lack the new method.
       if (typeof bridge.playChunksWithId === "function") {
@@ -483,6 +566,27 @@ export function useNativeTTSPlayer(
     }
   }, [initialChunkIndex]);
 
+  // Apply the picked device voice to Java. On a mid-playback native→native
+  // switch, restart the current chunk so the new voice is heard immediately
+  // (setNativeVoice itself only takes effect on the next utterance). The
+  // prev-ref keeps a plain mount (voice unchanged) from restarting anything.
+  const prevVoiceRef = useRef(voiceName);
+  useEffect(() => {
+    const prev = prevVoiceRef.current;
+    prevVoiceRef.current = voiceName;
+    if (!isActive) return;
+    const bridge = getTtsBridge();
+    if (!bridge) return;
+    try {
+      bridge.setNativeVoice?.(deviceVoiceFromValue(voiceName));
+    } catch {
+      /* older APK */
+    }
+    if (prev !== voiceName && playingRef.current && chunksRef.current.length > 0) {
+      startNativePlayback(chunkRef.current);
+    }
+  }, [isActive, voiceName, startNativePlayback]);
+
   // Cleanup on unmount
   useEffect(
     () => () => {
@@ -611,6 +715,22 @@ export function useNativeTTSPlayer(
       chunkRef.current = idx;
 
       if (playingRef.current) {
+        const bridge = getTtsBridge();
+        // Fast path: jump inside the playing chapter without the playChunks
+        // restart (which clears Java's queue and prefetch chain — historically
+        // the source of the wrong-chapter-jump class of bugs). Falls back for
+        // older APKs or when native is on a different chapter.
+        if (
+          typeof bridge?.seekToChunk === "function" &&
+          (bridge.getCurrentChapterId?.() ?? "") === chapterIdRef.current
+        ) {
+          try {
+            bridge.seekToChunk(idx);
+            return;
+          } catch {
+            /* fall through to the full restart */
+          }
+        }
         startNativePlayback(idx);
       }
     },

@@ -115,6 +115,9 @@ interface PlayerContextValue {
   sleepRemaining: number | null; // seconds remaining, null = inactive
   setSleepTimer: (minutes: number) => void;
   cancelSleepTimer: () => void;
+  // "Hết chương" mode: native pauses at the next chapter boundary (Android)
+  sleepAtChapterEnd: boolean;
+  setSleepChapterEnd: () => void;
 }
 
 const PlayerContext = createContext<PlayerContextValue | null>(null);
@@ -293,7 +296,9 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
   }, []);
   const {
     remaining: sleepRemaining,
+    endOfChapter: sleepAtChapterEnd,
     setTimer: setSleepTimer,
+    setChapterEndTimer: setSleepChapterEnd,
     cancelTimer: cancelSleepTimer,
   } = useSleepTimer(handleSleepExpire);
 
@@ -624,6 +629,8 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
     sleepRemaining,
     setSleepTimer,
     cancelSleepTimer,
+    sleepAtChapterEnd,
+    setSleepChapterEnd,
   };
 
   return (

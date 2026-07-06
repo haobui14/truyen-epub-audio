@@ -15,6 +15,16 @@ import type {
 export const MAX_UPLOAD_MB = 50;
 export const ACCEPTED_UPLOAD_EXTS = [".epub", ".pdf", ".txt", ".prc", ".mobi"];
 
+// Result of POST /api/books/{id}/append-chapters (webnovel update flow).
+export interface AppendChaptersResult {
+  existing_chapters: number;
+  parsed_chapters: number;
+  appended: number;
+  skipped_duplicates: number;
+  new_total: number;
+  replaced_original: boolean;
+}
+
 // Per-request timeout. Generous enough to ride out a Railway cold start but
 // short enough that a truly dead request surfaces a retryable error instead of
 // an infinite spinner.
@@ -302,6 +312,69 @@ export const api = {
         );
       },
     );
+
+    xhr.send(form);
+
+    return { promise, abort: () => xhr.abort() };
+  },
+
+  // Admin: append NEW chapters to an existing book from a re-downloaded file
+  // (EPUB/TXT/PDF/MOBI/PRC) — the "webnovel got more chapters" update flow.
+  // Existing chapter rows (and therefore reading progress + XP) are untouched.
+  // mode "auto": file is a full bundle, backend finds the new tail;
+  // mode "all": file contains only the new chapters.
+  appendChaptersWithProgress: (
+    bookId: string,
+    file: File,
+    mode: "auto" | "all",
+    onProgress: (percent: number) => void,
+  ): {
+    promise: Promise<AppendChaptersResult>;
+    abort: () => void;
+  } => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("mode", mode);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_URL}/api/books/${bookId}/append-chapters`);
+
+    const token = getToken();
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+
+    xhr.upload.addEventListener("progress", (e) => {
+      if (e.lengthComputable) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      }
+    });
+
+    const promise = new Promise<AppendChaptersResult>((resolve, reject) => {
+      xhr.addEventListener("load", () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            resolve(JSON.parse(xhr.responseText));
+          } catch {
+            reject(new Error("Invalid response"));
+          }
+        } else {
+          let msg = xhr.responseText || `HTTP ${xhr.status}`;
+          try {
+            const parsed = JSON.parse(xhr.responseText);
+            if (parsed?.detail) msg = parsed.detail;
+          } catch {
+            /* not JSON — keep raw */
+          }
+          reject(new Error(msg));
+        }
+      });
+
+      xhr.addEventListener("error", () =>
+        reject(new Error("Network error — check your connection and retry")),
+      );
+      xhr.addEventListener("abort", () =>
+        reject(new DOMException("Upload cancelled", "AbortError")),
+      );
+    });
 
     xhr.send(form);
 

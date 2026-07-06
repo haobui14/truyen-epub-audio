@@ -1,12 +1,17 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Image from "next/image";
 import { usePlayerContext } from "@/context/PlayerContext";
 import { Spinner } from "@/components/ui/Spinner";
-import { useNativeTTSAvailable } from "@/hooks/useNativeTTSPlayer";
+import {
+  useNativeTTSAvailable,
+  useNativeTTSVoices,
+} from "@/hooks/useNativeTTSPlayer";
+import { getTtsBridge } from "@/lib/backgroundLock";
 
 const SLEEP_PRESETS = [15, 30, 45, 60] as const;
 const SPEED_PRESETS = [0.8, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0] as const;
+const BATTERY_HINT_DISMISSED_KEY = "battery-opt-hint-dismissed";
 
 const BACKEND_VOICES = [
   { value: "vi-VN-HoaiMyNeural", label: "HoaiMy" },
@@ -52,13 +57,44 @@ export function SpeechPlayer() {
     sleepRemaining,
     setSleepTimer,
     cancelSleepTimer,
+    sleepAtChapterEnd,
+    setSleepChapterEnd,
   } = usePlayerContext();
 
   const isNative = useNativeTTSAvailable();
+  const nativeVoices = useNativeTTSVoices();
   const [openPanel, setOpenPanel] = useState<
     null | "speed" | "voice" | "sleep"
   >(null);
   const [customMinutes, setCustomMinutes] = useState("");
+
+  // One-time battery-optimization hint: without the Doze exemption,
+  // aggressive OEMs (Samsung/Xiaomi/...) kill the TTS foreground service
+  // during long screen-off sessions.
+  const [showBatteryHint, setShowBatteryHint] = useState(false);
+  useEffect(() => {
+    if (!isNative) return;
+    const check = () => {
+      const bridge = getTtsBridge();
+      if (typeof bridge?.isIgnoringBatteryOptimizations !== "function") return;
+      if (localStorage.getItem(BATTERY_HINT_DISMISSED_KEY) === "1") {
+        setShowBatteryHint(false);
+        return;
+      }
+      try {
+        setShowBatteryHint(!bridge.isIgnoringBatteryOptimizations());
+      } catch {
+        /* ignore */
+      }
+    };
+    check();
+    // Re-check when the user returns from the system dialog / settings.
+    const onVisible = () => {
+      if (!document.hidden) check();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [isNative]);
 
   if (!track) return null;
 
@@ -78,10 +114,17 @@ export function SpeechPlayer() {
       : Math.round(progress * chunkDotCount);
 
   function handleVoiceChange(newVoice: string) {
+    if (newVoice === voice) {
+      setOpenPanel(null);
+      return;
+    }
     const switchingEngine =
       newVoice.startsWith("native:") !== voice.startsWith("native:");
     if (switchingEngine && isPlaying) toggle();
-    else restartChunk();
+    // Native→native switches restart inside useNativeTTSPlayer's voice
+    // effect, which applies the device voice BEFORE re-speaking; restarting
+    // here would replay the chunk with the old voice.
+    else if (!newVoice.startsWith("native:")) restartChunk();
     setVoice(newVoice);
     setOpenPanel(null);
   }
@@ -98,9 +141,14 @@ export function SpeechPlayer() {
   }
 
   const voiceLabel = VOICE_LABELS[voice] ?? voice.replace(/^native:/, "");
+  const nativeVoiceOpt = nativeVoices.find((v) => v.value === voice);
   const voiceBadge = voice.startsWith("native:")
-    ? "GIỌNG HỆ THỐNG · VI-VN"
+    ? voice === "native:vi-VN-default" || !nativeVoiceOpt
+      ? "GIỌNG HỆ THỐNG · VI-VN"
+      : `${nativeVoiceOpt.label.toUpperCase()} · VI-VN`
     : voiceLabel.toUpperCase();
+  const supportsChapterEndSleep =
+    isNative && typeof getTtsBridge()?.setSleepAtChapterEnd === "function";
 
   return (
     <div className="w-full">
@@ -223,6 +271,49 @@ export function SpeechPlayer() {
                   Thử lại
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBatteryHint && !nativeTtsError && (
+        <div className="flex items-start gap-2 px-3 py-2.5 mb-3 rounded-md bg-gold/10 border border-gold/30">
+          <svg
+            className="w-4 h-4 text-gold shrink-0 mt-0.5"
+            fill="currentColor"
+            viewBox="0 0 20 20"
+          >
+            <path d="M11.983 1.907a.75.75 0 00-1.292-.657l-8.5 9.5A.75.75 0 002.75 12h4.116l-.849 6.093a.75.75 0 001.292.657l8.5-9.5A.75.75 0 0015.25 8h-4.116l.849-6.093z" />
+          </svg>
+          <div className="min-w-0">
+            <p className="text-xs text-gold leading-snug">
+              Máy có thể tự ngắt phát khi khoá màn hình lâu. Cho phép ứng dụng
+              bỏ qua tối ưu hoá pin để nghe không gián đoạn.
+            </p>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    getTtsBridge()?.requestIgnoreBatteryOptimizations?.();
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+                className="text-xs font-medium text-gold underline underline-offset-2 active:opacity-60"
+              >
+                Cho phép
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  localStorage.setItem(BATTERY_HINT_DISMISSED_KEY, "1");
+                  setShowBatteryHint(false);
+                }}
+                className="text-xs font-medium text-text-mute underline underline-offset-2 active:opacity-60"
+              >
+                Ẩn
+              </button>
             </div>
           </div>
         </div>
@@ -402,7 +493,9 @@ export function SpeechPlayer() {
         <Chip
           label={
             voice.startsWith("native:")
-              ? "Hệ thống"
+              ? voice === "native:vi-VN-default" || !nativeVoiceOpt
+                ? "Hệ thống"
+                : nativeVoiceOpt.label.split(" · ")[0]
               : voiceLabel.split(" ")[0]
           }
           sub="Giọng đọc"
@@ -410,12 +503,20 @@ export function SpeechPlayer() {
           onClick={() => setOpenPanel(openPanel === "voice" ? null : "voice")}
         />
         <Chip
-          label={sleepRemaining !== null ? fmtTime(sleepRemaining) : "Tắt"}
+          label={
+            sleepAtChapterEnd
+              ? "Hết chương"
+              : sleepRemaining !== null
+                ? fmtTime(sleepRemaining)
+                : "Tắt"
+          }
           sub="Hẹn giờ"
           mono
-          active={sleepRemaining !== null || openPanel === "sleep"}
+          active={
+            sleepRemaining !== null || sleepAtChapterEnd || openPanel === "sleep"
+          }
           onClick={() => {
-            if (sleepRemaining !== null) {
+            if (sleepRemaining !== null || sleepAtChapterEnd) {
               cancelSleepTimer();
               setOpenPanel(null);
             } else {
@@ -499,18 +600,23 @@ export function SpeechPlayer() {
                   {opt.label}
                 </button>
               ))}
-            {isNative && (
-              <button
-                onClick={() => handleVoiceChange("native:vi-VN-default")}
-                className={`px-3 py-1.5 rounded-sm text-xs font-medium border transition-colors ${
-                  voice.startsWith("native:")
-                    ? "bg-accent border-accent text-ink"
-                    : "border-hairline text-text-mute hover:border-accent/40 hover:text-accent"
-                }`}
-              >
-                Hệ thống · vi-VN
-              </button>
-            )}
+            {isNative &&
+              nativeVoices.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => handleVoiceChange(opt.value)}
+                  className={`px-3 py-1.5 min-h-[44px] rounded-sm text-xs font-medium border transition-colors touch-manipulation ${
+                    voice === opt.value ||
+                    (opt.value === "native:vi-VN-default" &&
+                      voice.startsWith("native:") &&
+                      !nativeVoiceOpt)
+                      ? "bg-accent border-accent text-ink"
+                      : "border-hairline text-text-mute hover:border-accent/40 hover:text-accent"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
           </div>
         </div>
       )}
@@ -520,6 +626,18 @@ export function SpeechPlayer() {
           <p className="font-mono text-[10px] tracking-widest uppercase text-text-faint mb-2">
             Hẹn giờ tắt
           </p>
+          {supportsChapterEndSleep && (
+            <button
+              onClick={() => {
+                setSleepChapterEnd();
+                setOpenPanel(null);
+                setCustomMinutes("");
+              }}
+              className="w-full mb-2 py-2 min-h-[44px] rounded-sm text-xs font-medium border border-hairline text-text-mute hover:border-accent/40 hover:text-accent transition-colors touch-manipulation"
+            >
+              Khi hết chương này
+            </button>
+          )}
           <div className="grid grid-cols-4 gap-1.5 mb-2">
             {SLEEP_PRESETS.map((mins) => (
               <button

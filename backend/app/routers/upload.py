@@ -23,6 +23,26 @@ _background_tasks: set = set()
 VALID_VOICES = ["vi-VN-HoaiMyNeural", "vi-VN-NamMinhNeural"]
 VALID_COVER_TYPES = {"image/jpeg", "image/png", "image/webp"}
 VALID_EXTENSIONS = {".epub", ".pdf", ".txt", ".prc", ".mobi"}
+ORIG_CONTENT_TYPES = {
+    ".epub": "application/epub+zip",
+    ".pdf": "application/pdf",
+    ".txt": "text/plain",
+    ".prc": "application/x-mobipocket-ebook",
+    ".mobi": "application/x-mobipocket-ebook",
+}
+
+
+async def _to_epub_bytes(content: bytes, ext: str, title: str) -> bytes:
+    """Convert an uploaded file to EPUB bytes (no-op for .epub). Conversions
+    are CPU-bound, so they run on a worker thread. Shared by the initial
+    upload flow and the append-chapters update flow (books router)."""
+    if ext == ".epub":
+        return content
+    if ext == ".txt":
+        return await asyncio.to_thread(txt_to_epub, content, title)
+    if ext in (".prc", ".mobi"):
+        return await asyncio.to_thread(prc_to_epub, content, title)
+    return await asyncio.to_thread(pdf_to_epub, content, title)  # .pdf
 
 
 def _validate_upload_shape(content: bytes, ext: str) -> None:
@@ -116,13 +136,7 @@ async def upload_book(
         cover_path = f"{book_id}/cover.{cext}"
 
     storage_path = f"{book_id}/original{ext}"
-    orig_content_type = {
-        ".epub": "application/epub+zip",
-        ".pdf": "application/pdf",
-        ".txt": "text/plain",
-        ".prc": "application/x-mobipocket-ebook",
-        ".mobi": "application/x-mobipocket-ebook",
-    }[ext]
+    orig_content_type = ORIG_CONTENT_TYPES[ext]
 
     async def _upload_cover() -> Optional[str]:
         if not cover_content or not cover_path:
@@ -184,17 +198,9 @@ async def _convert_and_parse(
     """Convert TXT/PDF → EPUB (if needed) then run the standard EPUB parser."""
     db = get_client()
     try:
-        if ext == ".epub":
-            epub_bytes = content
-        elif ext == ".txt":
-            logger.info(f"Book {book_id}: converting TXT → EPUB")
-            epub_bytes = await asyncio.to_thread(txt_to_epub, content, title)
-        elif ext in (".prc", ".mobi"):
-            logger.info(f"Book {book_id}: converting PRC/MOBI → EPUB")
-            epub_bytes = await asyncio.to_thread(prc_to_epub, content, title)
-        else:  # .pdf
-            logger.info(f"Book {book_id}: converting PDF → EPUB")
-            epub_bytes = await asyncio.to_thread(pdf_to_epub, content, title)
+        if ext != ".epub":
+            logger.info(f"Book {book_id}: converting {ext} → EPUB")
+        epub_bytes = await _to_epub_bytes(content, ext, title)
 
         await epub_parser.parse_epub_task(book_id, epub_bytes)
 

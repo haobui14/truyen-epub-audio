@@ -43,6 +43,10 @@ See `memory/project_tts_state_machine.md` for the bug-fix history that shaped th
 | `restoredWasPlaying`/`restoredAtMs`/`autoResumeConsumed` | bool/long/bool | no | `restoreSession`, `onStartCommand` | START_STICKY auto-resume gating (<2 min kill→restart gap) |
 | `restoringSession` | boolean | no | `resumeFromRestoredSession` | Restore text-fetch in flight; async callback validates chapter/playing before starting |
 | `lastProgressSyncMs` | long | no | `maybeSyncProgressToServer` | 30 s throttle for background server progress PUTs |
+| `sleepAtChapterEnd` | boolean | no | `setSleepAtChapterEnd` (=on), `onChunkFinished` (fires→false), `setSleepTimer`/`cancelSleepTimer`/`stopPlayback` (=false) | "Hết chương" sleep mode: pause at the next chapter boundary (credits the finished chapter in `completedChapterIds`, unlike the timed sleep; parks `awaitingFetch=true` after `pauseInternal` so resume advances to the NEXT chapter) |
+| `preferredVoiceName` | String | no | `setPreferredVoice`, `restoreSession` | User-selected device voice name; empty = engine default. Applied in `initTts` (also after watchdog reinits); persisted in the snapshot |
+| `availableVoicesJson` | String | **yes** | `refreshAvailableVoices` (initTts) | JSON catalogue of installed vi voices, read by `TtsBridge.getNativeVoices()` from the WebView thread |
+| `chunkStartMs`/`chapterDurationMs` | long[]/long | no | `recomputeChunkTimings` (playChunks, startChapter, stopPlayback) | Estimated 1.0×-content-time chunk starts + chapter duration (`CHARS_PER_SECOND`) driving the lockscreen seek bar; `onSeekTo` maps a scrubbed position back through the same table |
 | `ttsReady` | boolean | no | `initTts` onInit | TTS engine initialized |
 | `pendingItem`/`pendingStartIdx` | ChapterItem?/int | no | `playChunks` (when !ttsReady), `initTts` onInit (consume) | Defer playback until TTS engine ready |
 | `watchdogRetries` | int | no | `speakChunk`, `watchdogRunnable` | Retry count for stalled TTS engine |
@@ -144,7 +148,12 @@ Notes:
 | `queueAllChapters` | (legacy) | `queueAllChapters` → clear + addAll |
 | `clearNextChapter` | (legacy) | clearQueue |
 | `setPendingChapters` | `ListenPageClient` Effect A | `setPendingPlaylist` → replace playlist, pendingHead=0, prefetchVersion++, kickPrefetch; deliver if awaitingFetch |
-| `setSleepTimer`/`cancelSleepTimer` | `useSleepTimer` | Timer runnable |
+| `setSleepTimer`/`cancelSleepTimer` | `useSleepTimer` | Timer runnable; both clear `sleepAtChapterEnd` (modes are exclusive) |
+| `setSleepAtChapterEnd` | `useSleepTimer` (chapter-end mode) | Arm/disarm pause-at-next-chapter-boundary (fires in Java, screen-off safe) |
+| `seekToChunk` | `useNativeTTSPlayer.seekChunk` fast path, notification `ACTION_BACK_CHUNK`, MediaSession `onSeekTo`/`onRewind`/`onFastForward` | In-chapter jump: `awaitingFetch=false`, speak from the new chunk (or move the paused resume position). Leaves queue/playlist/prefetch untouched — unlike a `playChunks` restart |
+| `getNativeVoices` | `useNativeTTSVoices` | (read-only volatile) JSON catalogue of installed vi voices |
+| `setNativeVoice` | `useNativeTTSPlayer` voice effect + `startNativePlayback` | `setPreferredVoice` — select device voice by name, "" = default (buffered until bound) |
+| `isIgnoringBatteryOptimizations`/`requestIgnoreBatteryOptimizations` | `SpeechPlayer` battery hint | Doze-exemption check + system dialog (background-playback reliability) |
 | `getCompletedChapterIds` | JS progress sync | Drain `completedChapterIds` (+ persists the drained snapshot) |
 | `setSessionInfo` | `PlayerContext` effect | bookId keys persistence + server progress PUTs; bookTitle → MediaSession artist + notification subtitle (buffered until bound) |
 | `getCurrentTitle`/`getCurrentBookId`/`getTotalChunks` | `PlayerContext` override effect, `BookDetailClient` | (read-only volatile reads) |
@@ -158,7 +167,7 @@ Notes:
 | `native-tts-state` | play/pause/stop transitions | `useNativeTTSPlayer.onState` | Sync isPlaying, chunkIndex |
 | `native-tts-chapter-advance` | `deliverAutoAdvance` via `dispatchChapterAdvance` | `useNativeTTSPlayer.onChapterAdvance` | chapterAdvancedRef=true; `onEndedRef.current?.(newChId)` → `ListenPageClient.onEnded` → `router.push(…&autoplay=1)` |
 | `native-tts-done` | `fireDone` (playlist exhausted, incl. hardware-next on last chapter) | `useNativeTTSPlayer.onDone` | Cancels pending advance-coalesce timer; if no onEnded, release background lock |
-| `native-tts-done` + `detail.sleep` | `sleepRunnable` (sleep timer expired) | `useNativeTTSPlayer.onDone` sleep branch | Update playing state ONLY — no onEnded, no chunk reset (resume continues in place) |
+| `native-tts-done` + `detail.sleep` | `sleepRunnable` (timed sleep expired, mid-chapter, credits NO XP) or `onChunkFinished` chapter-end sleep (boundary, DOES credit `completedChapterIds`; `awaitingFetch=true` parks the boundary so resume advances) | `useNativeTTSPlayer.onDone` sleep branch; also clears `useSleepTimer.endOfChapter` | Update playing state ONLY — no onEnded, no chunk reset (resume continues in place) |
 | `native-tts-error` | `initTts` failure, language-data missing | `useNativeTTSPlayer.onNativeError` | setTtsError |
 
 ### DOM events JS listens to

@@ -4,7 +4,12 @@ import Link from "next/link";
 import Image from "next/image";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import {
+  api,
+  ACCEPTED_UPLOAD_EXTS,
+  MAX_UPLOAD_MB,
+  type AppendChaptersResult,
+} from "@/lib/api";
 import { isAdmin, isAuthReady } from "@/lib/auth";
 import { ChapterList } from "@/components/books/ChapterList";
 import { GenreManager } from "@/components/books/GenreManager";
@@ -245,6 +250,27 @@ export default function EditBookClient() {
               />
             )}
           </div>
+        </div>
+      </section>
+
+      {/* Append chapters from an updated file — the "webnovel got new
+          chapters" flow. Keeps every existing chapter row (and therefore all
+          reading progress), unlike reparse below. */}
+      <section className="bg-surface dark:bg-raised rounded-2xl border border-hairline-soft dark:border-hairline shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-hairline-soft dark:border-hairline">
+          <h2 className="text-sm font-semibold text-text dark:text-text">
+            Cập nhật chương mới từ file
+          </h2>
+        </div>
+        <div className="p-5">
+          <AppendChaptersForm
+            bookId={bookId}
+            onSaved={() => {
+              queryClient.invalidateQueries({ queryKey: ["chapters", bookId] });
+              queryClient.invalidateQueries({ queryKey: ["book", bookId] });
+              queryClient.invalidateQueries({ queryKey: ["books"] });
+            }}
+          />
         </div>
       </section>
 
@@ -719,6 +745,198 @@ function BookInfoEditor({
         {saving ? "Đang lưu…" : "Lưu thay đổi"}
       </button>
     </form>
+  );
+}
+
+// ─── AppendChaptersForm ───────────────────────────────────────────────────────
+
+function AppendChaptersForm({
+  bookId,
+  onSaved,
+}: {
+  bookId: string;
+  onSaved: () => void;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [mode, setMode] = useState<"auto" | "all">("auto");
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [result, setResult] = useState<AppendChaptersResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const abortRef = useRef<(() => void) | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0] ?? null;
+    setResult(null);
+    setError(null);
+    if (f && f.size > MAX_UPLOAD_MB * 1024 * 1024) {
+      setError(
+        `File ${(f.size / 1024 / 1024).toFixed(1)}MB vượt quá giới hạn ${MAX_UPLOAD_MB}MB`,
+      );
+      setFile(null);
+      if (fileRef.current) fileRef.current.value = "";
+      return;
+    }
+    setFile(f);
+  };
+
+  const handleSubmit = async () => {
+    if (!file || running) return;
+    setRunning(true);
+    setProgress(0);
+    setResult(null);
+    setError(null);
+    const { promise, abort } = api.appendChaptersWithProgress(
+      bookId,
+      file,
+      mode,
+      setProgress,
+    );
+    abortRef.current = abort;
+    try {
+      const res = await promise;
+      setResult(res);
+      setFile(null);
+      if (fileRef.current) fileRef.current.value = "";
+      onSaved();
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setError(null); // user-initiated cancel
+      } else {
+        setError(err instanceof Error ? err.message : "Cập nhật thất bại");
+      }
+    } finally {
+      abortRef.current = null;
+      setRunning(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-text-mute dark:text-text-mute">
+        Truyện đang ra có chương mới? Tải lên file phiên bản mới — hệ thống tự
+        tìm và <span className="font-medium text-text-dim dark:text-text-faint">nối phần mới vào cuối truyện</span>.
+        Chương hiện có và tiến độ đọc/nghe được giữ nguyên (khác với &ldquo;Phân
+        tích lại&rdquo; bên dưới, vốn xóa toàn bộ chương).
+      </p>
+
+      {/* Mode */}
+      <div className="space-y-1.5">
+        <label className="flex items-start gap-2 cursor-pointer">
+          <input
+            type="radio"
+            name="append-mode"
+            checked={mode === "auto"}
+            onChange={() => setMode("auto")}
+            className="mt-0.5 accent-[var(--color-accent)]"
+          />
+          <span className="text-xs text-text-dim dark:text-text-faint">
+            <span className="font-medium">File là bản đầy đủ của truyện</span>{" "}
+            — tự động so khớp và chỉ thêm các chương sau chương cuối hiện tại
+          </span>
+        </label>
+        <label className="flex items-start gap-2 cursor-pointer">
+          <input
+            type="radio"
+            name="append-mode"
+            checked={mode === "all"}
+            onChange={() => setMode("all")}
+            className="mt-0.5 accent-[var(--color-accent)]"
+          />
+          <span className="text-xs text-text-dim dark:text-text-faint">
+            <span className="font-medium">File chỉ chứa các chương mới</span>{" "}
+            — thêm toàn bộ chương trong file (bỏ qua tiêu đề trùng)
+          </span>
+        </label>
+      </div>
+
+      {/* File picker + submit */}
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="cursor-pointer">
+          <div className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-text-dim dark:text-text-mute border border-hairline dark:border-hairline rounded-lg hover:border-accent/40 hover:text-accent hover:bg-accent/15 dark:hover:bg-accent/30 transition-colors max-w-60">
+            <svg
+              className="w-4 h-4 shrink-0"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
+              />
+            </svg>
+            <span className="truncate">
+              {file ? file.name : "Chọn file (EPUB, TXT, PDF…)"}
+            </span>
+          </div>
+          <input
+            ref={fileRef}
+            type="file"
+            accept={ACCEPTED_UPLOAD_EXTS.join(",")}
+            onChange={handleFile}
+            disabled={running}
+            className="sr-only"
+          />
+        </label>
+        <button
+          type="button"
+          disabled={!file || running}
+          onClick={handleSubmit}
+          className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-accent dark:text-accent border border-accent/40 dark:border-accent/40 rounded-lg hover:bg-accent/15 dark:hover:bg-accent/30 disabled:opacity-60 transition-colors"
+        >
+          {running && <Spinner className="w-4 h-4" />}
+          {running
+            ? progress < 100
+              ? `Đang tải lên… ${progress}%`
+              : "Đang phân tích file…"
+            : "Cập nhật chương"}
+        </button>
+        {running && (
+          <button
+            type="button"
+            onClick={() => abortRef.current?.()}
+            className="px-3 py-2 text-xs font-medium text-text-mute hover:text-vermillion transition-colors"
+          >
+            Hủy
+          </button>
+        )}
+      </div>
+
+      {running && (
+        <div className="w-full h-1.5 bg-raised-hi dark:bg-raised-hi rounded-full overflow-hidden">
+          <div
+            className="h-full bg-accent rounded-full transition-all duration-200"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+      )}
+
+      {error && (
+        <p className="text-xs text-vermillion dark:text-vermillion break-words">
+          {error}
+        </p>
+      )}
+      {result && (
+        <div className="space-y-1">
+          <p className="text-xs font-medium text-accent dark:text-accent">
+            {result.appended > 0
+              ? `✓ Đã thêm ${result.appended} chương mới — tổng ${result.new_total} chương.`
+              : "Không có chương mới nào trong file."}
+          </p>
+          <p className="text-[11px] text-text-mute dark:text-text-mute">
+            File có {result.parsed_chapters} chương, truyện trước đó có{" "}
+            {result.existing_chapters} chương
+            {result.skipped_duplicates > 0 &&
+              ` · bỏ qua ${result.skipped_duplicates} chương trùng tiêu đề`}
+            {result.replaced_original && " · đã cập nhật file gốc"}
+            .
+          </p>
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -257,8 +257,18 @@ async def _upload_deferred_chapter_text(book_id: str, chapters: list[dict]) -> N
         )
 
 
-async def parse_epub_task(book_id: str, epub_bytes: bytes) -> None:
-    db = get_client()
+def extract_epub_contents(epub_bytes: bytes, book_id: str) -> dict:
+    """Pure-CPU extraction: EPUB bytes → metadata + ordered chapter dicts.
+
+    Shared by the initial parse (parse_epub_task) and the append-chapters
+    update flow (books router). Touches no DB or Storage, so callers can run
+    it via asyncio.to_thread and keep the event loop responsive while a big
+    book parses.
+
+    Returns {title, author, cover_bytes, chapters}; chapter entries carry
+    {id, book_id, chapter_index, title, text_content, word_count, status}.
+    Raises ValueError when no readable chapters are found.
+    """
     tmp_path = None
     try:
         # Write epub to temp file
@@ -274,17 +284,7 @@ async def parse_epub_task(book_id: str, epub_bytes: bytes) -> None:
         author_meta = book.get_metadata("DC", "creator")
         author = author_meta[0][0] if author_meta else None
 
-        # Upload cover
-        cover_url = None
         cover_bytes = _get_cover_image(book)
-        if cover_bytes:
-            cover_path = f"covers/{book_id}/cover.jpg"
-            cover_url = await storage_service.upload_bytes(
-                bucket="covers",
-                path=cover_path,
-                data=cover_bytes,
-                content_type="image/jpeg",
-            )
 
         # Parse chapters in spine (reading) order so chapter_index matches the
         # actual reading sequence, not the epub's internal manifest order.
@@ -370,6 +370,40 @@ async def parse_epub_task(book_id: str, epub_bytes: bytes) -> None:
                 + (f" ({len(missing_titles)} headers had no body)" if missing_titles else "")
             )
             chapters_data = split_chapters
+
+        return {
+            "title": title,
+            "author": author,
+            "cover_bytes": cover_bytes,
+            "chapters": chapters_data,
+        }
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+async def parse_epub_task(book_id: str, epub_bytes: bytes) -> None:
+    db = get_client()
+    try:
+        # CPU-heavy (zip extraction + BS4 over every chapter) — run on a worker
+        # thread so the event loop stays responsive while a big book parses.
+        extracted = await asyncio.to_thread(
+            extract_epub_contents, epub_bytes, book_id
+        )
+        title = extracted["title"]
+        author = extracted["author"]
+        chapters_data = extracted["chapters"]
+
+        # Upload cover
+        cover_url = None
+        if extracted["cover_bytes"]:
+            cover_path = f"covers/{book_id}/cover.jpg"
+            cover_url = await storage_service.upload_bytes(
+                bucket="covers",
+                path=cover_path,
+                data=extracted["cover_bytes"],
+                content_type="image/jpeg",
+            )
 
         # Chapter text is stored in Storage at the deterministic path
         # {book_id}/{chapter_id}.txt. Set that path on every row up front so the
@@ -462,6 +496,3 @@ async def parse_epub_task(book_id: str, epub_bytes: bytes) -> None:
             "status": "error",
             "error_message": _friendly_parse_error(e),
         }).eq("id", book_id).execute()
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            os.unlink(tmp_path)

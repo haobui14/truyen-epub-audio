@@ -140,6 +140,7 @@ public class TtsPlaybackService extends Service {
     public static final String ACTION_PREV       = "com.truyenaudio.app.ACTION_PREV";
     public static final String ACTION_NEXT       = "com.truyenaudio.app.ACTION_NEXT";
     public static final String ACTION_STOP       = "com.truyenaudio.app.ACTION_STOP";
+    public static final String ACTION_BACK_CHUNK = "com.truyenaudio.app.ACTION_BACK_CHUNK";
 
     // ── Inner types ───────────────────────────────────────────────────────────
 
@@ -235,6 +236,16 @@ public class TtsPlaybackService extends Service {
     private TextToSpeech  tts;
     private boolean       ttsReady   = false;
 
+    // User-selected device voice (one of the Vietnamese voices installed on
+    // this device). Empty = engine default for vi-VN. Applied on init and
+    // re-applied after watchdog engine reinits; persisted in the session
+    // snapshot so it survives a process kill.
+    private String preferredVoiceName = "";
+    // JSON array of the installed Vietnamese voices, built once the engine is
+    // ready; read by TtsBridge.getNativeVoices() from the WebView thread
+    // (hence volatile).
+    volatile String availableVoicesJson = "[]";
+
     // Playback state — volatile for cross-thread reads from TtsBridge
     volatile boolean      isPlaying         = false;
     volatile int          currentChunkIdx   = -1;
@@ -249,6 +260,18 @@ public class TtsPlaybackService extends Service {
     volatile int          currentTotalChunks = 0;
     volatile String       currentBookId     = "";
     volatile String       currentBookTitle  = "";
+
+    // ── Estimated chapter timeline (lockscreen / notification seek bar) ──────
+    // The TTS engine reports no duration, so estimate one from text length:
+    // Vietnamese TTS at 1.0× speaks roughly CHARS_PER_SECOND chars/sec. All
+    // values are "content time" at 1.0×; updatePlaybackState passes currentRate
+    // as the playback speed so the OS extrapolates the moving position
+    // correctly at any rate. Estimation error only skews the time labels —
+    // seeking stays exact because onSeekTo maps the scrubbed position back to
+    // a chunk index through the same table.
+    private static final float CHARS_PER_SECOND = 15f;
+    private long[] chunkStartMs      = null; // estimated start of each chunk
+    private long   chapterDurationMs = 0;    // estimated total chapter duration
 
     // Cover art for the media notification / lockscreen. Loaded async from the
     // book's cover_url (set via updateCover) and cached by URL.
@@ -412,6 +435,12 @@ public class TtsPlaybackService extends Service {
                 "{detail:{sleep:true}}))");
     };
 
+    // Sleep at the NEXT chapter boundary instead of a wall-clock time.
+    // Honored in onChunkFinished, entirely in Java, so it works while the
+    // screen is off. One-shot: cleared when it fires, on setSleepTimer /
+    // cancelSleepTimer (the two modes are exclusive), and on stopPlayback.
+    private boolean sleepAtChapterEnd = false;
+
     // Pause when headphones unplug / Bluetooth disconnects, so audio
     // doesn't suddenly blast out of the phone speaker.
     private boolean noisyReceiverRegistered = false;
@@ -540,6 +569,9 @@ public class TtsPlaybackService extends Service {
                         break;
                     case ACTION_PREV:
                         mainHandler.post(this::restartCurrentChapter);
+                        break;
+                    case ACTION_BACK_CHUNK:
+                        mainHandler.post(() -> seekToChunk(currentChunkIdx - 1));
                         break;
                     case ACTION_NEXT:
                         mainHandler.post(this::skipToNextChapter);
@@ -683,6 +715,12 @@ public class TtsPlaybackService extends Service {
                 }
             });
 
+            // Voice catalogue + user-preferred voice. Must run BEFORE the
+            // pendingItem flush below so buffered playback starts with the
+            // chosen voice, not the engine default.
+            refreshAvailableVoices();
+            applyPreferredVoice();
+
             // Flush any playback that was requested before TTS was ready
             if (pendingItem != null) {
                 ChapterItem item = pendingItem;
@@ -728,6 +766,9 @@ public class TtsPlaybackService extends Service {
             dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-state'," +
                     "{detail:{playing:true,index:" + i + "}}))");
         });
+        // Keep the lockscreen seek bar in sync — the position advances chunk by
+        // chunk; the OS extrapolates within a chunk using the playback speed.
+        updatePlaybackState(true);
         // Keep the durable snapshot + server progress fresh while the screen is
         // off and JS can't do it. Both are cheap: one async prefs commit, and a
         // throttled (30 s) PUT on the io executor.
@@ -756,6 +797,26 @@ public class TtsPlaybackService extends Service {
                     + " awaiting=" + awaitingFetch
                     + " selfFetchBase=" + (selfFetchBase.isEmpty() ? "EMPTY" : "set")
                     + " prefetchVer=" + prefetchVersion);
+            if (sleepAtChapterEnd) {
+                // Chapter-boundary sleep: stop here instead of advancing. The
+                // chapter DID complete, so credit it for the XP drain (unlike
+                // the mid-chapter timed sleep, which deliberately credits
+                // nothing). awaitingFetch=true parks the boundary so a later
+                // resume delivers the NEXT chapter instead of replaying this
+                // chapter's final sentence — I1 holds because pauseInternal
+                // already set isPlaying=false.
+                sleepAtChapterEnd = false;
+                if (currentChapterId != null && !currentChapterId.isEmpty()) {
+                    synchronized (completedChapterIds) {
+                        completedChapterIds.add(currentChapterId);
+                    }
+                }
+                pauseInternal();
+                awaitingFetch = true;
+                dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-done'," +
+                        "{detail:{sleep:true}}))");
+                return;
+            }
             ChapterItem nextChapter = chapterQueue.poll();
             if (nextChapter != null) {
                 Log.d(TAG, "→ advance to " + nextChapter.chapterId);
@@ -912,6 +973,7 @@ public class TtsPlaybackService extends Service {
         currentTitle     = (title != null && !title.isEmpty()) ? title : currentTitle;
         currentChapterId = (chapterId != null) ? chapterId : "";
         currentTotalChunks = (chunks != null) ? chunks.size() : 0;
+        recomputeChunkTimings();
         chapterQueue.clear();
 
         // Cancel any in-flight prefetch chain (new version = stale callbacks ignored)
@@ -1027,6 +1089,8 @@ public class TtsPlaybackService extends Service {
         currentChunkIdx  = -1;
         currentTotalChunks = 0;
         currentChapterId = "";
+        recomputeChunkTimings();
+        sleepAtChapterEnd = false;
         pendingItem      = null;
         pendingMergeBuffer = null;
         chapterQueue.clear();
@@ -1086,15 +1150,56 @@ public class TtsPlaybackService extends Service {
     public void restartCurrentChapter() {
         if (currentChunks == null || currentChunks.isEmpty()) return;
         if (tts != null) tts.stop();
+        // Deliberately back inside this chapter — a lingering awaitingFetch
+        // (paused at a chapter boundary) would let the next mergeQueue /
+        // prefetch delivery hijack playback to the next chapter mid-restart.
+        awaitingFetch = false;
         if (!isPlaying) {
             isPlaying = true;
+            // Re-acquire the CPU lock released by pauseInternal — without it
+            // a restart from the paused notification stalls at the next
+            // screen-off chunk boundary.
+            if (wakeLock != null && !wakeLock.isHeld()) wakeLock.acquire();
             requestAudioFocus();
+            if (mediaSession != null) mediaSession.setActive(true);
         }
         speakChunk(0);
         updatePlaybackState(true);
         updateNotification();
         dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-state'," +
                 "{detail:{playing:true,index:0}}))");
+        persistSession();
+    }
+
+    /**
+     * Jump to a chunk inside the CURRENT chapter. Backs the lockscreen
+     * seek-bar scrubs (onSeekTo), the notification back-one-chunk button,
+     * BT rewind/fast-forward, and the in-app seek fast path
+     * (bridge.seekToChunk). Unlike a playChunks restart it leaves the queue,
+     * pending playlist and prefetch chain untouched. While paused it only
+     * moves the resume position — it never starts audio.
+     */
+    public void seekToChunk(int idx) {
+        List<String> chunks = currentChunks;
+        if (chunks == null || chunks.isEmpty()) return;
+        int clamped = Math.max(0, Math.min(idx, chunks.size() - 1));
+        // Back inside this chapter — clear a lingering boundary wait (see
+        // restartCurrentChapter above for the hijack this prevents).
+        awaitingFetch = false;
+        currentChunkIdx = clamped;
+        if (isPlaying) {
+            mainHandler.removeCallbacks(watchdogRunnable);
+            watchdogRetries = 0;
+            if (tts != null) tts.stop();
+            speakChunk(clamped);
+        } else {
+            updatePlaybackState(false);
+            updateNotification();
+            dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-state'," +
+                    "{detail:{playing:false,index:" + clamped + "}}))");
+        }
+        persistSession();
+        maybeSyncProgressToServer(true);
     }
 
     public void setRate(float rate) {
@@ -1105,6 +1210,73 @@ public class TtsPlaybackService extends Service {
     public void setPitch(float pitch) {
         currentPitch = pitch;
         if (tts != null) tts.setPitch(pitch);
+    }
+
+    /**
+     * Select a device TTS voice by its {@link android.speech.tts.Voice#getName()}.
+     * Empty string returns to the engine default for vi-VN. Takes effect on
+     * the next utterance (JS restarts the current chunk right after calling
+     * this, so the switch is heard immediately).
+     */
+    public void setPreferredVoice(String name) {
+        String newName = name != null ? name : "";
+        if (newName.equals(preferredVoiceName)) return;
+        preferredVoiceName = newName;
+        if (ttsReady && tts != null) {
+            if (newName.isEmpty()) {
+                // Back to the engine default for Vietnamese.
+                try { tts.setLanguage(new Locale("vi", "VN")); } catch (Exception ignored) {}
+            } else {
+                applyPreferredVoice();
+            }
+        }
+        persistSession();
+    }
+
+    /**
+     * Build the JSON catalogue of installed Vietnamese voices for the JS
+     * voice picker: [{name, quality, network}]. Called once the engine is
+     * ready (and again after watchdog reinits).
+     */
+    private void refreshAvailableVoices() {
+        try {
+            JSONArray arr = new JSONArray();
+            Set<android.speech.tts.Voice> voices = tts != null ? tts.getVoices() : null;
+            if (voices != null) {
+                for (android.speech.tts.Voice v : voices) {
+                    if (v == null || v.getLocale() == null) continue;
+                    if (!"vi".equalsIgnoreCase(v.getLocale().getLanguage())) continue;
+                    JSONObject o = new JSONObject();
+                    o.put("name", v.getName());
+                    o.put("quality", v.getQuality());
+                    o.put("network", v.isNetworkConnectionRequired());
+                    arr.put(o);
+                }
+            }
+            availableVoicesJson = arr.toString();
+        } catch (Exception e) {
+            // Some engines throw from getVoices() — leave the previous list.
+            Log.w(TAG, "refreshAvailableVoices failed", e);
+        }
+    }
+
+    /** Apply {@link #preferredVoiceName} to the engine if it is installed. */
+    private void applyPreferredVoice() {
+        if (tts == null || !ttsReady || preferredVoiceName.isEmpty()) return;
+        try {
+            Set<android.speech.tts.Voice> voices = tts.getVoices();
+            if (voices == null) return;
+            for (android.speech.tts.Voice v : voices) {
+                if (v != null && preferredVoiceName.equals(v.getName())) {
+                    tts.setVoice(v);
+                    return;
+                }
+            }
+            // Voice was uninstalled — keep the vi-VN default set by initTts.
+            Log.w(TAG, "preferred voice not installed: " + preferredVoiceName);
+        } catch (Exception e) {
+            Log.w(TAG, "applyPreferredVoice failed", e);
+        }
     }
 
     public void updateTitle(String title) {
@@ -1283,6 +1455,7 @@ public class TtsPlaybackService extends Service {
 
     public void setSleepTimer(long expireAtMs) {
         mainHandler.removeCallbacks(sleepRunnable);
+        sleepAtChapterEnd = false; // timed mode replaces chapter-end mode
         long delay = expireAtMs - System.currentTimeMillis();
         if (delay <= 0) {
             mainHandler.post(sleepRunnable);
@@ -1293,6 +1466,16 @@ public class TtsPlaybackService extends Service {
 
     public void cancelSleepTimer() {
         mainHandler.removeCallbacks(sleepRunnable);
+        sleepAtChapterEnd = false;
+    }
+
+    /**
+     * Arm (or disarm) the "sleep when the current chapter ends" mode.
+     * Mutually exclusive with the wall-clock timer above.
+     */
+    public void setSleepAtChapterEnd(boolean on) {
+        sleepAtChapterEnd = on;
+        if (on) mainHandler.removeCallbacks(sleepRunnable);
     }
 
     /**
@@ -1658,6 +1841,7 @@ public class TtsPlaybackService extends Service {
             o.put("totalChunks", currentTotalChunks);
             o.put("rate", currentRate);
             o.put("pitch", currentPitch);
+            o.put("voiceName", preferredVoiceName);
             o.put("playing", isPlaying);
             // The auth token is deliberately NOT persisted (no JWT at rest in
             // SharedPreferences). The chapter-text endpoint is public, so
@@ -1751,6 +1935,10 @@ public class TtsPlaybackService extends Service {
             currentTotalChunks = o.optInt("totalChunks", 0);
             currentRate        = (float) o.optDouble("rate", 1.0);
             currentPitch       = (float) o.optDouble("pitch", 1.0);
+            // Restored BEFORE the async initTts callback fires (onCreate calls
+            // initTts then restoreSession synchronously), so applyPreferredVoice
+            // inside that callback picks this up.
+            preferredVoiceName = o.optString("voiceName", "");
             selfFetchBase      = o.optString("apiBase", "");
             restoredWasPlaying = o.optBoolean("playing", false);
             restoredAtMs       = o.optLong("ts", 0);
@@ -2040,6 +2228,7 @@ public class TtsPlaybackService extends Service {
         currentChapterId = (item.chapterId != null) ? item.chapterId : "";
         currentTotalChunks = (item.chunks != null) ? item.chunks.size() : 0;
         if (item.title != null && !item.title.isEmpty()) currentTitle = item.title;
+        recomputeChunkTimings();
 
         awaitingFetch = false;
 
@@ -2140,14 +2329,17 @@ public class TtsPlaybackService extends Service {
                 this, 0, launchIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
-        // Prev chunk action
+        // Restart-chapter action
         PendingIntent prevPi = buildActionIntent(ACTION_PREV, 10);
         // Play/Pause toggle action
         PendingIntent playPausePi = buildActionIntent(ACTION_PLAY_PAUSE, 11);
-        // Next chunk action
+        // Next-chapter action
         PendingIntent nextPi = buildActionIntent(ACTION_NEXT, 12);
         // Stop action
         PendingIntent stopPi = buildActionIntent(ACTION_STOP, 13);
+        // Back-one-chunk action (≈ one sentence group — the audiobook "wait,
+        // what did it just say?" button)
+        PendingIntent backChunkPi = buildActionIntent(ACTION_BACK_CHUNK, 14);
 
         int toggleIcon  = isPlaying ? android.R.drawable.ic_media_pause
                                     : android.R.drawable.ic_media_play;
@@ -2162,7 +2354,7 @@ public class TtsPlaybackService extends Service {
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle(primary)
                 .setContentText(subtitle)
-                .setSmallIcon(android.R.drawable.ic_media_play)
+                .setSmallIcon(R.drawable.ic_stat_headset)
                 .setColor(NOTIF_ACCENT)
                 .setContentIntent(contentIntent)
                 .setOngoing(isPlaying)
@@ -2170,13 +2362,17 @@ public class TtsPlaybackService extends Service {
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
+                // Compact view (lockscreen pre-13 / collapsed) shows indices
+                // 0,2,3 → back-chunk, play/pause, next-chapter. The expanded
+                // card shows all five.
+                .addAction(android.R.drawable.ic_media_rew, "Lùi đoạn", backChunkPi)
                 .addAction(android.R.drawable.ic_media_previous, "Đầu chương", prevPi)
                 .addAction(toggleIcon, toggleLabel, playPausePi)
                 .addAction(android.R.drawable.ic_media_next, "Chương tiếp", nextPi)
                 .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Dừng", stopPi)
                 .setStyle(new MediaStyle()
                         .setMediaSession(mediaSession != null ? mediaSession.getSessionToken() : null)
-                        .setShowActionsInCompactView(0, 1, 2));
+                        .setShowActionsInCompactView(0, 2, 3));
 
         // Book cover as the notification large icon / lockscreen art (once loaded).
         if (currentCoverBitmap != null) {
@@ -2269,10 +2465,60 @@ public class TtsPlaybackService extends Service {
             @Override public void onSkipToNext() {
                 mainHandler.post(TtsPlaybackService.this::skipToNextChapter);
             }
+            @Override public void onSeekTo(long pos) {
+                // Lockscreen / notification seek-bar scrub → chunk jump.
+                mainHandler.post(() -> seekToChunk(chunkIndexForPositionMs(pos)));
+            }
+            @Override public void onRewind() {
+                mainHandler.post(() -> seekToChunk(currentChunkIdx - 1));
+            }
+            @Override public void onFastForward() {
+                mainHandler.post(() -> seekToChunk(currentChunkIdx + 1));
+            }
         });
 
         setMetadata(currentTitle);
         updatePlaybackState(false);
+    }
+
+    // ── Estimated timeline helpers (lockscreen seek bar) ─────────────────────
+
+    /** Rebuild {@link #chunkStartMs}/{@link #chapterDurationMs} from currentChunks. */
+    private void recomputeChunkTimings() {
+        List<String> chunks = currentChunks;
+        if (chunks == null || chunks.isEmpty()) {
+            chunkStartMs      = null;
+            chapterDurationMs = 0;
+            return;
+        }
+        long[] starts = new long[chunks.size()];
+        long acc = 0;
+        for (int i = 0; i < chunks.size(); i++) {
+            starts[i] = acc;
+            String c = chunks.get(i);
+            acc += (long) (c.length() / CHARS_PER_SECOND * 1000f);
+        }
+        chunkStartMs      = starts;
+        chapterDurationMs = acc;
+    }
+
+    /** Estimated content-time position (1.0× ms) of the current chunk start. */
+    private long estimatedPositionMs() {
+        long[] starts = chunkStartMs;
+        int idx = currentChunkIdx;
+        if (starts == null || starts.length == 0 || idx < 0) return 0;
+        if (idx >= starts.length) return chapterDurationMs;
+        return starts[idx];
+    }
+
+    /** Map a scrubbed content-time position back to a chunk index. */
+    private int chunkIndexForPositionMs(long posMs) {
+        long[] starts = chunkStartMs;
+        if (starts == null || starts.length == 0) return 0;
+        for (int i = starts.length - 1; i >= 0; i--) {
+            if (starts[i] <= posMs) return i;
+        }
+        return 0;
     }
 
     private void updatePlaybackState(boolean playing) {
@@ -2282,12 +2528,20 @@ public class TtsPlaybackService extends Service {
                 | PlaybackStateCompat.ACTION_PLAY_PAUSE
                 | PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
                 | PlaybackStateCompat.ACTION_SKIP_TO_NEXT
+                | PlaybackStateCompat.ACTION_SEEK_TO
+                | PlaybackStateCompat.ACTION_REWIND
+                | PlaybackStateCompat.ACTION_FAST_FORWARD
                 | PlaybackStateCompat.ACTION_STOP;
         int state = playing ? PlaybackStateCompat.STATE_PLAYING
                             : PlaybackStateCompat.STATE_PAUSED;
+        // Real position + speed drive the lockscreen/notification seek bar:
+        // the OS extrapolates the position at `speed` while STATE_PLAYING and
+        // onSeekTo maps a scrubbed position back to a chunk. Duration lives in
+        // the MediaMetadata (see setMetadata).
+        float speed = playing ? currentRate : 0f;
         mediaSession.setPlaybackState(new PlaybackStateCompat.Builder()
                 .setActions(actions)
-                .setState(state, PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, 1f)
+                .setState(state, estimatedPositionMs(), speed)
                 .build());
     }
 
@@ -2300,6 +2554,12 @@ public class TtsPlaybackService extends Service {
                 .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
                 .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist)
                 .putString(MediaMetadataCompat.METADATA_KEY_ALBUM,  artist);
+        // Estimated chapter duration → the OS renders a seek bar on the
+        // lockscreen / media notification. Omitted (unknown) when no chapter
+        // text is loaded, e.g. a restored-but-cold session.
+        if (chapterDurationMs > 0) {
+            b.putLong(MediaMetadataCompat.METADATA_KEY_DURATION, chapterDurationMs);
+        }
         // Cover art for the lockscreen media card, Android Auto, and BT displays.
         if (currentCoverBitmap != null) {
             b.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, currentCoverBitmap);

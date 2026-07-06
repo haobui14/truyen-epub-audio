@@ -6,10 +6,12 @@ import android.content.Intent;
 import android.content.ServiceConnection;
 import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
 
@@ -61,6 +63,10 @@ public class TtsBridge {
     private String pendingBookId    = null;
     private String pendingBookTitle = null;
 
+    // Preferred device voice saved when the service is not yet bound
+    // (useNativeTTSPlayer applies it as soon as the player mounts).
+    private String pendingVoiceName = null;
+
     // ── Service connection ────────────────────────────────────────────────────
 
     private final ServiceConnection connection = new ServiceConnection() {
@@ -96,6 +102,10 @@ public class TtsBridge {
                     service.setSessionInfo(pendingBookId, pendingBookTitle);
                     pendingBookId    = null;
                     pendingBookTitle = null;
+                }
+                if (pendingVoiceName != null) {
+                    service.setPreferredVoice(pendingVoiceName);
+                    pendingVoiceName = null;
                 }
             }
         }
@@ -289,6 +299,56 @@ public class TtsBridge {
     public void setPitch(double pitch) {
         mainHandler.post(() -> {
             if (service != null) service.setPitch((float) pitch);
+        });
+    }
+
+    /**
+     * Jump to a chunk inside the currently-playing chapter WITHOUT the full
+     * playChunks restart (which clears the queue and prefetch chain). While
+     * paused it only moves the resume position.
+     */
+    @JavascriptInterface
+    public void seekToChunk(int idx) {
+        mainHandler.post(() -> {
+            if (service != null) service.seekToChunk(idx);
+        });
+    }
+
+    /**
+     * JSON array of the device's installed Vietnamese voices:
+     * [{name, quality, network}]. Empty until the TTS engine has initialised.
+     * Volatile read — safe from the WebView thread.
+     */
+    @JavascriptInterface
+    public String getNativeVoices() {
+        TtsPlaybackService svc = service;
+        return svc != null ? svc.availableVoicesJson : "[]";
+    }
+
+    /**
+     * Select a device TTS voice by name (from getNativeVoices). Empty string
+     * returns to the engine default for vi-VN. Buffered until the service binds.
+     */
+    @JavascriptInterface
+    public void setNativeVoice(String name) {
+        mainHandler.post(() -> {
+            if (service != null) {
+                service.setPreferredVoice(name);
+            } else {
+                pendingVoiceName = name != null ? name : "";
+            }
+        });
+    }
+
+    /**
+     * Arm/disarm "sleep when the current chapter ends". Runs entirely in Java
+     * so it fires even with the screen off. Mutually exclusive with
+     * setSleepTimer.
+     */
+    @JavascriptInterface
+    public void setSleepAtChapterEnd(boolean on) {
+        mainHandler.post(() -> {
+            if (service != null) service.setSleepAtChapterEnd(on);
         });
     }
 
@@ -587,5 +647,48 @@ public class TtsBridge {
             android.net.NetworkInfo info = cm.getActiveNetworkInfo();
             return info != null && info.isConnected();
         }
+    }
+
+    /**
+     * True when the app is exempt from battery optimizations (Doze). When it
+     * is NOT, aggressive OEMs (Samsung, Xiaomi, …) may kill the TTS foreground
+     * service during long screen-off sessions — the primary cause of
+     * "playback stopped in the middle of the night".
+     */
+    @JavascriptInterface
+    public boolean isIgnoringBatteryOptimizations() {
+        try {
+            PowerManager pm =
+                    (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+            return pm == null
+                    || pm.isIgnoringBatteryOptimizations(context.getPackageName());
+        } catch (Exception e) {
+            return true; // can't check → don't nag
+        }
+    }
+
+    /**
+     * Show the system dialog asking to exempt this app from battery
+     * optimizations. Falls back to the full optimization-list screen on OEMs
+     * that block the direct request dialog.
+     */
+    @JavascriptInterface
+    public void requestIgnoreBatteryOptimizations() {
+        mainHandler.post(() -> {
+            try {
+                Intent i = new Intent(
+                        android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        Uri.parse("package:" + context.getPackageName()));
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(i);
+            } catch (Exception e) {
+                try {
+                    Intent fallback = new Intent(
+                            android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                    fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    context.startActivity(fallback);
+                } catch (Exception ignored) {}
+            }
+        });
     }
 }

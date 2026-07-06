@@ -67,7 +67,7 @@ async def update_chapter(
     _admin: dict = Depends(get_admin_user),
 ):
     db = get_client()
-    result = db.table("chapters").select("id,book_id").eq("id", chapter_id).maybe_single().execute()
+    result = db.table("chapters").select("id,book_id,chapter_index").eq("id", chapter_id).maybe_single().execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Chapter not found")
     book_id = result.data["book_id"]
@@ -81,6 +81,26 @@ async def update_chapter(
     if body.chapter_index is not None:
         if body.chapter_index < 0:
             raise HTTPException(status_code=400, detail="chapter_index must be >= 0")
+        # The (book_id, chapter_index) unique constraint would turn a collision
+        # into an opaque 500 — check first and return an actionable 409.
+        if body.chapter_index != result.data["chapter_index"]:
+            collision = (
+                db.table("chapters")
+                .select("id")
+                .eq("book_id", book_id)
+                .eq("chapter_index", body.chapter_index)
+                .neq("id", chapter_id)
+                .limit(1)
+                .execute()
+            )
+            if collision.data:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Vị trí {body.chapter_index + 1} đã có chương khác — "
+                        "chọn số khác hoặc đổi số chương kia trước"
+                    ),
+                )
         updates["chapter_index"] = body.chapter_index
     if body.text_content is not None:
         await storage_service.write_chapter_text(book_id, chapter_id, body.text_content)

@@ -24,6 +24,36 @@ interface TtsBridgeNative {
   stopPlayback(): void;
   setRate(rate: number): void;
   setPitch(pitch: number): void;
+  /**
+   * Jump to a chunk inside the currently-playing chapter WITHOUT the full
+   * playChunks restart (keeps the queue + prefetch chain intact). While
+   * paused it only moves the resume position. (Optional — newer APKs.)
+   */
+  seekToChunk?(idx: number): void;
+  /**
+   * JSON array [{name, quality, network}] of the device's installed
+   * Vietnamese TTS voices; "[]" until the engine has initialised.
+   * (Optional — newer APKs.)
+   */
+  getNativeVoices?(): string;
+  /**
+   * Select a device TTS voice by name (from getNativeVoices); "" returns to
+   * the engine default. (Optional — newer APKs.)
+   */
+  setNativeVoice?(name: string): void;
+  /**
+   * Arm/disarm "sleep when the current chapter ends" — runs in Java so it
+   * fires screen-off; mutually exclusive with setSleepTimer.
+   * (Optional — newer APKs.)
+   */
+  setSleepAtChapterEnd?(on: boolean): void;
+  /**
+   * True when the app is exempt from battery optimizations (Doze). False
+   * means aggressive OEMs may kill background playback. (Optional — newer APKs.)
+   */
+  isIgnoringBatteryOptimizations?(): boolean;
+  /** Show the system battery-optimization exemption dialog. (Optional — newer APKs.) */
+  requestIgnoreBatteryOptimizations?(): void;
   updateTitle(title: string): void;
   /** Set the cover image URL shown on the lockscreen / media notification. */
   updateCover(url: string): void;

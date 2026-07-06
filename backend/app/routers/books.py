@@ -1,7 +1,10 @@
+import logging
+
 from fastapi import APIRouter, HTTPException, Query, Depends, UploadFile, File, Form
 from typing import List, Optional
 from pydantic import BaseModel
 
+from app.config import settings
 from app.database import get_client
 from app.dependencies import get_admin_user
 from app.models.book import BookResponse
@@ -9,6 +12,7 @@ from app.models.chapter import ChapterResponse, AudioSummary, PaginatedChaptersR
 from app.services import storage_service
 
 router = APIRouter(prefix="/api/books", tags=["books"])
+logger = logging.getLogger(__name__)
 
 
 def _attach_genres(rows: list) -> list:
@@ -333,6 +337,280 @@ async def reparse_book(
 
     asyncio.create_task(_run())
     return {"book_id": book_id, "status": "parsing", "source": original_name}
+
+
+def _normalize_title(t: Optional[str]) -> str:
+    """Whitespace-collapsed, lowercased title for alignment/dedupe compares."""
+    return " ".join((t or "").split()).lower()
+
+
+@router.post("/{book_id}/append-chapters")
+async def append_chapters_from_file(
+    book_id: str,
+    file: UploadFile = File(...),
+    mode: str = Form("auto"),
+    _admin: dict = Depends(get_admin_user),
+):
+    """Admin-only: update an ONGOING book with new chapters from a re-downloaded
+    file (EPUB/TXT/PDF/PRC/MOBI) — the webnovel "story got 200 more chapters"
+    flow. Existing chapter rows are never touched, so chapter ids, reading
+    progress, and XP all survive (unlike /reparse, which wipes and re-creates
+    every chapter with new ids).
+
+    mode="auto" (default): the file is a full bundle of the book. The parsed
+    chapter list is aligned to the existing chapters — anchored on the LAST
+    existing chapter's title, falling back to position when titles changed —
+    and only the tail beyond the anchor is appended.
+
+    mode="all": the file contains ONLY new chapters; everything parsed is
+    appended. In both modes, chapters whose exact (normalized) title already
+    exists in the book are skipped as duplicates and reported.
+
+    Runs synchronously through parse + row insert (seconds); the bulk of the
+    chapter-text Storage uploads continue in the background exactly like the
+    initial upload flow, so new chapters are browsable immediately."""
+    import asyncio
+    import uuid as _uuid
+
+    from app.routers.upload import (
+        ORIG_CONTENT_TYPES,
+        VALID_EXTENSIONS,
+        _to_epub_bytes,
+        _validate_upload_shape,
+    )
+    from app.services import epub_parser
+
+    if mode not in ("auto", "all"):
+        raise HTTPException(status_code=400, detail="mode must be 'auto' or 'all'")
+
+    db = get_client()
+    book = db.table("books").select("id,status").eq("id", book_id).maybe_single().execute()
+    if not book.data:
+        raise HTTPException(status_code=404, detail="Book not found")
+    if book.data.get("status") == "parsing":
+        raise HTTPException(
+            status_code=409,
+            detail="Truyện đang được phân tích — đợi xong rồi thử lại",
+        )
+
+    # ── Validate the file exactly like the initial upload ──────────────────
+    filename = file.filename or ""
+    ext = next((e for e in VALID_EXTENSIONS if filename.lower().endswith(e)), None)
+    if not ext:
+        raise HTTPException(
+            status_code=400,
+            detail="Only .epub, .pdf, .txt, .prc, and .mobi files are accepted",
+        )
+    content = await file.read()
+    max_bytes = settings.max_upload_size_mb * 1024 * 1024
+    if len(content) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Max {settings.max_upload_size_mb}MB",
+        )
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+    _validate_upload_shape(content, ext)
+
+    # ── Existing chapters, in reading order (paginated past the PostgREST
+    # max_rows cap — same pattern as auto-split) ────────────────────────────
+    PAGE_SIZE = 500
+    existing: list[dict] = []
+    fetch_offset = 0
+    while True:
+        page = db.table("chapters").select(
+            "id,chapter_index,title"
+        ).eq("book_id", book_id).order("chapter_index").range(
+            fetch_offset, fetch_offset + PAGE_SIZE - 1
+        ).execute()
+        batch = page.data or []
+        existing.extend(batch)
+        if len(batch) < PAGE_SIZE:
+            break
+        fetch_offset += PAGE_SIZE
+
+    # ── Convert + parse the uploaded file (CPU on worker threads) ───────────
+    title_guess = filename[: -len(ext)]
+    try:
+        epub_bytes = await _to_epub_bytes(content, ext, title_guess)
+        extracted = await asyncio.to_thread(
+            epub_parser.extract_epub_contents, epub_bytes, book_id
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Không tìm thấy chương nào có thể đọc trong file ({e})",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Không đọc được file: {type(e).__name__}: {e}",
+        )
+    parsed = extracted["chapters"]
+
+    # ── Alignment: which parsed chapters are NEW? ───────────────────────────
+    existing_titles = {_normalize_title(ch["title"]) for ch in existing}
+    if mode == "auto" and existing:
+        # Anchor on the LAST existing chapter's title, scanning the parsed list
+        # from the end (a full bundle contains it near its tail). Fall back to
+        # position when titles shifted (e.g. re-crawled source renamed them).
+        last_title = _normalize_title(existing[-1]["title"])
+        anchor_pos = None
+        for i in range(len(parsed) - 1, -1, -1):
+            if _normalize_title(parsed[i]["title"]) == last_title:
+                anchor_pos = i
+                break
+        if anchor_pos is not None:
+            candidates = parsed[anchor_pos + 1:]
+        elif len(parsed) > len(existing):
+            candidates = parsed[len(existing):]
+        else:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Không xác định được phần mới: file có {len(parsed)} chương, "
+                    f"truyện đang có {len(existing)} chương và tiêu đề chương cuối "
+                    "không khớp. Nếu file chỉ chứa các chương mới, chọn chế độ "
+                    "'File chỉ chứa chương mới'."
+                ),
+            )
+    else:
+        # mode == "all", or the book has no chapters yet — take everything.
+        candidates = parsed
+
+    # Never re-add a chapter whose exact title already exists. Protects against
+    # slight positional misalignment and against re-uploading the same partial
+    # file twice. Books with legitimately duplicated titles will see them in
+    # skipped_duplicates — surfaced to the admin rather than silently dropped.
+    new_chapters = [
+        c for c in candidates if _normalize_title(c["title"]) not in existing_titles
+    ]
+    skipped = len(candidates) - len(new_chapters)
+
+    if not new_chapters:
+        return {
+            "existing_chapters": len(existing),
+            "parsed_chapters": len(parsed),
+            "appended": 0,
+            "skipped_duplicates": skipped,
+            "new_total": len(existing),
+            "replaced_original": False,
+        }
+
+    # ── Build new rows continuing the existing index sequence ───────────────
+    next_index = (existing[-1]["chapter_index"] + 1) if existing else 0
+    rows: list[dict] = []
+    for i, ch in enumerate(new_chapters):
+        cid = str(_uuid.uuid4())
+        rows.append({
+            "id": cid,
+            "book_id": book_id,
+            "chapter_index": next_index + i,
+            "title": ch["title"],
+            "text_content": ch["text_content"],
+            "word_count": ch["word_count"],
+            "status": "pending",
+            "text_storage_path": storage_service.chapter_text_path(book_id, cid),
+        })
+
+    # Same instant-availability pattern as the initial parse: the first few
+    # texts upload synchronously (readable the moment we return), the rest fill
+    # in via the shared deferred background uploader after rows are inserted.
+    PREFETCH_AHEAD = 3
+    prefetch, deferred = rows[:PREFETCH_AHEAD], rows[PREFETCH_AHEAD:]
+    prefetch_ok = 0
+    for ch in prefetch:
+        try:
+            await storage_service.upload_chapter_text(
+                book_id, ch["id"], ch["text_content"]
+            )
+            prefetch_ok += 1
+        except Exception as e:
+            logger.exception(
+                f"Book {book_id}: append prefetch text upload failed for "
+                f"chapter {ch['id']} ({ch.get('title')!r})"
+            )
+            ch["status"] = "error"
+            ch["error_message"] = f"{type(e).__name__}: {e}"[:1000]
+    if prefetch and prefetch_ok == 0:
+        raise HTTPException(
+            status_code=502,
+            detail="Không tải được nội dung chương lên Storage — thử lại sau",
+        )
+
+    # INSERT in batches; roll back inserted rows on failure so the book is
+    # never left with a partial tail.
+    BATCH_SIZE = 100
+    insert_rows = [
+        {k: v for k, v in ch.items() if k != "text_content"} for ch in rows
+    ]
+    inserted_ids: list[str] = []
+    try:
+        for i in range(0, len(insert_rows), BATCH_SIZE):
+            db.table("chapters").insert(insert_rows[i:i + BATCH_SIZE]).execute()
+            inserted_ids.extend(r["id"] for r in insert_rows[i:i + BATCH_SIZE])
+    except Exception as insert_err:
+        for i in range(0, len(inserted_ids), BATCH_SIZE):
+            try:
+                db.table("chapters").delete().in_(
+                    "id", inserted_ids[i:i + BATCH_SIZE]
+                ).execute()
+            except Exception:
+                pass
+        raise HTTPException(
+            status_code=500,
+            detail=f"Thêm chương thất bại (chương cũ không bị ảnh hưởng): {insert_err}",
+        )
+
+    new_total = len(existing) + len(rows)
+    book_updates: dict = {"total_chapters": new_total}
+    # A previously-errored book that just gained readable chapters is usable
+    # again — clear the error state.
+    if book.data.get("status") == "error":
+        book_updates["status"] = "ready"
+        book_updates["error_message"] = None
+    db.table("books").update(book_updates).eq("id", book_id).execute()
+
+    if deferred:
+        bg = asyncio.create_task(
+            epub_parser._upload_deferred_chapter_text(book_id, deferred)
+        )
+        epub_parser._deferred_text_tasks.add(bg)
+        bg.add_done_callback(epub_parser._deferred_text_tasks.discard)
+
+    # If the file covers the whole book (full bundle), replace the stored
+    # original so a future /reparse works from the newest version. Partial
+    # files (mode=all) leave the original untouched. Best effort — the append
+    # itself already succeeded.
+    replaced_original = False
+    if len(parsed) >= new_total:
+        try:
+            await storage_service.delete_folder("epub-uploads", book_id)
+            await storage_service.upload_bytes(
+                bucket="epub-uploads",
+                path=f"{book_id}/original{ext}",
+                data=content,
+                content_type=ORIG_CONTENT_TYPES[ext],
+            )
+            replaced_original = True
+        except Exception as e:
+            logger.warning(
+                f"Book {book_id}: could not replace original after append: {e}"
+            )
+
+    logger.info(
+        f"Book {book_id}: appended {len(rows)} chapters from {filename} "
+        f"(parsed={len(parsed)}, skipped_dupes={skipped}, mode={mode}, "
+        f"replaced_original={replaced_original})"
+    )
+    return {
+        "existing_chapters": len(existing),
+        "parsed_chapters": len(parsed),
+        "appended": len(rows),
+        "skipped_duplicates": skipped,
+        "new_total": new_total,
+        "replaced_original": replaced_original,
+    }
 
 
 @router.post("/{book_id}/auto-split")

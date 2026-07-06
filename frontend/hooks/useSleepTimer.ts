@@ -18,6 +18,9 @@ export function useSleepTimer(onExpire: () => void) {
   const [expireAt, setExpireAt] = useState<number | null>(null);
   // Derived remaining seconds shown in the UI.
   const [remaining, setRemaining] = useState<number | null>(null);
+  // "Hết chương" mode: the native service pauses at the next chapter
+  // boundary (no countdown to show). Mutually exclusive with expireAt.
+  const [endOfChapter, setEndOfChapter] = useState(false);
 
   const onExpireRef = useRef(onExpire);
   onExpireRef.current = onExpire;
@@ -42,6 +45,17 @@ export function useSleepTimer(onExpire: () => void) {
       } else {
         bridge?.setSleepTimer?.(expMs);
       }
+    } catch {
+      /* not on Android — ignore */
+    }
+  }, []);
+
+  const notifyNativeChapterEnd = useCallback((on: boolean) => {
+    try {
+      const bridge = (window as unknown as {
+        TtsBridge?: { setSleepAtChapterEnd?: (on: boolean) => void };
+      }).TtsBridge;
+      bridge?.setSleepAtChapterEnd?.(on);
     } catch {
       /* not on Android — ignore */
     }
@@ -97,21 +111,48 @@ export function useSleepTimer(onExpire: () => void) {
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [expireAt]);
 
+  // "Hết chương" mode ends when Java fires native-tts-done {sleep:true} at
+  // the chapter boundary — clear the UI state so the chip stops showing an
+  // armed timer.
+  useEffect(() => {
+    if (!endOfChapter) return;
+    const onDone = (e: Event) => {
+      if ((e as CustomEvent<{ sleep?: boolean }>).detail?.sleep) {
+        setEndOfChapter(false);
+      }
+    };
+    window.addEventListener("native-tts-done", onDone);
+    return () => window.removeEventListener("native-tts-done", onDone);
+  }, [endOfChapter]);
+
   const setTimer = useCallback(
     (minutes: number) => {
       const exp = Date.now() + Math.max(0.016, minutes) * 60 * 1000;
       firedRef.current = false; // arm a fresh timer
+      setEndOfChapter(false); // timed mode replaces chapter-end mode
+      notifyNativeChapterEnd(false);
       setExpireAt(exp);
       notifyNative(exp);
     },
-    [notifyNative],
+    [notifyNative, notifyNativeChapterEnd],
   );
+
+  /** Arm "sleep when the current chapter ends" (native platforms only). */
+  const setChapterEndTimer = useCallback(() => {
+    setExpireAt(null);
+    setRemaining(null);
+    notifyNative(null); // chapter-end mode replaces any timed mode
+    setEndOfChapter(true);
+    notifyNativeChapterEnd(true);
+  }, [notifyNative, notifyNativeChapterEnd]);
 
   const cancelTimer = useCallback(() => {
     setExpireAt(null);
     setRemaining(null);
     notifyNative(null);
-  }, [notifyNative]);
+    setEndOfChapter(false);
+    notifyNativeChapterEnd(false);
+  }, [notifyNative, notifyNativeChapterEnd]);
 
-  return { remaining, setTimer, cancelTimer };
+  return { remaining, endOfChapter, setTimer, setChapterEndTimer, cancelTimer };
 }

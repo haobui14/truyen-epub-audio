@@ -143,7 +143,7 @@ export default function UploadPage() {
             Tải lên truyện
           </h1>
           <p className="text-sm text-text-mute dark:text-text-mute mt-1">
-            Hỗ trợ EPUB, PDF (kể cả ảnh scan) và TXT
+            Hỗ trợ EPUB, PDF (kể cả ảnh scan), TXT và MOBI/PRC
           </p>
         </div>
 
