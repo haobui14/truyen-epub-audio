@@ -42,7 +42,12 @@ export function useChapterAudioPreload(
 
   useEffect(() => {
     // Native/browser TTS voices don't use backend audio — skip preloading.
-    if (!chapters.length || voice.startsWith("native:")) return;
+    if (
+      !chapters.length ||
+      voice.startsWith("native:") ||
+      voice.startsWith("browser:")
+    )
+      return;
 
     for (const { id } of chapters) {
       const dk = dlKey(id, voice);

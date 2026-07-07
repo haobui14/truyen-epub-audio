@@ -29,14 +29,16 @@ export function useProgressSync({
   chapterIndexRef.current = chapterIndex ?? -1;
 
   const flush = useCallback(() => {
-    if (!isLoggedIn() || !pendingRef.current) return;
+    if (!pendingRef.current) return;
     const { value, total } = pendingRef.current;
     if (value === lastSavedRef.current) return;
 
     lastSavedRef.current = value;
     pendingRef.current = null;
 
-    // Always save to local stores immediately
+    // Always save to local stores immediately — guests keep their position
+    // on this device too, and syncBookProgressToServer pushes it up if they
+    // sign in later.
     saveLocalProgress({
       book_id: bookId,
       chapter_id: chapterId,
@@ -54,6 +56,9 @@ export function useProgressSync({
         total_value: total,
       });
     }
+
+    // The server row is account-only.
+    if (!isLoggedIn()) return;
 
     // Before sending to server, check if this chapter is still the latest
     // for the book. If native TTS advanced to a later chapter, skip the
@@ -85,7 +90,6 @@ export function useProgressSync({
 
   const reportProgress = useCallback(
     (value: number, total?: number) => {
-      if (!isLoggedIn()) return;
       pendingRef.current = { value, total };
       if (timerRef.current) clearTimeout(timerRef.current);
       timerRef.current = setTimeout(flush, debounceMs);

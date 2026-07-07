@@ -205,15 +205,40 @@ export default function HomePage() {
 
   return (
     <div>
-      {/* Greeting hero (logged-in only) */}
-      {loggedIn && (hasBooks || isLoading) && (
+      {/* Greeting hero — same view for guests and members; guests get a
+          one-line pointer to what an account adds instead of "Đang nghe". */}
+      {(hasBooks || isLoading) && (
         <div className="mb-7">
           <p className="font-mono text-[10px] tracking-[0.18em] uppercase text-text-mute">
-            Tủ sách của bạn
+            {loggedIn ? "Tủ sách của bạn" : "Thư viện truyện"}
           </p>
           <h1 className="font-display text-3xl sm:text-4xl text-text leading-tight mt-1">
             {greeting}, <span className="italic text-accent">đạo hữu</span>
           </h1>
+          {!loggedIn && (
+            <Link
+              href="/login"
+              className="inline-flex items-center gap-1.5 mt-2.5 text-sm text-text-mute hover:text-accent transition-colors group"
+            >
+              <span>
+                Đăng nhập để đồng bộ tiến độ nghe và tích lũy{" "}
+                <span className="italic text-accent">tu vi</span>
+              </span>
+              <svg
+                className="w-3.5 h-3.5 shrink-0 group-hover:translate-x-0.5 transition-transform"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M9 5l7 7-7 7"
+                />
+              </svg>
+            </Link>
+          )}
         </div>
       )}
 

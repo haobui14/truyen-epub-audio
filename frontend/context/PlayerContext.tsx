@@ -7,8 +7,10 @@
  * `/listen`, `/book`, `/read`, etc. This is what keeps audio playing during
  * navigation.
  *
- * Routes playback to web (edge-tts via backend) or native (Android TTS via
- * `useNativeTTSPlayer`) based on the voice prefix (`native:*` = native).
+ * Routes playback by voice prefix: `native:*` = Android TTS via
+ * `useNativeTTSPlayer`, `browser:*` = Web Speech API device voices via
+ * `useBrowserTTSPlayer`, anything else = edge-tts audio via the backend
+ * (`useSpeechPlayer`).
  *
  * See `docs/android-player.md` for the native TTS architecture.
  */
@@ -31,6 +33,10 @@ import {
 import { getCachedAllChapters } from "@/lib/bookCache";
 import { useSpeechPlayer } from "@/hooks/useSpeechPlayer";
 import { useNativeTTSPlayer } from "@/hooks/useNativeTTSPlayer";
+import {
+  useBrowserTTSPlayer,
+  browserTTSSupported,
+} from "@/hooks/useBrowserTTSPlayer";
 import { isNativePlatform } from "@/lib/capacitor";
 import { getTtsBridge, releaseBackgroundLock } from "@/lib/backgroundLock";
 import {
@@ -135,7 +141,13 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
       return "native:vi-VN-default";
     }
     const stored = localStorage.getItem(VOICE_STORAGE_KEY);
-    if (stored && !stored.startsWith("browser:")) return stored;
+    // Device voices exist only where the Web Speech API does — fall back to
+    // the default web voice if the stored pick can't play here (the specific
+    // voice may still be missing; the engine then resolves the closest vi one).
+    if (stored?.startsWith("browser:")) {
+      return browserTTSSupported() ? stored : "vi-VN-HoaiMyNeural";
+    }
+    if (stored) return stored;
     return "vi-VN-HoaiMyNeural";
   });
 
@@ -151,17 +163,30 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
   }, []);
 
   // Determine which TTS engine to use based on voice prefix.
-  // Both hooks are always called (React rules), but the inactive one
-  // receives null text so it stays completely idle.
+  // All hooks are always called (React rules), but the inactive ones
+  // receive null text/voice so they stay completely idle.
   const isNativeVoice = voice.startsWith("native:");
+  const isBrowserVoice = voice.startsWith("browser:");
 
   // The single instance of the player — survives route changes because
   // PlayerProvider lives in the root layout, not inside any page.
   const backendPlayer = useSpeechPlayer(
     track?.bookId ?? "",
     track?.chapterId ?? "",
-    isNativeVoice ? null : track?.text,
-    isNativeVoice ? null : voice,
+    isNativeVoice || isBrowserVoice ? null : track?.text,
+    isNativeVoice || isBrowserVoice ? null : voice,
+    track?.onEnded,
+    track?.autoPlay,
+    track?.initialChunkIndex,
+  );
+
+  // Web Speech API device voices (Windows "Microsoft An", Android-browser
+  // Google voices, ...) — web platforms only, never the Capacitor APK.
+  const browserPlayer = useBrowserTTSPlayer(
+    track?.bookId ?? "",
+    track?.chapterId ?? "",
+    isBrowserVoice ? track?.text : null,
+    isBrowserVoice ? voice : null,
     track?.onEnded,
     track?.autoPlay,
     track?.initialChunkIndex,
@@ -192,7 +217,9 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
         pitch: nativePitch,
         changePitch: nativeChangePitch,
       }
-    : { ...backendPlayer, pitch: 1, changePitch: () => {} };
+    : isBrowserVoice
+      ? browserPlayer
+      : { ...backendPlayer, pitch: 1, changePitch: () => {} };
 
   const { cacheStatuses } = useChapterAudioPreload(
     track?.neighborChapters ?? [],

@@ -1,9 +1,13 @@
 package com.truyenaudio.app;
 
 import android.Manifest;
+import android.app.DownloadManager;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
+import android.webkit.URLUtil;
 import android.webkit.WebView;
 
 import androidx.core.app.ActivityCompat;
@@ -32,6 +36,28 @@ public class MainActivity extends BridgeActivity {
 
         WebView webView = getBridge().getWebView();
         webView.addJavascriptInterface(new TtsBridge(this, webView), "TtsBridge");
+
+        // The WebView silently drops responses served with Content-Disposition:
+        // attachment — the tap just does nothing. Route them to DownloadManager
+        // so any download link works even outside the TtsBridge.downloadFile
+        // path (which the EPUB button uses to avoid a doubled request).
+        webView.setDownloadListener((url, userAgent, contentDisposition, mimetype, contentLength) -> {
+            if (url == null
+                    || !(url.startsWith("http://") || url.startsWith("https://"))) {
+                return; // blob:/data: URLs can't be re-fetched by DownloadManager
+            }
+            try {
+                String name = URLUtil.guessFileName(url, contentDisposition, mimetype);
+                DownloadManager.Request req = new DownloadManager.Request(Uri.parse(url));
+                req.setTitle(name);
+                req.setNotificationVisibility(
+                        DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name);
+                DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+                if (dm != null) dm.enqueue(req);
+            } catch (Exception ignored) {
+            }
+        });
 
         // Android 13+ requires a runtime permission for the foreground-service
         // notification to display. Without it, the media notification (and

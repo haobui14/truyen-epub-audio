@@ -7,6 +7,7 @@ import {
   useNativeTTSAvailable,
   useNativeTTSVoices,
 } from "@/hooks/useNativeTTSPlayer";
+import { useBrowserTTSVoices } from "@/hooks/useBrowserTTSPlayer";
 import { getTtsBridge } from "@/lib/backgroundLock";
 
 const SLEEP_PRESETS = [15, 30, 45, 60] as const;
@@ -63,6 +64,9 @@ export function SpeechPlayer() {
 
   const isNative = useNativeTTSAvailable();
   const nativeVoices = useNativeTTSVoices();
+  // Device voices via the Web Speech API — empty on the native APK and on
+  // machines with no Vietnamese voice installed (section hides itself).
+  const browserVoices = useBrowserTTSVoices();
   const [openPanel, setOpenPanel] = useState<
     null | "speed" | "voice" | "sleep"
   >(null);
@@ -118,13 +122,18 @@ export function SpeechPlayer() {
       setOpenPanel(null);
       return;
     }
-    const switchingEngine =
-      newVoice.startsWith("native:") !== voice.startsWith("native:");
+    const engineOf = (v: string) =>
+      v.startsWith("native:")
+        ? "native"
+        : v.startsWith("browser:")
+          ? "browser"
+          : "backend";
+    const switchingEngine = engineOf(newVoice) !== engineOf(voice);
     if (switchingEngine && isPlaying) toggle();
-    // Native→native switches restart inside useNativeTTSPlayer's voice
-    // effect, which applies the device voice BEFORE re-speaking; restarting
-    // here would replay the chunk with the old voice.
-    else if (!newVoice.startsWith("native:")) restartChunk();
+    // Same-engine native/browser switches restart inside their own hook's
+    // voice effect, which applies the new voice BEFORE re-speaking;
+    // restarting here would replay the chunk with the old voice.
+    else if (engineOf(newVoice) === "backend") restartChunk();
     setVoice(newVoice);
     setOpenPanel(null);
   }
@@ -142,11 +151,14 @@ export function SpeechPlayer() {
 
   const voiceLabel = VOICE_LABELS[voice] ?? voice.replace(/^native:/, "");
   const nativeVoiceOpt = nativeVoices.find((v) => v.value === voice);
+  const browserVoiceOpt = browserVoices.find((v) => v.value === voice);
   const voiceBadge = voice.startsWith("native:")
     ? voice === "native:vi-VN-default" || !nativeVoiceOpt
       ? "GIỌNG HỆ THỐNG · VI-VN"
       : `${nativeVoiceOpt.label.toUpperCase()} · VI-VN`
-    : voiceLabel.toUpperCase();
+    : voice.startsWith("browser:")
+      ? `${(browserVoiceOpt?.label ?? "Giọng thiết bị").toUpperCase()} · VI-VN`
+      : voiceLabel.toUpperCase();
   const supportsChapterEndSleep =
     isNative && typeof getTtsBridge()?.setSleepAtChapterEnd === "function";
 
@@ -496,7 +508,9 @@ export function SpeechPlayer() {
               ? voice === "native:vi-VN-default" || !nativeVoiceOpt
                 ? "Hệ thống"
                 : nativeVoiceOpt.label.split(" · ")[0]
-              : voiceLabel.split(" ")[0]
+              : voice.startsWith("browser:")
+                ? (browserVoiceOpt?.label ?? "Thiết bị").split(" · ")[0]
+                : voiceLabel.split(" ")[0]
           }
           sub="Giọng đọc"
           active={openPanel === "voice"}
@@ -618,6 +632,28 @@ export function SpeechPlayer() {
                 </button>
               ))}
           </div>
+          {!isNative && browserVoices.length > 0 && (
+            <>
+              <p className="font-mono text-[10px] tracking-widest uppercase text-text-faint mt-3 mb-2">
+                Giọng thiết bị · không dùng máy chủ
+              </p>
+              <div className="flex gap-1.5 flex-wrap">
+                {browserVoices.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => handleVoiceChange(opt.value)}
+                    className={`px-3 py-1.5 rounded-sm text-xs font-medium border transition-colors ${
+                      voice === opt.value
+                        ? "bg-accent border-accent text-ink"
+                        : "border-hairline text-text-mute hover:border-accent/40 hover:text-accent"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
 

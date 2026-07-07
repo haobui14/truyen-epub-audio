@@ -11,6 +11,12 @@
          long screen-off TTS sessions aren't killed by Doze / OEM babysitters.
          Requested only when the user taps the in-app prompt. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Android 7–9 only: DownloadManager needs this to place the EPUB export
+         into the public Downloads folder. Android 10+ needs no permission;
+         if it isn't granted the bridge falls back to app-scoped storage. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
 
     <application
         android:allowBackup="true"

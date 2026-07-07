@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, HTTPException, Query, Depends, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Query, Depends, Response, UploadFile, File, Form
 from typing import List, Optional
 from pydantic import BaseModel
 
@@ -91,6 +91,117 @@ async def get_book_chapters(
         page=page,
         page_size=page_size,
         total_pages=total_pages,
+    )
+
+
+@router.get("/{book_id}/epub")
+async def download_book_epub(book_id: str):
+    """Generate an EPUB of the book from its CURRENT chapters and return it as
+    a file download. Built from chapter-text Storage rather than the stored
+    original, so it reflects every edit/append/split, works for books uploaded
+    as PDF/TXT/MOBI, and survives the original upload having been cleaned up.
+
+    Public — the same content is already readable chapter-by-chapter without
+    auth via GET /api/chapters/{id}/text."""
+    import asyncio
+    import re
+    import unicodedata
+    from urllib.parse import quote
+
+    import httpx
+
+    from app.services import epub_parser
+
+    db = get_client()
+    book = db.table("books").select(
+        "id,title,author,status,cover_url"
+    ).eq("id", book_id).maybe_single().execute()
+    if not book.data:
+        raise HTTPException(status_code=404, detail="Book not found")
+    if book.data.get("status") == "parsing":
+        raise HTTPException(
+            status_code=409,
+            detail="Truyện đang được phân tích — đợi xong rồi thử lại",
+        )
+
+    # All chapters in reading order, paginated past the PostgREST max_rows cap.
+    PAGE_SIZE = 500
+    chapters: list[dict] = []
+    fetch_offset = 0
+    while True:
+        page = db.table("chapters").select(
+            "id,chapter_index,title"
+        ).eq("book_id", book_id).order("chapter_index").range(
+            fetch_offset, fetch_offset + PAGE_SIZE - 1
+        ).execute()
+        batch = page.data or []
+        chapters.extend(batch)
+        if len(batch) < PAGE_SIZE:
+            break
+        fetch_offset += PAGE_SIZE
+    if not chapters:
+        raise HTTPException(status_code=404, detail="Truyện chưa có chương nào")
+
+    # Chapter texts from Storage — capped fan-out, see STORAGE_CONCURRENCY.
+    # get_chapter_text_by_ids returns "" on failure; build_epub turns that into
+    # a placeholder page so one bad object can't sink the whole download.
+    sem = asyncio.Semaphore(storage_service.STORAGE_CONCURRENCY)
+
+    async def _fetch_text(ch: dict) -> str:
+        async with sem:
+            return await storage_service.get_chapter_text_by_ids(book_id, ch["id"])
+
+    texts = await asyncio.gather(*(_fetch_text(ch) for ch in chapters))
+
+    # Cover is cosmetic — never fail the download over it.
+    cover_bytes = None
+    if book.data.get("cover_url"):
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(book.data["cover_url"])
+                if resp.status_code == 200 and resp.content:
+                    cover_bytes = resp.content
+        except Exception:
+            pass
+
+    title = book.data.get("title") or "Truyện"
+    epub_bytes = await asyncio.to_thread(
+        epub_parser.build_epub,
+        title,
+        book.data.get("author"),
+        [
+            {"title": ch["title"], "text_content": text}
+            for ch, text in zip(chapters, texts)
+        ],
+        cover_bytes,
+        book_id,
+    )
+
+    logger.info(
+        f"Book {book_id}: generated EPUB export "
+        f"({len(chapters)} chapters, {len(epub_bytes)} bytes)"
+    )
+
+    # ASCII fallback filename + RFC 5987 filename* so the Vietnamese title
+    # survives in every browser and in Android's DownloadManager.
+    safe_title = re.sub(r'[\\/:*?"<>|\r\n]+', " ", title).strip() or "truyen"
+    ascii_title = (
+        unicodedata.normalize("NFKD", safe_title)
+        .encode("ascii", "ignore")
+        .decode("ascii")
+        .strip()
+        or "truyen"
+    )
+    return Response(
+        content=epub_bytes,
+        media_type="application/epub+zip",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{ascii_title}.epub"; '
+                f"filename*=UTF-8''{quote(safe_title)}.epub"
+            ),
+            "Cache-Control": "no-store",
+        },
     )
 
 

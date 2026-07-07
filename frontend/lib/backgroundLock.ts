@@ -54,6 +54,12 @@ interface TtsBridgeNative {
   isIgnoringBatteryOptimizations?(): boolean;
   /** Show the system battery-optimization exemption dialog. (Optional — newer APKs.) */
   requestIgnoreBatteryOptimizations?(): void;
+  /**
+   * Save a http(s) URL into the system Downloads folder via Android's
+   * DownloadManager — the WebView itself silently drops download links.
+   * (Optional — newer APKs.)
+   */
+  downloadFile?(url: string, fileName: string): void;
   updateTitle(title: string): void;
   /** Set the cover image URL shown on the lockscreen / media notification. */
   updateCover(url: string): void;

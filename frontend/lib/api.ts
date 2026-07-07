@@ -181,6 +181,27 @@ export const api = {
         featured_label: featured_label ?? null,
       }),
     }),
+  // URL of the generated EPUB export (public endpoint) — used directly on
+  // Android where DownloadManager must fetch it itself.
+  bookEpubUrl: (bookId: string) => `${API_URL}/api/books/${bookId}/epub`,
+  // Fetch the generated EPUB as a Blob. Deliberately NOT request(): the file
+  // is built on demand and can outlive REQUEST_TIMEOUT_MS on big books, and
+  // the response is binary, not JSON.
+  fetchBookEpub: async (bookId: string): Promise<Blob> => {
+    const res = await fetch(`${API_URL}/api/books/${bookId}/epub`);
+    if (!res.ok) {
+      let detail = "";
+      try {
+        detail = (await res.json())?.detail ?? "";
+      } catch {
+        // non-JSON error body — fall through to the generic message
+      }
+      throw new Error(
+        detail || `Không tạo được file EPUB (HTTP ${res.status})`,
+      );
+    }
+    return res.blob();
+  },
 
   // Chapters
   getBookChapters: (bookId: string, page = 1, pageSize = 100) =>

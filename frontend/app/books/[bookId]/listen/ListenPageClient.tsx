@@ -183,27 +183,31 @@ export default function ListenPage() {
   const { data: listenProgress } = useQuery({
     queryKey: ["progress", bookId, chapterId],
     queryFn: async () => {
+      // IndexedDB position in the UserProgress response shape — the offline
+      // fallback for accounts, and the ONLY store guests have.
+      const fromLocal = async () => {
+        const queued = await getLocalProgress(chapterId!);
+        if (!queued) return null;
+        return {
+          id: "",
+          user_id: "",
+          book_id: queued.book_id,
+          chapter_id: queued.chapter_id,
+          progress_value: queued.progress_value,
+          total_value: queued.total_value,
+          updated_at: new Date(queued.updated_at).toISOString(),
+        };
+      };
+      if (!isLoggedIn()) return fromLocal();
       try {
         const progress = await api.getBookProgress(bookId);
         if (progress?.chapter_id === chapterId) return progress;
         return null;
       } catch {
-        const queued = await getLocalProgress(chapterId!);
-        if (queued) {
-          return {
-            id: "",
-            user_id: "",
-            book_id: queued.book_id,
-            chapter_id: queued.chapter_id,
-            progress_value: queued.progress_value,
-            total_value: queued.total_value,
-            updated_at: new Date(queued.updated_at).toISOString(),
-          };
-        }
-        return null;
+        return fromLocal();
       }
     },
-    enabled: !!chapterId && isLoggedIn(),
+    enabled: !!chapterId,
   });
 
   const allChapters = useMemo(() => chaptersData?.items ?? [], [chaptersData]);
@@ -909,8 +913,14 @@ export default function ListenPage() {
   ]);
 
   // ── Web streaming: prefetch first TTS audio chunks when near end ──
+  // Backend voices only — native and browser engines never fetch backend audio.
   useEffect(() => {
-    if (!nextChapterId || !nextChapterText || voice.startsWith("native:"))
+    if (
+      !nextChapterId ||
+      !nextChapterText ||
+      voice.startsWith("native:") ||
+      voice.startsWith("browser:")
+    )
       return;
     if (totalChunks === 0 || chunkIndex < totalChunks - 3) return;
     prefetchNextChapterAudio(nextChapterId, nextChapterText, voice);
@@ -1092,7 +1102,13 @@ export default function ListenPage() {
             } = latestRef.current;
             const target = latestNext ?? nextChapter;
             if (!target) return;
-            if (target.id && v && !v.startsWith("native:")) {
+            // Backend voices only — native/browser engines don't use backend audio.
+            if (
+              target.id &&
+              v &&
+              !v.startsWith("native:") &&
+              !v.startsWith("browser:")
+            ) {
               const td = qc.getQueryData<{ text_content: string }>([
                 "chapterText",
                 target.id,

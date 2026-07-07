@@ -37,6 +37,10 @@ export default function BookDetailPage() {
     total: number;
   } | null>(null);
   const [dlDone, setDlDone] = useState(false);
+  const [epubState, setEpubState] = useState<"idle" | "working" | "done">(
+    "idle",
+  );
+  const [epubError, setEpubError] = useState<string | null>(null);
 
   useEffect(() => {
     const sync = () => setAdmin(isAdmin());
@@ -94,9 +98,10 @@ export default function BookDetailPage() {
   const { data: bookProgress } = useQuery({
     queryKey: ["bookProgress", bookId],
     queryFn: async () => {
-      try {
-        return await api.getBookProgress(bookId);
-      } catch {
+      // IndexedDB book pointer — the offline fallback for accounts, and the
+      // ONLY store guests have. Keeps "Nghe tiếp"/"Đọc tiếp" working without
+      // an account (device-local; an account adds cross-device sync).
+      const fromLocal = async () => {
         const local = await getLocalBookProgress(bookId);
         if (!local) return null;
         return {
@@ -108,9 +113,15 @@ export default function BookDetailPage() {
           total_value: local.total_value,
           updated_at: new Date(local.updated_at).toISOString(),
         };
+      };
+      if (!isLoggedIn()) return fromLocal();
+      try {
+        return await api.getBookProgress(bookId);
+      } catch {
+        return fromLocal();
       }
     },
-    enabled: !!book && isLoggedIn(),
+    enabled: !!book,
   });
 
   const lastListenChapterId = useMemo(
@@ -219,6 +230,46 @@ export default function BookDetailPage() {
     }
     setDlDone(true);
     setDlProgress(null);
+  }
+
+  async function handleDownloadEpub() {
+    if (epubState === "working") return;
+    setEpubError(null);
+    const fileName =
+      `${(book?.title ?? "").replace(/[\\/:*?"<>|]+/g, " ").trim() || "truyen"}.epub`;
+
+    // Native: the WebView cannot save files itself — hand the URL to Android's
+    // DownloadManager, which shows progress + completion in the system shade.
+    if (isNativePlatform()) {
+      const bridge = getTtsBridge();
+      if (bridge?.downloadFile) {
+        bridge.downloadFile(api.bookEpubUrl(bookId), fileName);
+        setEpubState("done");
+      } else {
+        setEpubError("Cần cập nhật ứng dụng để tải file EPUB");
+      }
+      return;
+    }
+
+    setEpubState("working");
+    try {
+      const blob = await api.fetchBookEpub(bookId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      // Give the browser time to grab the blob before releasing it.
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      setEpubState("done");
+    } catch (e) {
+      setEpubState("idle");
+      setEpubError(
+        e instanceof Error ? e.message : "Không tải được file EPUB",
+      );
+    }
   }
 
   if (bookLoading) {
@@ -479,60 +530,119 @@ export default function BookDetailPage() {
               </Link>
             </div>
 
-            <button
-              onClick={handleDownloadBook}
-              disabled={!!dlProgress || dlDone}
-              className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium border transition-colors ${
-                dlDone
-                  ? "border-accent/40 text-accent bg-accent/10"
-                  : dlProgress
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                onClick={handleDownloadBook}
+                disabled={!!dlProgress || dlDone}
+                className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium border transition-colors ${
+                  dlDone
                     ? "border-accent/40 text-accent bg-accent/10"
-                    : "border-hairline text-text-mute hover:border-accent/40 hover:text-accent hover:bg-accent/10"
-              }`}
-            >
-              {dlProgress ? (
-                <>
-                  <Spinner className="w-4 h-4" />
-                  <span>
-                    Đang tải... {dlProgress.done}/{dlProgress.total}
-                  </span>
-                </>
-              ) : dlDone ? (
-                <>
-                  <svg
-                    className="w-4 h-4"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M5 13l4 4L19 7"
-                    />
-                  </svg>
-                  <span>Đã lưu offline</span>
-                </>
-              ) : (
-                <>
-                  <svg
-                    className="w-4 h-4"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-                    />
-                  </svg>
-                  <span>Tải truyện offline</span>
-                </>
-              )}
-            </button>
+                    : dlProgress
+                      ? "border-accent/40 text-accent bg-accent/10"
+                      : "border-hairline text-text-mute hover:border-accent/40 hover:text-accent hover:bg-accent/10"
+                }`}
+              >
+                {dlProgress ? (
+                  <>
+                    <Spinner className="w-4 h-4" />
+                    <span>
+                      Đang tải... {dlProgress.done}/{dlProgress.total}
+                    </span>
+                  </>
+                ) : dlDone ? (
+                  <>
+                    <svg
+                      className="w-4 h-4"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M5 13l4 4L19 7"
+                      />
+                    </svg>
+                    <span>Đã lưu offline</span>
+                  </>
+                ) : (
+                  <>
+                    <svg
+                      className="w-4 h-4"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                      />
+                    </svg>
+                    <span>Tải truyện offline</span>
+                  </>
+                )}
+              </button>
+              <button
+                onClick={handleDownloadEpub}
+                disabled={epubState === "working"}
+                className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium border transition-colors ${
+                  epubState === "idle"
+                    ? "border-hairline text-text-mute hover:border-accent/40 hover:text-accent hover:bg-accent/10"
+                    : "border-accent/40 text-accent bg-accent/10"
+                }`}
+              >
+                {epubState === "working" ? (
+                  <>
+                    <Spinner className="w-4 h-4" />
+                    <span>Đang tạo EPUB...</span>
+                  </>
+                ) : epubState === "done" ? (
+                  <>
+                    <svg
+                      className="w-4 h-4"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M5 13l4 4L19 7"
+                      />
+                    </svg>
+                    <span>
+                      {isNativePlatform()
+                        ? "Đang tải — xem thông báo"
+                        : "Đã tải file EPUB"}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <svg
+                      className="w-4 h-4"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                      />
+                    </svg>
+                    <span>Tải file EPUB</span>
+                  </>
+                )}
+              </button>
+            </div>
+            {epubError && (
+              <p className="text-xs text-vermillion text-center">{epubError}</p>
+            )}
           </div>
         ) : null}
       </div>

@@ -1,5 +1,6 @@
 package com.truyenaudio.app;
 
+import android.app.DownloadManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -8,6 +9,7 @@ import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
@@ -665,6 +667,60 @@ public class TtsBridge {
         } catch (Exception e) {
             return true; // can't check → don't nag
         }
+    }
+
+    /**
+     * Save a http(s) URL into the system Downloads folder via Android's
+     * DownloadManager — the WebView itself silently drops download links and
+     * cannot save blobs. Used by the book EPUB export button. Shows the
+     * standard system download notification with progress; the file's type
+     * comes from the server's Content-Type.
+     */
+    @JavascriptInterface
+    public void downloadFile(String url, String fileName) {
+        mainHandler.post(() -> {
+            try {
+                if (url == null
+                        || !(url.startsWith("http://") || url.startsWith("https://"))) {
+                    return; // DownloadManager can only fetch http(s)
+                }
+                String name = fileName == null ? "" : fileName.trim();
+                name = name.replaceAll("[\\\\/:*?\"<>|]+", " ").trim();
+                if (name.isEmpty()) name = "download";
+
+                DownloadManager dm = (DownloadManager)
+                        context.getSystemService(Context.DOWNLOAD_SERVICE);
+                if (dm == null) return;
+
+                DownloadManager.Request req =
+                        new DownloadManager.Request(Uri.parse(url));
+                req.setTitle(name);
+                req.setNotificationVisibility(
+                        DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                req.setDestinationInExternalPublicDir(
+                        Environment.DIRECTORY_DOWNLOADS, name);
+                try {
+                    dm.enqueue(req);
+                } catch (SecurityException se) {
+                    // Android 7–9 without the legacy storage permission cannot
+                    // write to public Downloads — retry into the app-scoped
+                    // downloads dir, which needs no permission on any API.
+                    DownloadManager.Request fallback =
+                            new DownloadManager.Request(Uri.parse(url));
+                    fallback.setTitle(name);
+                    fallback.setNotificationVisibility(
+                            DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                    fallback.setDestinationInExternalFilesDir(
+                            context, Environment.DIRECTORY_DOWNLOADS, name);
+                    dm.enqueue(fallback);
+                }
+                android.widget.Toast.makeText(context,
+                        "Đang tải xuống — xem thông báo hệ thống",
+                        android.widget.Toast.LENGTH_SHORT).show();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        });
     }
 
     /**

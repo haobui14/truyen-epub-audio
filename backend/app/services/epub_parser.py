@@ -1,4 +1,5 @@
 import asyncio
+import html
 import os
 import re
 import tempfile
@@ -377,6 +378,74 @@ def extract_epub_contents(epub_bytes: bytes, book_id: str) -> dict:
             "cover_bytes": cover_bytes,
             "chapters": chapters_data,
         }
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+def build_epub(
+    title: str,
+    author: Optional[str],
+    chapters: list[dict],
+    cover_bytes: Optional[bytes] = None,
+    identifier: Optional[str] = None,
+) -> bytes:
+    """Assemble an EPUB from chapter dicts ({title, text_content}) in reading
+    order and return its bytes — the inverse of extract_epub_contents. Used by
+    the book EPUB export so the file reflects the CURRENT chapters (edits,
+    appends, splits) instead of the stored original, which may be a PDF/TXT
+    or already cleaned up.
+
+    Pure CPU + temp-file zip assembly — call via asyncio.to_thread from async
+    code.
+    """
+    book = epub.EpubBook()
+    book.set_identifier(identifier or str(uuid.uuid4()))
+    book.set_title(title or "Truyện")
+    book.set_language("vi")
+    if author:
+        book.add_author(author)
+    if cover_bytes:
+        # The file extension drives the manifest media-type — detect by magic
+        # bytes rather than trusting the (long gone) upload filename.
+        cover_name = "cover.jpg"
+        if cover_bytes.startswith(b"\x89PNG"):
+            cover_name = "cover.png"
+        elif cover_bytes[:4] == b"RIFF" and cover_bytes[8:12] == b"WEBP":
+            cover_name = "cover.webp"
+        book.set_cover(cover_name, cover_bytes)
+
+    items: list[epub.EpubHtml] = []
+    for i, ch in enumerate(chapters):
+        ch_title = (ch.get("title") or "").strip() or f"Chương {i + 1}"
+        text = ch.get("text_content") or ""
+        paragraphs = [ln.strip() for ln in text.split("\n") if ln.strip()]
+        if not paragraphs:
+            paragraphs = ["(Chương này chưa có nội dung)"]
+        item = epub.EpubHtml(
+            uid=f"chap{i + 1:05d}",
+            title=ch_title,
+            file_name=f"chap_{i + 1:05d}.xhtml",
+            lang="vi",
+        )
+        item.content = f"<h2>{html.escape(ch_title)}</h2>" + "".join(
+            f"<p>{html.escape(p)}</p>" for p in paragraphs
+        )
+        book.add_item(item)
+        items.append(item)
+
+    book.toc = items
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+    book.spine = ["nav"] + items
+
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".epub", delete=False) as f:
+            tmp_path = f.name
+        epub.write_epub(tmp_path, book)
+        with open(tmp_path, "rb") as f:
+            return f.read()
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)

@@ -277,27 +277,31 @@ export default function ReadPage() {
   const { data: savedProgress } = useQuery({
     queryKey: ["progress", bookId, chapterId],
     queryFn: async () => {
+      // IndexedDB position in the UserProgress response shape — the offline
+      // fallback for accounts, and the ONLY store guests have.
+      const fromLocal = async () => {
+        const queued = await getLocalProgress(chapterId!);
+        if (!queued) return null;
+        return {
+          id: "",
+          user_id: "",
+          book_id: queued.book_id,
+          chapter_id: queued.chapter_id,
+          progress_value: queued.progress_value,
+          total_value: queued.total_value,
+          updated_at: new Date(queued.updated_at).toISOString(),
+        };
+      };
+      if (!isLoggedIn()) return fromLocal();
       try {
         const progress = await api.getBookProgress(bookId);
         if (progress?.chapter_id === chapterId) return progress;
         return null;
       } catch {
-        const queued = await getLocalProgress(chapterId!);
-        if (queued) {
-          return {
-            id: "",
-            user_id: "",
-            book_id: queued.book_id,
-            chapter_id: queued.chapter_id,
-            progress_value: queued.progress_value,
-            total_value: queued.total_value,
-            updated_at: new Date(queued.updated_at).toISOString(),
-          };
-        }
-        return null;
+        return fromLocal();
       }
     },
-    enabled: !!chapterId && isLoggedIn(),
+    enabled: !!chapterId,
   });
 
   const allChapters = useMemo(

@@ -154,6 +154,7 @@ Notes:
 | `getNativeVoices` | `useNativeTTSVoices` | (read-only volatile) JSON catalogue of installed vi voices |
 | `setNativeVoice` | `useNativeTTSPlayer` voice effect + `startNativePlayback` | `setPreferredVoice` — select device voice by name, "" = default (buffered until bound) |
 | `isIgnoringBatteryOptimizations`/`requestIgnoreBatteryOptimizations` | `SpeechPlayer` battery hint | Doze-exemption check + system dialog (background-playback reliability) |
+| `downloadFile` | `BookDetailClient` EPUB export button | Not player-related: hands a http(s) URL to `DownloadManager` → public Downloads (app-scoped fallback pre-Q). The WebView drops attachment responses itself; `MainActivity` also installs a `setDownloadListener` safety net for plain links |
 | `getCompletedChapterIds` | JS progress sync | Drain `completedChapterIds` (+ persists the drained snapshot) |
 | `setSessionInfo` | `PlayerContext` effect | bookId keys persistence + server progress PUTs; bookTitle → MediaSession artist + notification subtitle (buffered until bound) |
 | `getCurrentTitle`/`getCurrentBookId`/`getTotalChunks` | `PlayerContext` override effect, `BookDetailClient` | (read-only volatile reads) |
