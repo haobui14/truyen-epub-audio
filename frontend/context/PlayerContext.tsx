@@ -251,16 +251,26 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
     staleTime: Infinity,
   });
 
-  // 3. When backend settings arrive, apply them (overrides localStorage)
+  // 3. When backend settings arrive, apply them (overrides localStorage).
+  // Only apply an actual CHANGE: this effect re-fires on every settings
+  // refetch (providers invalidates queries on each screen-on), and
+  // changeRate/changePitch restart the currently-playing native chunk to
+  // apply immediately — an unconditional call replayed the current sentence
+  // on every screen-on, and during the post-advance text-load window it
+  // could restart with the previous chapter's chunks.
   useEffect(() => {
     if (!userSettings) return;
     const { playback_rate, playback_pitch } = userSettings;
     if (playback_rate !== 1 || localStorage.getItem(RATE_STORAGE_KEY)) {
-      playerStateRef.current.changeRate(playback_rate);
+      if (playback_rate !== playerStateRef.current.rate) {
+        playerStateRef.current.changeRate(playback_rate);
+      }
       localStorage.setItem(RATE_STORAGE_KEY, String(playback_rate));
     }
     if (playback_pitch !== 1 || localStorage.getItem(PITCH_STORAGE_KEY)) {
-      playerStateRef.current.changePitch(playback_pitch);
+      if (playback_pitch !== playerStateRef.current.pitch) {
+        playerStateRef.current.changePitch(playback_pitch);
+      }
       localStorage.setItem(PITCH_STORAGE_KEY, String(playback_pitch));
     }
   }, [userSettings]);

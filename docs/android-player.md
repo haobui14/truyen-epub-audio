@@ -227,6 +227,8 @@ Reference by ID from code comments (`// see I3 in docs/android-player.md`).
 
 **I7.** *(pendingHead sanity, Java)* `pendingHead ≤ pendingPlaylist.size()` always. After `chapterQueue.clear()` (either via `playChunks` or `stopPlayback`), `pendingHead` must be re-scanned — otherwise the skip-loop leaves it stale at a forward offset, causing `doPrefetchStep` to fetch chapter `pendingPlaylist[pendingHead]` instead of the next un-queued chapter. Current implementation: `rescanPendingHead()` at top of `doPrefetchStep`, and FAILSAFE in `onChunkFinished`.
 
+**I8.** *(chunks↔chapter coherence, JS)* `startNativePlayback` MUST only push `chunksRef` when `chunksChapterIdRef === chapterIdRef`. After an auto-advance the hook sits on the new chapterId while `chunksRef` still holds the last LOADED chapter's text until the new text query resolves — after a screen-off multi-chapter advance that is the chapter where the screen went off, many chapters back. An unguarded push relabels that old content with the new chapter's id/title: notification/UI/progress all say ch.N while the ears hear ch.M, and `persistSession` makes it survive restarts. Immediate-apply restarts (rate/pitch/voice/`restartChunk`) go through `respeakCurrentChunk`, which prefers `bridge.seekToChunk(getCurrentChunk())` — Java re-speaks its OWN (content-correct) chunk and keeps its queue/prefetch chain. Historical trigger: PlayerContext's settings-apply effect fired `changeRate` on every screen-on settings refetch, landing exactly in the text-load window; it now applies only actual value changes.
+
 ---
 
 ## 6. Durable session persistence & background progress sync

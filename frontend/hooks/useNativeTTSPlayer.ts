@@ -157,6 +157,13 @@ export function useNativeTTSPlayer(
   const [ttsError, setTtsError] = useState<string | null>(null);
 
   const chunksRef = useRef<string[]>([]);
+  // Which chapter chunksRef's contents belong to. After an auto-advance this
+  // hook sits on the NEW chapterId while chunksRef still holds the LAST
+  // LOADED chapter's text until the new text query resolves — and screen-off
+  // advances load nothing, so that can be many chapters back. Pushing those
+  // chunks under the new chapterId would make Java speak the old chapter
+  // labeled with the new chapter's id/title (UI says ch.9, ears hear ch.5).
+  const chunksChapterIdRef = useRef<string | null>(null);
   const chunkRef = useRef(0);
   const playingRef = useRef(false);
   const rateRef = useRef(1);
@@ -192,6 +199,16 @@ export function useNativeTTSPlayer(
   const startNativePlayback = useCallback((startIdx: number) => {
     const bridge = getTtsBridge();
     if (!bridge || chunksRef.current.length === 0) return;
+    if (chunksChapterIdRef.current !== chapterIdRef.current) {
+      // Stale text: the chunks in memory belong to a different chapter than
+      // the one this hook is on (new chapter's text still loading after an
+      // advance). Pushing them would poison Java's session — and its persisted
+      // snapshot — with old content under the new chapter id. Skip; rate/
+      // pitch/voice changes still apply from the next utterance via their
+      // bridge setters, and playback starts normally once the text arrives.
+      setIsBuffering(false);
+      return;
+    }
 
     // Clamp to valid range — guards against stale progress saved in a
     // different unit (e.g. seconds from web-audio mode vs chunk index).
@@ -242,6 +259,31 @@ export function useNativeTTSPlayer(
       setIsBuffering(false);
     }
   }, []);
+
+  // Re-speak the chunk that is audibly playing so a rate/pitch/voice change
+  // is heard immediately. Prefers an in-place Java-side re-speak via
+  // seekToChunk: it uses Java's OWN chunks (content-correct even while this
+  // hook's text is still loading after an auto-advance) and leaves Java's
+  // queue/prefetch chain intact — a playChunks restart clears both. Falls
+  // back to a guarded full push for older APKs without seekToChunk.
+  const respeakCurrentChunk = useCallback(() => {
+    const bridge = getTtsBridge();
+    if (!bridge) return;
+    try {
+      const idx = bridge.getCurrentChunk?.() ?? -1;
+      if (
+        typeof bridge.seekToChunk === "function" &&
+        idx >= 0 &&
+        (bridge.getCurrentChapterId?.() ?? "") === chapterIdRef.current
+      ) {
+        bridge.seekToChunk(idx);
+        return;
+      }
+    } catch {
+      /* fall through to the full restart */
+    }
+    startNativePlayback(chunkRef.current);
+  }, [startNativePlayback]);
 
   // Listen for native TTS events
   useEffect(() => {
@@ -469,6 +511,7 @@ export function useNativeTTSPlayer(
       if (!isActive) releaseBackgroundLock();
       if (!wasAutoAdvanced) {
         chunksRef.current = [];
+        chunksChapterIdRef.current = null;
         setTotalChunks(0);
       }
       return;
@@ -476,6 +519,7 @@ export function useNativeTTSPlayer(
 
     // Text is available — split chunks for progress tracking
     chunksRef.current = splitIntoChunks(text);
+    chunksChapterIdRef.current = chapterId;
     setTotalChunks(chunksRef.current.length);
 
     if (wasAutoAdvanced) {
@@ -582,10 +626,10 @@ export function useNativeTTSPlayer(
     } catch {
       /* older APK */
     }
-    if (prev !== voiceName && playingRef.current && chunksRef.current.length > 0) {
-      startNativePlayback(chunkRef.current);
+    if (prev !== voiceName && playingRef.current) {
+      respeakCurrentChunk();
     }
-  }, [isActive, voiceName, startNativePlayback]);
+  }, [isActive, voiceName, respeakCurrentChunk]);
 
   // Cleanup on unmount
   useEffect(
@@ -675,12 +719,11 @@ export function useNativeTTSPlayer(
       rateRef.current = newRate;
       setRateState(newRate);
       getTtsBridge()?.setRate(newRate);
-      // If currently playing, restart current chunk with new rate
-      if (playingRef.current && chunksRef.current.length > 0) {
-        startNativePlayback(chunkRef.current);
-      }
+      // If currently playing, re-speak the current chunk so the new rate is
+      // heard immediately (Java applies it per utterance).
+      if (playingRef.current) respeakCurrentChunk();
     },
-    [startNativePlayback],
+    [respeakCurrentChunk],
   );
 
   const changePitch = useCallback(
@@ -688,19 +731,15 @@ export function useNativeTTSPlayer(
       pitchRef.current = newPitch;
       setPitchState(newPitch);
       getTtsBridge()?.setPitch(newPitch);
-      if (playingRef.current && chunksRef.current.length > 0) {
-        startNativePlayback(chunkRef.current);
-      }
+      if (playingRef.current) respeakCurrentChunk();
     },
-    [startNativePlayback],
+    [respeakCurrentChunk],
   );
 
   const restartChunk = useCallback(() => {
     if (!isActive) return;
-    if (playingRef.current) {
-      startNativePlayback(chunkRef.current);
-    }
-  }, [isActive, startNativePlayback]);
+    if (playingRef.current) respeakCurrentChunk();
+  }, [isActive, respeakCurrentChunk]);
 
   const seekChunk = useCallback(
     (delta: number) => {
