@@ -46,6 +46,7 @@ See `memory/project_tts_state_machine.md` for the bug-fix history that shaped th
 | `sleepAtChapterEnd` | boolean | no | `setSleepAtChapterEnd` (=on), `onChunkFinished` (fires→false), `setSleepTimer`/`cancelSleepTimer`/`stopPlayback` (=false) | "Hết chương" sleep mode: pause at the next chapter boundary (credits the finished chapter in `completedChapterIds`, unlike the timed sleep; parks `awaitingFetch=true` after `pauseInternal` so resume advances to the NEXT chapter) |
 | `preferredVoiceName` | String | no | `setPreferredVoice`, `restoreSession` | User-selected device voice name; empty = engine default. Applied in `initTts` (also after watchdog reinits); persisted in the snapshot |
 | `availableVoicesJson` | String | **yes** | `refreshAvailableVoices` (initTts) | JSON catalogue of installed vi voices, read by `TtsBridge.getNativeVoices()` from the WebView thread |
+| `currentChunksJson` | String | **yes** | `updateCurrentChunksSnapshot` (every `currentChunks` assignment: playChunks, startChapter, stopPlayback) | JSON snapshot of `currentChunks` for `TtsBridge.getCurrentChunksJson()` — lets JS recover the playing chapter's text on app-reopen when it was self-fetched by Java only and the network is down |
 | `chunkStartMs`/`chapterDurationMs` | long[]/long | no | `recomputeChunkTimings` (playChunks, startChapter, stopPlayback) | Estimated 1.0×-content-time chunk starts + chapter duration (`CHARS_PER_SECOND`) driving the lockscreen seek bar; `onSeekTo` maps a scrubbed position back through the same table |
 | `ttsReady` | boolean | no | `initTts` onInit | TTS engine initialized |
 | `pendingItem`/`pendingStartIdx` | ChapterItem?/int | no | `playChunks` (when !ttsReady), `initTts` onInit (consume) | Defer playback until TTS engine ready |
@@ -152,6 +153,7 @@ Notes:
 | `setSleepAtChapterEnd` | `useSleepTimer` (chapter-end mode) | Arm/disarm pause-at-next-chapter-boundary (fires in Java, screen-off safe) |
 | `seekToChunk` | `useNativeTTSPlayer.seekChunk` fast path, notification `ACTION_BACK_CHUNK`, MediaSession `onSeekTo`/`onRewind`/`onFastForward` | In-chapter jump: `awaitingFetch=false`, speak from the new chunk (or move the paused resume position). Leaves queue/playlist/prefetch untouched — unlike a `playChunks` restart |
 | `getNativeVoices` | `useNativeTTSVoices` | (read-only volatile) JSON catalogue of installed vi voices |
+| `getCurrentChunksJson` | `ListenPageClient` chapterText query (offline rescue) | (read-only volatile) JSON array of the playing chapter's chunks; "[]" when idle. Used as last-resort text source when IndexedDB and the network both miss — the chapter was self-fetched by Java during screen-off advance. The rescued text is cached to IndexedDB and the exact chunks drive the display |
 | `setNativeVoice` | `useNativeTTSPlayer` voice effect + `startNativePlayback` | `setPreferredVoice` — select device voice by name, "" = default (buffered until bound) |
 | `isIgnoringBatteryOptimizations`/`requestIgnoreBatteryOptimizations` | `SpeechPlayer` battery hint | Doze-exemption check + system dialog (background-playback reliability) |
 | `downloadFile` | `BookDetailClient` EPUB export button | Not player-related: hands a http(s) URL to `DownloadManager` → public Downloads (app-scoped fallback pre-Q). The WebView drops attachment responses itself; `MainActivity` also installs a `setDownloadListener` safety net for plain links |
@@ -164,7 +166,7 @@ Notes:
 
 | Event | Fired when | JS handler | Follow-up |
 |---|---|---|---|
-| `native-tts-chunk` | `speakChunk` start (utterance onStart) | `useNativeTTSPlayer.onChunk` | setChunkIndex |
+| `native-tts-chunk` | `speakChunk` start (utterance onStart) — **screen on only**: while the screen is off these (and the paired per-chunk `native-tts-state`) would just pile up in the paused WebView's evaluateJavascript queue and flush as one freeze-length burst on reopen; the resume sync reads the bridge directly instead | `useNativeTTSPlayer.onChunk` | setChunkIndex |
 | `native-tts-state` | play/pause/stop transitions | `useNativeTTSPlayer.onState` | Sync isPlaying, chunkIndex |
 | `native-tts-chapter-advance` | `deliverAutoAdvance` via `dispatchChapterAdvance` | `useNativeTTSPlayer.onChapterAdvance` | chapterAdvancedRef=true; `onEndedRef.current?.(newChId)` → `ListenPageClient.onEnded` → `router.push(…&autoplay=1)` |
 | `native-tts-done` | `fireDone` (playlist exhausted, incl. hardware-next on last chapter) | `useNativeTTSPlayer.onDone` | Cancels pending advance-coalesce timer; if no onEnded, release background lock |

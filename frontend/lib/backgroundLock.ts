@@ -76,6 +76,12 @@ interface TtsBridgeNative {
   /** Chunk count of the chapter native is playing (optional — newer APKs). */
   getTotalChunks?(): number;
   /**
+   * JSON array of the text chunks of the chapter native is playing, "[]"
+   * when idle. Offline text recovery for a self-fetched chapter on app
+   * reopen. (Optional — newer APKs.)
+   */
+  getCurrentChunksJson?(): string;
+  /**
    * Last listening position on this device as JSON
    * {bookId, chapterId, chunkIdx, ts}, or "". Survives stop/swipe-away/
    * process death — unlike the live session. (Optional — newer APKs.)

@@ -152,7 +152,13 @@ export default function ListenPage() {
   // populate the screen-off queue without any network fetches.
   const { data: chapterText, isLoading: isLoadingText } = useQuery({
     queryKey: ["chapterText", chapterId],
-    queryFn: async () => {
+    queryFn: async (): Promise<{
+      id: string;
+      text_content: string;
+      /** Java's exact chunk list, present only on the bridge-rescue path —
+       *  guarantees the displayed chunks match what is audibly playing. */
+      native_chunks?: string[];
+    }> => {
       if (isNativePlatform()) {
         const cached = await getCachedChapterText(chapterId!);
         if (cached) return { id: chapterId!, text_content: cached };
@@ -169,6 +175,39 @@ export default function ListenPage() {
         // Offline or API error — try local cache
         const cached = await getCachedChapterText(chapterId!);
         if (cached) return { id: chapterId!, text_content: cached };
+        // Last resort: native is (or was) playing THIS chapter and still holds
+        // its chunks — a chapter Java self-fetched during a screen-off
+        // auto-advance exists nowhere on the JS side, so an offline app-reopen
+        // used to land here on an error screen while the chapter was audibly
+        // playing. Reconstruct the text from Java's chunks (chunk-edge
+        // whitespace is lossy but content-complete) and cache it so later
+        // fully-offline cold starts work too.
+        const bridge = getTtsBridge();
+        if (
+          bridge?.getCurrentChapterId?.() === chapterId &&
+          typeof bridge.getCurrentChunksJson === "function"
+        ) {
+          try {
+            const nativeChunks: unknown = JSON.parse(
+              bridge.getCurrentChunksJson(),
+            );
+            if (
+              Array.isArray(nativeChunks) &&
+              nativeChunks.length > 0 &&
+              nativeChunks.every((c) => typeof c === "string")
+            ) {
+              const text = (nativeChunks as string[]).join("\n\n");
+              cacheChapterText(chapterId!, text).catch(() => {});
+              return {
+                id: chapterId!,
+                text_content: text,
+                native_chunks: nativeChunks as string[],
+              };
+            }
+          } catch {
+            /* malformed bridge payload — fall through to the error */
+          }
+        }
         throw new Error("Không có kết nối và chưa lưu offline");
       }
     },
@@ -572,9 +611,15 @@ export default function ListenPage() {
   const coldStartReplacingRef = useRef(false);
 
   const chapterTextContent = chapterText?.text_content ?? null;
+  // Bridge-rescued chapters carry Java's exact chunks — use them verbatim so
+  // the highlighted chunk always matches the audio. Re-splitting the
+  // reconstructed text could drift a boundary by one sentence.
+  const nativeChunks = chapterText?.native_chunks ?? null;
   const chunks = useMemo(
-    () => (chapterTextContent ? splitIntoChunks(chapterTextContent) : []),
-    [chapterTextContent],
+    () =>
+      nativeChunks ??
+      (chapterTextContent ? splitIntoChunks(chapterTextContent) : []),
+    [nativeChunks, chapterTextContent],
   );
 
   // Check if already cached

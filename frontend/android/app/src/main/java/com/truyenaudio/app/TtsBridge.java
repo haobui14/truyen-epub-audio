@@ -434,6 +434,18 @@ public class TtsBridge {
     }
 
     /**
+     * JSON array of the text chunks of the chapter native is playing, "[]"
+     * when idle. Lets JS recover the chapter text on app-reopen when it has
+     * no cached copy (Java self-fetched the chapter during a screen-off
+     * auto-advance) and the network is unavailable.
+     */
+    @JavascriptInterface
+    public String getCurrentChunksJson() {
+        TtsPlaybackService svc = service;
+        return svc != null ? svc.currentChunksJson : "[]";
+    }
+
+    /**
      * Last listening position on this device as a JSON string
      * {bookId, chapterId, chunkIdx, ts} — or "" if none. Unlike the live
      * session it survives stopPlayback / swipe-away / process death. Read

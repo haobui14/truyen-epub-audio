@@ -253,6 +253,15 @@ public class TtsPlaybackService extends Service {
     // (hence volatile).
     volatile String availableVoicesJson = "[]";
 
+    // JSON snapshot of currentChunks, refreshed on the main thread whenever
+    // currentChunks changes; read by TtsBridge.getCurrentChunksJson() from the
+    // WebView thread (hence volatile — the List itself is not thread-safe).
+    // Lets JS recover the playing chapter's text when it has no cached copy:
+    // after a screen-off multi-chapter advance the current chapter was often
+    // self-fetched by Java only, so an offline app-reopen used to show a
+    // "no connection" error while that very chapter was audibly playing.
+    volatile String currentChunksJson = "[]";
+
     // Playback state — volatile for cross-thread reads from TtsBridge
     volatile boolean      isPlaying         = false;
     volatile int          currentChunkIdx   = -1;
@@ -766,13 +775,22 @@ public class TtsPlaybackService extends Service {
     private void onChunkStarted(int idx) {
         // currentChunkIdx is already set in speakChunk; just emit the event.
         // Defer JS dispatch so it never interferes with TTS engine operations.
-        final int i = idx;
-        mainHandler.post(() -> {
-            dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-chunk'," +
-                    "{detail:{index:" + i + "}}))");
-            dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-state'," +
-                    "{detail:{playing:true,index:" + i + "}}))");
-        });
+        // Screen off ⇒ skip: the WebView is paused, so these per-chunk events
+        // only pile up in its internal evaluateJavascript queue (hundreds over
+        // a long session) and flush as one main-thread burst when the app
+        // reopens — a visible freeze. They carry no durable state: on resume,
+        // useNativeTTSPlayer's visibilitychange sync reads isPlaying/chunkIdx
+        // straight from the bridge. Chapter-advance/done/error events are NOT
+        // skipped — they drive navigation, lock release, and error UI.
+        if (isScreenOn()) {
+            final int i = idx;
+            mainHandler.post(() -> {
+                dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-chunk'," +
+                        "{detail:{index:" + i + "}}))");
+                dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-state'," +
+                        "{detail:{playing:true,index:" + i + "}}))");
+            });
+        }
         // Keep the lockscreen seek bar in sync — the position advances chunk by
         // chunk; the OS extrapolates within a chunk using the playback speed.
         updatePlaybackState(true);
@@ -975,6 +993,7 @@ public class TtsPlaybackService extends Service {
                 + " selfFetchBase=" + (selfFetchBase.isEmpty() ? "EMPTY" : "set")
                 + " prefetchVer=" + prefetchVersion);
         currentChunks    = chunks;
+        updateCurrentChunksSnapshot();
         currentRate      = rate;
         currentPitch     = pitch;
         currentTitle     = (title != null && !title.isEmpty()) ? title : currentTitle;
@@ -1094,6 +1113,7 @@ public class TtsPlaybackService extends Service {
         sessionWanted    = false;
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         currentChunks    = null;
+        updateCurrentChunksSnapshot();
         currentChunkIdx  = -1;
         currentTotalChunks = 0;
         currentChapterId = "";
@@ -1839,6 +1859,19 @@ public class TtsPlaybackService extends Service {
         return chapterQueue.poll();
     }
 
+    /**
+     * Refresh the volatile JSON snapshot of {@code currentChunks} for
+     * {@code TtsBridge.getCurrentChunksJson()}. Must be called (main thread)
+     * at every {@code currentChunks} assignment.
+     */
+    private void updateCurrentChunksSnapshot() {
+        if (currentChunks == null || currentChunks.isEmpty()) {
+            currentChunksJson = "[]";
+            return;
+        }
+        currentChunksJson = new JSONArray(currentChunks).toString();
+    }
+
     /** Returns true if the device screen is interactively on. */
     private boolean isScreenOn() {
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
@@ -2309,6 +2342,7 @@ public class TtsPlaybackService extends Service {
                 + " pendingHead=" + pendingHead + "/" + pendingPlaylist.size()
                 + " prefetchVer=" + prefetchVersion);
         currentChunks    = item.chunks;
+        updateCurrentChunksSnapshot();
         currentRate      = item.rate;
         currentPitch     = item.pitch;
         currentChapterId = (item.chapterId != null) ? item.chapterId : "";
