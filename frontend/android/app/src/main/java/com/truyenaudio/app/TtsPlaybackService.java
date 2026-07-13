@@ -48,6 +48,7 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
@@ -92,16 +93,22 @@ import org.json.JSONObject;
  *   │    fire 'native-tts-done'          │
  *   └──────────── idle ◀─────────────────┘
  * </pre>
- * Full diagram, state inventory, event flow, and the numbered invariants (I1–I7)
+ * Full diagram, state inventory, event flow, and the numbered invariants (I1–I9)
  * referenced throughout this file live in {@code docs/android-player.md}.
  *
  * <h2>Key invariants (edit carefully)</h2>
  * <ol>
- *   <li><b>I1</b>: {@code awaitingFetch} ⇒ ({@code chapterQueue.isEmpty()} ∨
+ *   <li><b>I1</b>: {@code awaitingFetch} ⇒ (the playlist-successor of
+ *       {@code currentChapterId} is not in {@code chapterQueue} ∨
  *       {@code !isPlaying}). The three awaitingFetch-delivery sites
  *       ({@link #mergeQueue}, {@link #setPendingPlaylist}, the
  *       {@link #doPrefetchStep} success path) gate on {@code isPlaying} so a
  *       user pause during the awaitingFetch window isn't overridden.</li>
+ *   <li><b>I9</b>: every auto-advance delivery goes through
+ *       {@link #pollNextChapter()} — the queue is fed by TWO producers (the
+ *       self-fetch chain in playlist order, JS merges in cache order), so the
+ *       FIFO head is not necessarily the next chapter. Deliver only the
+ *       {@code pendingPlaylist} successor of {@code currentChapterId}.</li>
  *   <li><b>I2</b>: {@code prefetchActive} ⇒ a fetch task is pending on
  *       ioExecutor. {@code prefetchVersion++} is the ONLY sanctioned way to
  *       invalidate an in-flight fetch.</li>
@@ -817,7 +824,7 @@ public class TtsPlaybackService extends Service {
                         "{detail:{sleep:true}}))");
                 return;
             }
-            ChapterItem nextChapter = chapterQueue.poll();
+            ChapterItem nextChapter = pollNextChapter(); // I9: playlist order, not FIFO
             if (nextChapter != null) {
                 Log.d(TAG, "→ advance to " + nextChapter.chapterId);
                 deliverAutoAdvance(nextChapter, currentChapterId);
@@ -825,9 +832,9 @@ public class TtsPlaybackService extends Service {
                 // A fetch is in flight or more chapters can be fetched — wait for it.
                 // The prefetch callback will call startChapter when it has a result.
                 Log.d(TAG, "→ awaitingFetch (prefetch=" + prefetchActive + " pending=" + pendingHead + "/" + pendingPlaylist.size() + ")");
-                // I1 entry: queue is empty (just polled null) — OK to wait.
-                assertInvariant("I1 (onChunkFinished: queue empty when awaitingFetch=true)",
-                        chapterQueue.isEmpty());
+                // I1 entry: pollNextChapter returned null — the playlist
+                // successor is NOT in the queue (the queue may still hold
+                // out-of-order later chapters; they must not play early).
                 awaitingFetch = true;
                 // Kick prefetch in case it's not already running
                 kickPrefetch();
@@ -1051,9 +1058,10 @@ public class TtsPlaybackService extends Service {
         // still points at the FINISHED chapter's last chunk — re-speaking it
         // would duplicate the final sentence. Deliver the queued next chapter
         // instead, or restart the prefetch chain and let it deliver.
-        // I1 holds in the kickPrefetch branch: queue is empty while waiting.
+        // I1 holds in the kickPrefetch branch: the playlist successor is not
+        // queued while waiting (later out-of-order chapters may be).
         if (awaitingFetch) {
-            ChapterItem next = chapterQueue.poll();
+            ChapterItem next = pollNextChapter(); // I9: playlist order, not FIFO
             if (next != null) {
                 awaitingFetch = false;
                 deliverAutoAdvance(next, currentChapterId);
@@ -1123,7 +1131,7 @@ public class TtsPlaybackService extends Service {
         if (tts != null) tts.stop();
         mainHandler.removeCallbacks(watchdogRunnable);
 
-        ChapterItem next = chapterQueue.poll();
+        ChapterItem next = pollNextChapter(); // I9: playlist order, not FIFO
         if (next != null) {
             deliverAutoAdvance(next, currentChapterId);
         } else if (prefetchActive || pendingHead < pendingPlaylist.size()) {
@@ -1134,12 +1142,15 @@ public class TtsPlaybackService extends Service {
             awaitingFetch = true;
             kickPrefetch();
         } else {
-            // Same terminal path as natural playlist exhaustion: fireDone()
-            // releases the wake lock, records the chapter for the XP drain,
-            // downgrades the MediaSession state, and notifies JS — the inline
-            // version this replaced leaked the wake lock and left the
-            // MediaSession advertising STATE_PLAYING forever.
-            fireDone();
+            // FAILSAFE (mirrors onChunkFinished): pendingHead may sit stale-high
+            // while the playlist still holds the real successor un-queued. Let
+            // doPrefetchStep re-derive from the current chapter; its
+            // exhausted/stale branches call fireDone() — which releases the
+            // wake lock, records the chapter for the XP drain, and downgrades
+            // the MediaSession — when nothing is truly left.
+            awaitingFetch = true;
+            prefetchActive = false;
+            kickPrefetch();
         }
     }
 
@@ -1422,13 +1433,17 @@ public class TtsPlaybackService extends Service {
         Log.d(TAG, "mergeQueue: added=" + added + " total=" + chapterQueue.size()
                 + " awaitingFetch=" + awaitingFetch
                 + " offered=" + chapters.size() + " ids=" + addedIds);
-        // See invariant I1: deliver iff awaitingFetch && queue non-empty && isPlaying.
+        // See invariant I1: deliver iff awaitingFetch && successor queued && isPlaying.
         // !isPlaying means user paused during the awaitingFetch window — leave the
         // item queued; resumePlayback → chunk-finish path picks it up naturally.
-        if (added > 0 && awaitingFetch && !chapterQueue.isEmpty() && isPlaying) {
-            awaitingFetch = false;
-            ChapterItem next = chapterQueue.poll();
-            if (next != null) deliverAutoAdvance(next, currentChapterId);
+        if (added > 0 && awaitingFetch && isPlaying) {
+            ChapterItem next = pollNextChapter(); // I9: only the playlist successor
+            if (next != null) {
+                awaitingFetch = false;
+                deliverAutoAdvance(next, currentChapterId);
+            }
+            // null: this merge didn't include the successor — stay awaiting;
+            // the prefetch chain is fetching it.
         }
     }
 
@@ -1507,11 +1522,14 @@ public class TtsPlaybackService extends Service {
         prefetchActive = false;
         kickPrefetch();
 
-        // See invariant I1: deliver iff awaitingFetch && queue non-empty && isPlaying.
-        if (awaitingFetch && !chapterQueue.isEmpty() && isPlaying) {
-            awaitingFetch = false;
-            ChapterItem next = chapterQueue.poll();
-            if (next != null) deliverAutoAdvance(next, currentChapterId);
+        // See invariant I1: deliver iff awaitingFetch && successor queued && isPlaying.
+        if (awaitingFetch && isPlaying) {
+            ChapterItem next = pollNextChapter(); // I9: only the playlist successor
+            if (next != null) {
+                awaitingFetch = false;
+                deliverAutoAdvance(next, currentChapterId);
+            }
+            // null: successor not queued — the kickPrefetch above is fetching it.
         }
         // Refresh the durable snapshot's upcoming-playlist section.
         persistSession();
@@ -1684,16 +1702,31 @@ public class TtsPlaybackService extends Service {
 
                     if (awaitingFetch && isPlaying) {
                         // See invariant I1: deliver iff awaitingFetch && isPlaying.
-                        // Reset prefetchActive BEFORE delivering so the
-                        // startChapter → kickPrefetch can start a fresh chain.
                         // !isPlaying means user paused — queue the item
                         // and continue the prefetch chain normally.
-                        awaitingFetch = false;
-                        prefetchActive = false;
-                        Log.d(TAG, "doPrefetchStep: delivering ch=" + id + " to awaiting player");
-                        deliverAutoAdvance(item, currentChapterId);
-                        // startChapter (inside deliverAutoAdvance) calls kickPrefetch,
-                        // which will continue the chain.
+                        //
+                        // I9: queue the fetched item, then deliver STRICTLY the
+                        // playlist successor. The fetch that just landed is
+                        // usually it — but a mergeQueue delivery may have moved
+                        // playback while this fetch was in flight, making
+                        // `item` a stale non-successor that must not play now.
+                        if (!isAlreadyQueued(id)) {
+                            chapterQueue.add(item);
+                        }
+                        ChapterItem next = pollNextChapter();
+                        if (next != null) {
+                            // Reset prefetchActive BEFORE delivering so the
+                            // startChapter → kickPrefetch can start a fresh chain.
+                            awaitingFetch = false;
+                            prefetchActive = false;
+                            Log.d(TAG, "doPrefetchStep: delivering ch=" + next.chapterId
+                                    + " to awaiting player (fetched ch=" + id + ")");
+                            deliverAutoAdvance(next, currentChapterId);
+                            // startChapter (inside deliverAutoAdvance) calls kickPrefetch,
+                            // which will continue the chain.
+                        } else {
+                            doPrefetchStep(version); // successor still missing — keep chain
+                        }
                     } else {
                         if (!isAlreadyQueued(id)) {
                             chapterQueue.add(item);
@@ -1751,6 +1784,59 @@ public class TtsPlaybackService extends Service {
             if (id.equals(item.chapterId)) return true;
         }
         return false;
+    }
+
+    /**
+     * Ordered replacement for {@code chapterQueue.poll()} at every auto-advance
+     * delivery site — see invariant I9 in docs/android-player.md.
+     *
+     * <p>The queue has TWO independent producers: the self-fetch prefetch chain
+     * (strict playlist order) and JS {@code mergeQueuedChapters} (whatever
+     * texts happen to be cached — including leftovers persisted around an
+     * EARLIER listening position). Arrival order is therefore NOT playback
+     * order. Blind FIFO delivery after the user jumped back a few chapters is
+     * what leaped playback to the old position: at ch.5 the stale cached block
+     * 10..16 merged mid-chain, giving 5→6→7→8→10→11.</p>
+     *
+     * <p>Returns (and removes) the queued item for the chapter that FOLLOWS
+     * {@code currentChapterId} in {@code pendingPlaylist}, skipping known-empty
+     * chapters — mirroring doPrefetchStep's skip rule. Returns null when that
+     * successor isn't queued yet: the caller must keep waiting for the prefetch
+     * chain, which re-derives its cursor from {@code currentChapterId} and so
+     * fetches exactly the missing successor. Falls back to plain FIFO when the
+     * playlist can't order us (no playlist, or current chapter not in it —
+     * the legacy {@code queueAllChapters} path).</p>
+     */
+    private ChapterItem pollNextChapter() {
+        if (!pendingPlaylist.isEmpty()
+                && currentChapterId != null && !currentChapterId.isEmpty()) {
+            int curPos = -1;
+            for (int i = 0; i < pendingPlaylist.size(); i++) {
+                if (currentChapterId.equals(pendingPlaylist.get(i).chapterId)) {
+                    curPos = i;
+                    break;
+                }
+            }
+            if (curPos >= 0) {
+                for (int i = curPos + 1; i < pendingPlaylist.size(); i++) {
+                    String nextId = pendingPlaylist.get(i).chapterId;
+                    if (nextId == null || nextId.isEmpty()) continue;
+                    if (emptyChapterIds.contains(nextId)) continue;
+                    for (Iterator<ChapterItem> it = chapterQueue.iterator(); it.hasNext(); ) {
+                        ChapterItem item = it.next();
+                        if (nextId.equals(item.chapterId)) {
+                            it.remove();
+                            return item;
+                        }
+                    }
+                    // Successor exists but isn't queued yet — deliver NOTHING
+                    // (never a later out-of-order item); prefetch fetches this id.
+                    return null;
+                }
+                return null; // nothing after current chapter — terminal handling stays with caller
+            }
+        }
+        return chapterQueue.poll();
     }
 
     /** Returns true if the device screen is interactively on. */

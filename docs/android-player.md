@@ -31,7 +31,7 @@ See `memory/project_tts_state_machine.md` for the bug-fix history that shaped th
 | `pendingPlaylist` | List<ChapterMeta> | no | `setPendingPlaylist` | Ordered upcoming chapters; self-fetch source |
 | `pendingHead` | int | no | `setPendingPlaylist` (=0), `doPrefetchStep` (skip-loop, advance on fetch), `stopPlayback` (=0), `onChunkFinished` FAILSAFE, `rescanPendingHead` | Index into pendingPlaylist of next chapter to fetch |
 | `selfFetchBase`/`selfFetchToken` | String | no | `setPendingPlaylist` | HTTP base URL + bearer token |
-| `awaitingFetch` | boolean | no | `onChunkFinished` (=true), `deliverAutoAdvance` (=false), `stopPlayback` (=false), `playChunks` (=false), `doPrefetchStep` (=false on deliver/exhaust) | Chapter ended with empty queue, waiting for fetch/merge result |
+| `awaitingFetch` | boolean | no | `onChunkFinished` (=true), `skipToNextChapter` (=true), `deliverAutoAdvance` (=false), `stopPlayback` (=false), `playChunks` (=false), `doPrefetchStep` (=false on deliver/exhaust) | Chapter ended with no queued playlist-successor (queue may hold out-of-order later chapters — I9), waiting for fetch/merge result |
 | `prefetchVersion` | int | no | `playChunks`, `setPendingPlaylist`, `stopPlayback` (all ++) | Monotonic; stale ioExecutor callbacks check & discard |
 | `prefetchActive` | boolean | no | `kickPrefetch` (=true), `doPrefetchStep` (false on exhaust/stale/error) | Fetch chain is in flight on ioExecutor |
 | `autoAdvancing` | boolean | no | `deliverAutoAdvance` (wraps startChapter) | Suppresses `playFakeSilence` + MediaSession reassertion during chapter transition |
@@ -213,7 +213,7 @@ Every path that ends in JS routing to `/listen?chapter=<id>`:
 
 Reference by ID from code comments (`// see I3 in docs/android-player.md`).
 
-**I1.** *(awaitingFetch, Java)* `awaitingFetch ⇒ (chapterQueue.isEmpty() ∨ !isPlaying)`. If the queue has items AND we're playing, we should have delivered immediately. The three awaitingFetch-delivery sites (`mergeQueue`, `setPendingPlaylist`, `doPrefetchStep`) enforce this by calling `deliverAutoAdvance` as soon as a chapter is available AND `isPlaying=true`. When `!isPlaying` (user paused), the item stays queued and resumes via the natural chunk-finish → queue-poll path.
+**I1.** *(awaitingFetch, Java)* `awaitingFetch ⇒ (playlist-successor of currentChapterId is not in chapterQueue ∨ !isPlaying)`. If the successor is queued AND we're playing, we should have delivered immediately. The three awaitingFetch-delivery sites (`mergeQueue`, `setPendingPlaylist`, `doPrefetchStep`) enforce this by calling `deliverAutoAdvance` as soon as the successor is available AND `isPlaying=true`. When `!isPlaying` (user paused), the item stays queued and resumes via the natural chunk-finish → ordered-poll path. (Amended by I9: the queue MAY hold out-of-order later chapters while awaiting — only the successor's absence matters.)
 
 **I2.** *(prefetchActive, Java)* `prefetchActive ⇒ a task is pending on ioExecutor`. If prefetchActive is true but no fetch is running, the chain is silently dead (no further chapters will be queued). `prefetchVersion++` is the ONLY sanctioned way to invalidate an in-flight fetch; each bump must be paired with `prefetchActive=false` or a fresh `kickPrefetch`.
 
@@ -227,6 +227,8 @@ Reference by ID from code comments (`// see I3 in docs/android-player.md`).
 
 **I7.** *(pendingHead sanity, Java)* `pendingHead ≤ pendingPlaylist.size()` always. After `chapterQueue.clear()` (either via `playChunks` or `stopPlayback`), `pendingHead` must be re-scanned — otherwise the skip-loop leaves it stale at a forward offset, causing `doPrefetchStep` to fetch chapter `pendingPlaylist[pendingHead]` instead of the next un-queued chapter. Current implementation: `rescanPendingHead()` at top of `doPrefetchStep`, and FAILSAFE in `onChunkFinished`.
 
+**I9.** *(playlist-ordered delivery, Java + JS)* Auto-advance must deliver the chapter that FOLLOWS `currentChapterId` in `pendingPlaylist` — never the FIFO head. `chapterQueue` has two independent producers (the self-fetch prefetch chain, in playlist order, and JS `mergeQueuedChapters`, in whatever order texts are cached), so arrival order is NOT playback order: after a jump BACK from ch.10 to ch.5, the IndexedDB texts persisted around ch.10 (preloads reach +6 ⇒ 10..16) merged mid-chain and FIFO delivery played 5→6→7→8→10→11. Every delivery site (`onChunkFinished`, `mergeQueue`, `setPendingPlaylist`, `resumePlayback`, `skipToNextChapter`, `doPrefetchStep`) goes through `pollNextChapter()`, which removes and returns only the playlist successor (skipping `emptyChapterIds`, mirroring the prefetch skip rule), returns null when the successor isn't queued (callers keep waiting — the prefetch chain re-derives from `currentChapterId` and fetches exactly that successor), and falls back to FIFO only when the playlist can't order (empty / current chapter absent — legacy `queueAllChapters`). JS defense-in-depth: ListenPageClient Effect B merges only the CONTIGUOUS cached run after the current chapter (stops at the first cache gap) so stale far-ahead texts are never offered.
+
 **I8.** *(chunks↔chapter coherence, JS)* `startNativePlayback` MUST only push `chunksRef` when `chunksChapterIdRef === chapterIdRef`. After an auto-advance the hook sits on the new chapterId while `chunksRef` still holds the last LOADED chapter's text until the new text query resolves — after a screen-off multi-chapter advance that is the chapter where the screen went off, many chapters back. An unguarded push relabels that old content with the new chapter's id/title: notification/UI/progress all say ch.N while the ears hear ch.M, and `persistSession` makes it survive restarts. Immediate-apply restarts (rate/pitch/voice/`restartChunk`) go through `respeakCurrentChunk`, which prefers `bridge.seekToChunk(getCurrentChunk())` — Java re-speaks its OWN (content-correct) chunk and keeps its queue/prefetch chain. Historical trigger: PlayerContext's settings-apply effect fired `changeRate` on every screen-on settings refetch, landing exactly in the text-load window; it now applies only actual value changes.
 
 ---
@@ -238,7 +240,8 @@ Added 2026-06-10 ("seamless background + constant sync").
 **Snapshot.** `persistSession()` writes one JSON blob to SharedPreferences
 (`tts_session/session`): bookId, bookTitle, chapterId, title, chunkIdx,
 rate/pitch, playing flag, apiBase, coverUrl, ts, the next ≤50 upcoming
-playlist entries (strictly after the current chapter), and the undrained
+playlist entries (current chapter INCLUSIVE — doPrefetchStep and
+pollNextChapter both align by locating it), and the undrained
 `completedChapterIds`. The auth TOKEN is deliberately NOT persisted (no JWT at
 rest) — the text endpoint is public so restore/auto-resume work without it, and
 server progress PUTs stay paused until JS re-seeds the token (Effect A).
@@ -303,3 +306,4 @@ See `memory/project_tts_state_machine.md` for detail. Summary:
 - **Stale-session 46-chapter jump (fixed 2026-04-24)** — `ListenPageClient` stale-session guard.
 - **Paused auto-resume (fixed 2026-04-24)** — awaitingFetch branches gate on `isPlaying` (I2).
 - **50-chapter seekChunk jump (fixed 2026-04-24)** — `rescanPendingHead()` when queue cleared (I8).
+- **Jump-back forward leap (fixed 2026-07-12)** — jump back 10→5, play 6,7,8 fine, then leap to 10/11: JS Effect B merged IndexedDB texts persisted around the OLD position into the FIFO mid-chain, out of order. Fixed by playlist-ordered delivery (`pollNextChapter()`, I9) + Effect B contiguous-run merge.

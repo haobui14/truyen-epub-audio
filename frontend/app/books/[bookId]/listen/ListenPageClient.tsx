@@ -877,18 +877,23 @@ export default function ListenPage() {
 
         if (cancelled) return;
 
-        if (text) {
-          const chunks = splitChunks(text);
-          if (chunks.length > 0) {
-            cachedItems.push({
-              chunks,
-              chapterId: ch.id,
-              title: ch.title ?? "Đang phát...",
-              rate,
-              pitch,
-            });
-          }
-        }
+        // Contiguity guard: stop at the first cache gap instead of skipping
+        // it. Chapters BEYOND a gap can never be the next thing to play, and
+        // offering them poisoned the Java FIFO with texts persisted around an
+        // EARLIER listening position — jump back from ch.10 to ch.5 and the
+        // stale cached 10..16 merged in mid-chain: 5→6→7→8→10→11. The gap
+        // chapter itself arrives via Java's self-fetch chain, which also now
+        // delivers strictly in playlist order (see I9 in docs/android-player.md).
+        if (!text) break;
+        const chunks = splitChunks(text);
+        if (chunks.length === 0) break; // no speakable text = a gap too
+        cachedItems.push({
+          chunks,
+          chapterId: ch.id,
+          title: ch.title ?? "Đang phát...",
+          rate,
+          pitch,
+        });
       }
 
       if (cancelled) return;
