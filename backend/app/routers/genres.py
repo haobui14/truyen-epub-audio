@@ -61,7 +61,7 @@ async def create_genre(body: GenreCreate, _admin: dict = Depends(get_admin_user)
 async def update_genre(genre_id: str, body: GenreUpdate, _admin: dict = Depends(get_admin_user)):
     db = get_client()
     existing = db.table("genres").select("id").eq("id", genre_id).maybe_single().execute()
-    if not existing.data:
+    if not existing or not existing.data:
         raise HTTPException(status_code=404, detail="Genre not found")
 
     updates: dict = {}
@@ -92,7 +92,7 @@ async def update_genre(genre_id: str, body: GenreUpdate, _admin: dict = Depends(
 async def delete_genre(genre_id: str, _admin: dict = Depends(get_admin_user)):
     db = get_client()
     existing = db.table("genres").select("id").eq("id", genre_id).maybe_single().execute()
-    if not existing.data:
+    if not existing or not existing.data:
         raise HTTPException(status_code=404, detail="Genre not found")
 
     db.table("genres").delete().eq("id", genre_id).execute()
@@ -104,10 +104,10 @@ async def delete_genre(genre_id: str, _admin: dict = Depends(get_admin_user)):
 async def assign_genre(book_id: str, genre_id: str, _admin: dict = Depends(get_admin_user)):
     db = get_client()
     book = db.table("books").select("id").eq("id", book_id).maybe_single().execute()
-    if not book.data:
+    if not book or not book.data:
         raise HTTPException(status_code=404, detail="Book not found")
     genre = db.table("genres").select("id").eq("id", genre_id).maybe_single().execute()
-    if not genre.data:
+    if not genre or not genre.data:
         raise HTTPException(status_code=404, detail="Genre not found")
 
     db.table("book_genres").upsert({"book_id": book_id, "genre_id": genre_id}).execute()

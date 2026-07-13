@@ -37,7 +37,7 @@ async def save_progress(body: ProgressUpsert, user: dict = Depends(get_current_u
         .maybe_single()
         .execute()
     )
-    row["chapter_index"] = (ch.data or {}).get("chapter_index")
+    row["chapter_index"] = ((ch.data or {}) if ch else {}).get("chapter_index")
     return row
 
 
@@ -56,7 +56,7 @@ async def get_chapter_progress(
         .maybe_single()
         .execute()
     )
-    if not result.data:
+    if not result or not result.data:
         return None
     row = result.data
     ch = (
@@ -66,7 +66,7 @@ async def get_chapter_progress(
         .maybe_single()
         .execute()
     )
-    row["chapter_index"] = (ch.data or {}).get("chapter_index")
+    row["chapter_index"] = ((ch.data or {}) if ch else {}).get("chapter_index")
     return row
 
 
@@ -131,5 +131,5 @@ async def get_book_progress(
         .maybe_single()
         .execute()
     )
-    row["chapter_index"] = (ch.data or {}).get("chapter_index")
+    row["chapter_index"] = ((ch.data or {}) if ch else {}).get("chapter_index")
     return row

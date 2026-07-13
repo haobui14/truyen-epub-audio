@@ -29,8 +29,10 @@ def _get_storage() -> SyncStorageClient:
             "apiKey": settings.supabase_service_key,
             "Authorization": f"Bearer {settings.supabase_service_key}",
         }
+        # Trailing slash required by storage3 >= 0.9 (it warns and auto-corrects
+        # otherwise, once per boot).
         _storage_client = SyncStorageClient(
-            f"{settings.supabase_url}/storage/v1", headers
+            f"{settings.supabase_url}/storage/v1/", headers
         )
     return _storage_client
 
