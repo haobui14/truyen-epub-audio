@@ -19,7 +19,26 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // Committed debug keystore (standard Android debug credentials) instead of
+    // each machine's own ~/.android/debug.keystore. Gradle auto-generates that
+    // file per-machine with a DIFFERENT random key — installing a debug build
+    // from a second machine over one from the first then fails with
+    // INSTALL_FAILED_UPDATE_INCOMPATIBLE because the signatures don't match.
+    // A shared, committed key makes every machine produce identically-signed
+    // debug builds. Not sensitive: this is the well-known public debug
+    // alias/password Android tooling has used since day one.
+    signingConfigs {
+        debug {
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
     buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'

@@ -55,3 +55,7 @@ frontend/android/app/debug/
 *.aab
 *.keystore
 *.jks
+# Shared DEBUG-only signing key (standard Android debug credentials, not
+# sensitive) — committed so every machine signs debug builds identically.
+# See build.gradle's signingConfigs.debug comment.
+!frontend/android/app/debug.keystore
