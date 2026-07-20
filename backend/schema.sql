@@ -45,11 +45,31 @@ CREATE TABLE IF NOT EXISTS chapters (
     audio_duration_seconds  FLOAT,
     audio_file_size_bytes   BIGINT,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE(book_id, chapter_index)
 );
 
 -- For existing DBs created before chapter text moved to Storage:
 ALTER TABLE chapters ADD COLUMN IF NOT EXISTS text_storage_path TEXT;
+
+-- Migration for existing databases (idempotent): track when a chapter row was
+-- last modified so clients — especially the Android app's offline chapter-text
+-- IndexedDB cache — can tell their cached copy is stale (an admin edit) and
+-- refetch instead of silently showing outdated text forever. Bumped
+-- automatically by the trigger below on every UPDATE.
+ALTER TABLE chapters ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
+CREATE OR REPLACE FUNCTION touch_chapter_updated_at() RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_chapters_updated_at ON chapters;
+CREATE TRIGGER trg_chapters_updated_at
+    BEFORE UPDATE ON chapters
+    FOR EACH ROW EXECUTE FUNCTION touch_chapter_updated_at();
 
 CREATE INDEX IF NOT EXISTS idx_chapters_book_id ON chapters(book_id);
 CREATE INDEX IF NOT EXISTS idx_chapters_status  ON chapters(book_id, status);

@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api", tags=["chapters"])
 async def get_chapter(chapter_id: str):
     db = get_client()
     result = db.table("chapters").select(
-        "id,book_id,chapter_index,title,word_count,status,error_message,created_at,audio_url,audio_duration_seconds,audio_file_size_bytes"
+        "id,book_id,chapter_index,title,word_count,status,error_message,created_at,updated_at,audio_url,audio_duration_seconds,audio_file_size_bytes"
     ).eq("id", chapter_id).maybe_single().execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Chapter not found")
@@ -32,11 +32,17 @@ async def get_chapter(chapter_id: str):
 @router.get("/chapters/{chapter_id}/text")
 async def get_chapter_text(chapter_id: str):
     db = get_client()
-    result = db.table("chapters").select("id").eq("id", chapter_id).maybe_single().execute()
+    result = db.table("chapters").select("id,updated_at").eq("id", chapter_id).maybe_single().execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Chapter not found")
     text = await storage_service.get_chapter_text(chapter_id)
-    return {"id": result.data["id"], "text_content": text}
+    # updated_at lets clients that cache this text offline (Android app)
+    # detect an admin edit and refetch instead of serving stale text forever.
+    return {
+        "id": result.data["id"],
+        "text_content": text,
+        "updated_at": result.data["updated_at"],
+    }
 
 
 @router.get("/audio/{chapter_id}")

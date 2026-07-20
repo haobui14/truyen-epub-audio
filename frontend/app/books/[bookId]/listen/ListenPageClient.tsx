@@ -53,7 +53,9 @@ import {
   cacheChapterText,
   isChapterTextCached,
   getCachedChapterText,
+  getCachedChapterEntry,
   getAllCachedChapterIds,
+  canUseCachedChapterText,
 } from "@/lib/chapterTextCache";
 import { isNativePlatform } from "@/lib/capacitor";
 import {
@@ -146,10 +148,12 @@ export default function ListenPage() {
     staleTime: 60_000,
   });
 
-  // Fetch text for the current chapter — on native checks IndexedDB first,
-  // then falls back to IndexedDB again if the API call fails.
-  // Auto-caches to IndexedDB on native so Java's mergeQueuedChapters can
-  // populate the screen-off queue without any network fetches.
+  // Fetch text for the current chapter — on native checks IndexedDB first
+  // (but only when it's still the current server version; see
+  // canUseCachedChapterText), then falls back to IndexedDB again if the API
+  // call fails. Auto-caches to IndexedDB on native so Java's
+  // mergeQueuedChapters can populate the screen-off queue without any
+  // network fetches.
   const { data: chapterText, isLoading: isLoadingText } = useQuery({
     queryKey: ["chapterText", chapterId],
     queryFn: async (): Promise<{
@@ -160,15 +164,20 @@ export default function ListenPage() {
       native_chunks?: string[];
     }> => {
       if (isNativePlatform()) {
-        const cached = await getCachedChapterText(chapterId!);
-        if (cached) return { id: chapterId!, text_content: cached };
+        const cached = await getCachedChapterEntry(chapterId!);
+        const serverUpdatedAt = chaptersData?.items.find(
+          (c) => c.id === chapterId,
+        )?.updated_at;
+        if (cached && canUseCachedChapterText(cached, serverUpdatedAt)) {
+          return { id: chapterId!, text_content: cached.text_content };
+        }
       }
       try {
         const data = await api.getChapterText(chapterId!);
         // Persist to IndexedDB so Java can find it in mergeQueuedChapters
         // even after the app is restarted or React Query cache is cold.
         if (isNativePlatform()) {
-          cacheChapterText(chapterId!, data.text_content).catch(() => {});
+          cacheChapterText(chapterId!, data.text_content, data.updated_at).catch(() => {});
         }
         return data;
       } catch {
@@ -286,16 +295,23 @@ export default function ListenPage() {
   const next6ChapterId = next6Chapter?.id ?? null;
 
   // Helper: fetch from API, auto-cache on native, fall back to IndexedDB.
+  // Only trusts the cache when it's still the current server version (or
+  // we're offline) — see canUseCachedChapterText.
   const fetchAndCacheText = useCallback(
     async (id: string) => {
       if (isNativePlatform()) {
-        const cached = await getCachedChapterText(id);
-        if (cached) return { id, text_content: cached };
+        const cached = await getCachedChapterEntry(id);
+        const serverUpdatedAt = chaptersData?.items.find(
+          (c) => c.id === id,
+        )?.updated_at;
+        if (cached && canUseCachedChapterText(cached, serverUpdatedAt)) {
+          return { id, text_content: cached.text_content };
+        }
       }
       try {
         const data = await api.getChapterText(id);
         if (isNativePlatform()) {
-          cacheChapterText(id, data.text_content).catch(() => {});
+          cacheChapterText(id, data.text_content, data.updated_at).catch(() => {});
         }
         return data;
       } catch {
@@ -304,7 +320,7 @@ export default function ListenPage() {
         throw new Error("offline");
       }
     },
-    [],
+    [chaptersData],
   );
 
   useQuery({
@@ -1019,7 +1035,11 @@ export default function ListenPage() {
   async function handleSaveOffline() {
     if (!chapterId || !chapterTextContent) return;
     setIsSaving(true);
-    await cacheChapterText(chapterId, chapterTextContent);
+    await cacheChapterText(
+      chapterId,
+      chapterTextContent,
+      chaptersData?.items.find((c) => c.id === chapterId)?.updated_at,
+    );
     setIsCached(true);
     setCachedIds((prev) => new Set([...prev, chapterId!]));
     setIsSaving(false);

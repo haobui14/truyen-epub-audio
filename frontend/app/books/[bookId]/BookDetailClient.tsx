@@ -8,7 +8,11 @@ import { isLoggedIn, isAdmin } from "@/lib/auth";
 import { ChapterList } from "@/components/books/ChapterList";
 import { Spinner } from "@/components/ui/Spinner";
 import { GenreTag } from "@/components/books/GenreManager";
-import { cacheChapterText, isChapterTextCached } from "@/lib/chapterTextCache";
+import {
+  cacheChapterText,
+  getCachedChapterEntry,
+  canUseCachedChapterText,
+} from "@/lib/chapterTextCache";
 import { getLocalBookProgress } from "@/lib/progressQueue";
 import { isNativePlatform } from "@/lib/capacitor";
 import { getTtsBridge } from "@/lib/backgroundLock";
@@ -37,6 +41,10 @@ export default function BookDetailPage() {
     total: number;
   } | null>(null);
   const [dlDone, setDlDone] = useState(false);
+  // Count of chapters actually (re)fetched in the most recent run — null
+  // before any run. Shown as a caption on re-checks so tapping the button
+  // again after an admin edit visibly confirms whether anything changed.
+  const [dlUpdatedCount, setDlUpdatedCount] = useState<number | null>(null);
   const [epubState, setEpubState] = useState<"idle" | "working" | "done">(
     "idle",
   );
@@ -168,7 +176,11 @@ export default function BookDetailPage() {
 
   async function handleDownloadBook() {
     if (dlProgress) return;
-    setDlDone(false);
+    // Re-triggerable: a chapter whose cached copy already matches the
+    // server's current version is skipped near-instantly (see
+    // canUseCachedChapterText below), so re-running this after the first
+    // download is a cheap "check for updates", not a full re-download.
+    setDlUpdatedCount(null);
 
     if (book) cacheBook(book).catch(() => {});
 
@@ -215,12 +227,18 @@ export default function BookDetailPage() {
     const total = allChapters.length;
     setDlProgress({ done: 0, total });
     let done = 0;
+    let updated = 0;
     for (const ch of allChapters) {
       try {
-        const cached = await isChapterTextCached(ch.id);
-        if (!cached) {
+        const cached = await getCachedChapterEntry(ch.id);
+        // Re-download when never cached OR the cached copy predates the
+        // chapter's current server version (an admin edit since the last
+        // "Tải truyện offline" run) — otherwise re-running this button would
+        // never pick up edits to already-downloaded chapters.
+        if (!cached || !canUseCachedChapterText(cached, ch.updated_at)) {
           const result = await api.getChapterText(ch.id);
-          await cacheChapterText(ch.id, result.text_content);
+          await cacheChapterText(ch.id, result.text_content, result.updated_at);
+          updated++;
         }
       } catch {
         // skip failed chapters
@@ -230,6 +248,7 @@ export default function BookDetailPage() {
     }
     setDlDone(true);
     setDlProgress(null);
+    setDlUpdatedCount(updated);
   }
 
   async function handleDownloadEpub() {
@@ -533,10 +552,15 @@ export default function BookDetailPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <button
                 onClick={handleDownloadBook}
-                disabled={!!dlProgress || dlDone}
+                disabled={!!dlProgress}
+                title={
+                  dlDone
+                    ? "Nhấn để kiểm tra chương mới/đã sửa"
+                    : undefined
+                }
                 className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium border transition-colors ${
                   dlDone
-                    ? "border-accent/40 text-accent bg-accent/10"
+                    ? "border-accent/40 text-accent bg-accent/10 hover:bg-accent/15"
                     : dlProgress
                       ? "border-accent/40 text-accent bg-accent/10"
                       : "border-hairline text-text-mute hover:border-accent/40 hover:text-accent hover:bg-accent/10"
@@ -546,7 +570,7 @@ export default function BookDetailPage() {
                   <>
                     <Spinner className="w-4 h-4" />
                     <span>
-                      Đang tải... {dlProgress.done}/{dlProgress.total}
+                      Đang đồng bộ... {dlProgress.done}/{dlProgress.total}
                     </span>
                   </>
                 ) : dlDone ? (
@@ -640,6 +664,13 @@ export default function BookDetailPage() {
                 )}
               </button>
             </div>
+            {dlDone && dlUpdatedCount !== null && (
+              <p className="text-xs text-text-faint text-center">
+                {dlUpdatedCount > 0
+                  ? `Đã cập nhật ${dlUpdatedCount} chương — nhấn lại để kiểm tra tiếp`
+                  : "Đã là bản mới nhất — nhấn lại để kiểm tra"}
+              </p>
+            )}
             {epubError && (
               <p className="text-xs text-vermillion text-center">{epubError}</p>
             )}

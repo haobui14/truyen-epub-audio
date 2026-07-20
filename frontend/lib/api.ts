@@ -231,7 +231,7 @@ export const api = {
   getChapter: (chapterId: string) =>
     request<Chapter>(`/api/chapters/${chapterId}`),
   getChapterText: (chapterId: string) =>
-    request<{ id: string; text_content: string }>(
+    request<{ id: string; text_content: string; updated_at: string }>(
       `/api/chapters/${chapterId}/text`,
     ),
   updateChapterText: (chapterId: string, text_content: string) =>

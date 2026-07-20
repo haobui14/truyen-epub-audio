@@ -67,7 +67,7 @@ async def get_book_chapters(
     end = offset + page_size - 1
 
     chapters = db.table("chapters").select(
-        "id,book_id,chapter_index,title,word_count,status,error_message,created_at,audio_url,audio_duration_seconds,audio_file_size_bytes"
+        "id,book_id,chapter_index,title,word_count,status,error_message,created_at,updated_at,audio_url,audio_duration_seconds,audio_file_size_bytes"
     ).eq("book_id", book_id).order("chapter_index").range(offset, end).execute()
 
     items = []

@@ -31,6 +31,9 @@ export interface Chapter {
   status: "pending" | "converting" | "ready" | "error";
   error_message?: string;
   created_at: string;
+  /** Bumped by a DB trigger on every row update — used to detect a stale
+   *  offline-cached copy of the chapter text (see lib/chapterTextCache.ts). */
+  updated_at: string;
 }
 
 export interface PaginatedChapters {

@@ -12,6 +12,7 @@ class ChapterResponse(BaseModel):
     status: str
     error_message: Optional[str] = None
     created_at: datetime
+    updated_at: datetime
     audio: Optional["AudioSummary"] = None
 
 

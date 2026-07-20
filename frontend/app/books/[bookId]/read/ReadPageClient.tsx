@@ -14,6 +14,7 @@ import {
   getCachedChapterEntry,
   cacheChapterText,
   getAllCachedChapterIds,
+  canUseCachedChapterText,
 } from "@/lib/chapterTextCache";
 import {
   getCachedBook,
@@ -145,9 +146,35 @@ const AUTO_LIGHT: Pick<ReaderTheme, "bg" | "text"> = {
 // EPUB or clearing offline data.
 const CHAPTER_TEXT_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 
-/** Offline-first chapter text fetch: try IndexedDB, fall through to API. */
-async function fetchChapterTextOfflineFirst(chapterId: string) {
+/**
+ * Offline-first chapter text fetch: try IndexedDB, fall through to API.
+ *
+ * `knownServerUpdatedAt`, when available (from the already-loaded chapters
+ * list), lets a cached entry be invalidated the moment it's known stale —
+ * e.g. an admin edited the chapter — instead of waiting out the TTL below.
+ * Without it (chapters list not loaded yet, or an old cache entry from
+ * before this field existed) the TTL-based stale-while-revalidate check is
+ * the fallback.
+ */
+async function fetchChapterTextOfflineFirst(
+  chapterId: string,
+  knownServerUpdatedAt?: string,
+) {
   const cached = await getCachedChapterEntry(chapterId);
+  if (cached && !canUseCachedChapterText(cached, knownServerUpdatedAt)) {
+    // Online and (known-stale or version-unknown) — try to get the current
+    // text now rather than waiting on the TTL. Any failure (offline, flaky
+    // connection) falls through to serve the cache below, same as always.
+    try {
+      const res = await api.getChapterText(chapterId);
+      if (res?.text_content) {
+        void cacheChapterText(chapterId, res.text_content, res.updated_at);
+      }
+      return res;
+    } catch {
+      // fall through
+    }
+  }
   if (cached) {
     const fresh = Date.now() - cached.cached_at < CHAPTER_TEXT_TTL_MS;
     if (!fresh) {
@@ -156,7 +183,7 @@ async function fetchChapterTextOfflineFirst(chapterId: string) {
         .getChapterText(chapterId)
         .then((res) => {
           if (res?.text_content && res.text_content !== cached.text_content) {
-            void cacheChapterText(chapterId, res.text_content);
+            void cacheChapterText(chapterId, res.text_content, res.updated_at);
           }
         })
         .catch(() => {});
@@ -165,7 +192,7 @@ async function fetchChapterTextOfflineFirst(chapterId: string) {
   }
   const res = await api.getChapterText(chapterId);
   if (res?.text_content) {
-    void cacheChapterText(chapterId, res.text_content);
+    void cacheChapterText(chapterId, res.text_content, res.updated_at);
   }
   return res;
 }
@@ -266,7 +293,11 @@ export default function ReadPage() {
 
   const { data: chapterText, isLoading: isLoadingText } = useQuery({
     queryKey: ["chapterText", chapterId],
-    queryFn: () => fetchChapterTextOfflineFirst(chapterId!),
+    queryFn: () =>
+      fetchChapterTextOfflineFirst(
+        chapterId!,
+        chaptersData?.items.find((c) => c.id === chapterId)?.updated_at,
+      ),
     enabled: !!chapterId,
   });
 
@@ -365,7 +396,7 @@ export default function ReadPage() {
       if (!ch) continue;
       void queryClient.prefetchQuery({
         queryKey: ["chapterText", ch.id],
-        queryFn: () => fetchChapterTextOfflineFirst(ch.id),
+        queryFn: () => fetchChapterTextOfflineFirst(ch.id, ch.updated_at),
       });
     }
   }, [chapterText, allChapters, currentIndex, queryClient]);
