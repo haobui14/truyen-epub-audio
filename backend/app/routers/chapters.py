@@ -116,7 +116,7 @@ async def update_chapter(
         db.table("chapters").update(updates).eq("id", chapter_id).execute()
 
     updated = db.table("chapters").select(
-        "id,chapter_index,title,word_count"
+        "id,chapter_index,title,word_count,updated_at"
     ).eq("id", chapter_id).maybe_single().execute()
     return updated.data
 
@@ -133,10 +133,19 @@ async def update_chapter_text(
         raise HTTPException(status_code=404, detail="Chapter not found")
     word_count = len(body.text_content.split())
     await storage_service.write_chapter_text(result.data["book_id"], chapter_id, body.text_content)
-    db.table("chapters").update({
+    updated = db.table("chapters").update({
         "word_count": word_count,
     }).eq("id", chapter_id).execute()
-    return {"id": chapter_id, "word_count": word_count}
+    # updated_at (bumped by trg_chapters_updated_at) lets the editing client
+    # stamp its offline chapter-text cache with the NEW version — without it
+    # the device's stale cached copy passes the freshness check and the edit
+    # appears to revert.
+    row = (updated.data or [{}])[0]
+    return {
+        "id": chapter_id,
+        "word_count": word_count,
+        "updated_at": row.get("updated_at"),
+    }
 
 
 @router.delete("/chapters/{chapter_id}")

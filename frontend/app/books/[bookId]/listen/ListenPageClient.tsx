@@ -76,6 +76,7 @@ import {
   getCachedAllChapters,
   cacheAllChapters,
 } from "@/lib/bookCache";
+import type { PaginatedChapters } from "@/types";
 
 export default function ListenPage() {
   const params = useParams();
@@ -1056,12 +1057,32 @@ export default function ListenPage() {
     setIsSavingEdit(true);
     setEditError(null);
     try {
-      await api.updateChapterText(chapterId, editText);
+      const res = await api.updateChapterText(chapterId, editText);
+      // Write the edit through to IndexedDB with the NEW server version.
+      // Without this the offline entry keeps the pre-edit text and the next
+      // refetch (e.g. the app-foreground invalidation in providers.tsx)
+      // trusts it via canUseCachedChapterText — the saved edit snaps back.
+      await cacheChapterText(chapterId, editText, res.updated_at ?? undefined);
       // Update React Query cache so player uses new text immediately
       queryClient.setQueryData(["chapterText", chapterId], {
         id: chapterId,
         text_content: editText,
       });
+      // Sync the chapters list's version stamp so the freshness check
+      // compares the new cache entry against the new version, not the row
+      // fetched before the save.
+      if (res.updated_at) {
+        queryClient.setQueryData<PaginatedChapters>(
+          ["chapters", bookId, "all"],
+          (old) =>
+            old && {
+              ...old,
+              items: old.items.map((c) =>
+                c.id === chapterId ? { ...c, updated_at: res.updated_at! } : c,
+              ),
+            },
+        );
+      }
       setShowEditModal(false);
     } catch (e) {
       setEditError(e instanceof Error ? e.message : "Lỗi lưu văn bản");

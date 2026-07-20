@@ -235,7 +235,7 @@ export const api = {
       `/api/chapters/${chapterId}/text`,
     ),
   updateChapterText: (chapterId: string, text_content: string) =>
-    request<{ id: string; word_count: number }>(
+    request<{ id: string; word_count: number; updated_at?: string | null }>(
       `/api/chapters/${chapterId}/text`,
       {
         method: "PATCH",
@@ -259,6 +259,7 @@ export const api = {
       chapter_index: number;
       title: string;
       word_count: number;
+      updated_at?: string | null;
     }>(`/api/chapters/${chapterId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },

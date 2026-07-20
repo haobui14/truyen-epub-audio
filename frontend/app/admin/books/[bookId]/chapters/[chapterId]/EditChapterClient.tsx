@@ -5,6 +5,7 @@ import { useRouter, useParams, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { isAdmin, isAuthReady } from "@/lib/auth";
+import { cacheChapterText } from "@/lib/chapterTextCache";
 import { Spinner } from "@/components/ui/Spinner";
 
 const SIDEBAR_PAGE_SIZE = 50;
@@ -404,11 +405,20 @@ export default function EditChapterClient() {
         queryClient.invalidateQueries({ queryKey: ["book", bookId] });
         router.replace(`/admin/edit-chapter?bookId=${bookId}&id=${created.id}`);
       } else {
-        await api.updateChapter(chapterId, {
+        const updated = await api.updateChapter(chapterId, {
           title: title.trim(),
           chapter_index: index - 1, // 0-based
           text_content: textContent.trim(),
         });
+        // Write the edit through to this device's offline chapter-text cache
+        // (listen/read pages serve from it) with the NEW version stamp —
+        // otherwise the stale cached copy passes canUseCachedChapterText and
+        // the edit appears to revert until the next version mismatch.
+        await cacheChapterText(
+          chapterId,
+          textContent.trim(),
+          updated.updated_at ?? undefined,
+        );
         queryClient.invalidateQueries({ queryKey: ["chapter", chapterId] });
         queryClient.invalidateQueries({ queryKey: ["chapterText", chapterId] });
         queryClient.invalidateQueries({ queryKey: ["chapters", bookId] });
