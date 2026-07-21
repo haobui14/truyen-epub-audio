@@ -37,13 +37,14 @@ def _get_storage() -> SyncStorageClient:
     return _storage_client
 
 
-def _get_upload_client() -> httpx.Client:
-    """Direct httpx client used for uploads only. We bypass storage3's upload
-    path because its error handler calls `response.json()` on non-2xx bodies
-    and re-raises a bare `StorageException({'statusCode': N})` when the body
-    isn't JSON — Supabase's actual error message (e.g. "Duplicate", "Payload
-    too large") is discarded. Talking to /storage/v1 directly lets us surface
-    the response body in the exception.
+def _get_direct_client() -> httpx.Client:
+    """Direct httpx client for uploads and chapter-text downloads. We bypass
+    storage3's upload path because its error handler calls `response.json()`
+    on non-2xx bodies and re-raises a bare `StorageException({'statusCode': N})`
+    when the body isn't JSON — Supabase's actual error message (e.g.
+    "Duplicate", "Payload too large") is discarded. Downloads go direct so we
+    can append a cache-busting query param (see _sync_download). Talking to
+    /storage/v1 directly lets us surface the response body in the exception.
 
     HTTP/1.1 (NOT HTTP/2): under our 8-way concurrent upload load, Supabase
     Storage occasionally drops the connection. With HTTP/2 every concurrent
@@ -70,17 +71,18 @@ def _get_upload_client() -> httpx.Client:
 
 
 class StorageUploadError(Exception):
-    """Raised when Supabase Storage returns a non-2xx on upload. Carries the
-    status code and the raw response body so logs name the actual problem."""
+    """Raised when Supabase Storage returns a non-2xx on upload/download.
+    Carries the status code and the raw response body so logs name the
+    actual problem."""
 
-    def __init__(self, status: int, body: str, bucket: str, path: str):
+    def __init__(self, status: int, body: str, bucket: str, path: str, op: str = "upload"):
         self.status = status
         self.body = body
         self.bucket = bucket
         self.path = path
         snippet = body[:500] + ("…" if len(body) > 500 else "")
         super().__init__(
-            f"upload {bucket}/{path} → HTTP {status}: {snippet}"
+            f"{op} {bucket}/{path} → HTTP {status}: {snippet}"
         )
 
 
@@ -170,26 +172,50 @@ def _gunzip_decompress(data: bytes) -> bytes:
     return gzip.decompress(data)
 
 
-def _sync_upload(bucket: str, path: str, data: bytes, content_type: str) -> None:
+def _sync_upload(
+    bucket: str,
+    path: str,
+    data: bytes,
+    content_type: str,
+    cache_control: str | None = None,
+) -> None:
     def _do() -> None:
-        resp = _get_upload_client().post(
+        headers = {
+            "Content-Type": content_type,
+            "x-upsert": "true",
+        }
+        if cache_control:
+            # Stored verbatim as the object's cacheControl metadata and served
+            # back on downloads — "no-cache" makes Supabase's CDN revalidate
+            # instead of serving a stale copy after an upsert.
+            headers["Cache-Control"] = cache_control
+        resp = _get_direct_client().post(
             f"/object/{bucket}/{path}",
             content=data,
-            headers={
-                "Content-Type": content_type,
-                "x-upsert": "true",
-            },
+            headers=headers,
         )
         if resp.status_code >= 400:
             raise StorageUploadError(resp.status_code, resp.text, bucket, path)
     _retry_sync(_do, what=f"upload {bucket}/{path}")
 
 
-def _sync_download(bucket: str, path: str) -> bytes:
-    return _retry_sync(
-        lambda: _get_storage().from_(bucket).download(path),
-        what=f"download {bucket}/{path}",
-    )
+def _sync_download(bucket: str, path: str, version: str | None = None) -> bytes:
+    """GET an object directly. Supabase serves storage downloads through its
+    CDN, which caches per-URL and does NOT invalidate on upsert — after an
+    admin edit the old chapter text kept being served from the CDN until its
+    TTL expired. `version` (the chapter row's updated_at) is appended as a
+    query param so every rewrite reads from a fresh cache key."""
+    def _do() -> bytes:
+        resp = _get_direct_client().get(
+            f"/object/{bucket}/{path}",
+            params={"v": version} if version else None,
+        )
+        if resp.status_code >= 400:
+            raise StorageUploadError(
+                resp.status_code, resp.text, bucket, path, op="download"
+            )
+        return resp.content
+    return _retry_sync(_do, what=f"download {bucket}/{path}")
 
 
 def _sync_remove(bucket: str, paths: list[str]) -> None:
@@ -250,12 +276,16 @@ async def upload_chapter_text(book_id: str, chapter_id: str, text: str) -> str:
         path,
         data,
         "application/gzip",
+        "no-cache",
     )
     return path
 
 
-async def download_chapter_text(path: str) -> str:
-    data = await asyncio.to_thread(_sync_download, CHAPTER_TEXT_BUCKET, path)
+async def download_chapter_text(path: str, version: str | None = None) -> str:
+    """`version` (chapters.updated_at) cache-busts Supabase's CDN — see
+    _sync_download. Pass it whenever the caller has the row's updated_at;
+    without it an upserted object can be served stale until the CDN TTL."""
+    data = await asyncio.to_thread(_sync_download, CHAPTER_TEXT_BUCKET, path, version)
     # New objects are gzip (magic 1f 8b); legacy objects are plain UTF-8 and skip
     # the gunzip branch — byte-identical to the pre-compression behaviour.
     if _is_gzip(data):
@@ -274,7 +304,7 @@ async def get_chapter_text(chapter_id: str) -> str:
     db = get_client()
     result = (
         db.table("chapters")
-        .select("text_storage_path")
+        .select("text_storage_path,updated_at")
         .eq("id", chapter_id)
         .maybe_single()
         .execute()
@@ -285,18 +315,21 @@ async def get_chapter_text(chapter_id: str) -> str:
     if not path:
         return ""
     try:
-        return await download_chapter_text(path)
+        return await download_chapter_text(path, result.data.get("updated_at"))
     except Exception as e:
         logger.warning(f"Storage download failed for chapter {chapter_id} ({path}): {e}")
         return ""
 
 
-async def get_chapter_text_by_ids(book_id: str, chapter_id: str) -> str:
+async def get_chapter_text_by_ids(
+    book_id: str, chapter_id: str, version: str | None = None
+) -> str:
     """Fetch chapter text directly from Storage using the deterministic
-    {book_id}/{chapter_id}.txt path — no DB round-trip. Returns "" if missing."""
+    {book_id}/{chapter_id}.txt path — no DB round-trip. Returns "" if missing.
+    Pass the row's updated_at as `version` when available (CDN cache-bust)."""
     path = chapter_text_path(book_id, chapter_id)
     try:
-        return await download_chapter_text(path)
+        return await download_chapter_text(path, version)
     except Exception as e:
         logger.warning(f"Storage download failed for chapter {chapter_id} ({path}): {e}")
         return ""

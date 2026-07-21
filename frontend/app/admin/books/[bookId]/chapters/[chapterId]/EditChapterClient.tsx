@@ -420,7 +420,14 @@ export default function EditChapterClient() {
           updated.updated_at ?? undefined,
         );
         queryClient.invalidateQueries({ queryKey: ["chapter", chapterId] });
-        queryClient.invalidateQueries({ queryKey: ["chapterText", chapterId] });
+        // Seed the text query with what the server just acknowledged instead
+        // of refetching — a refetch can race a still-propagating storage
+        // write/CDN and clobber the textarea with the pre-edit text.
+        queryClient.setQueryData(["chapterText", chapterId], {
+          id: chapterId,
+          text_content: textContent.trim(),
+          updated_at: updated.updated_at ?? "",
+        });
         queryClient.invalidateQueries({ queryKey: ["chapters", bookId] });
         setSaveSuccess(true);
       }

@@ -59,7 +59,7 @@ def _download_http1(path: str) -> bytes:
     Objects are stored with Content-Type application/gzip and NO Content-Encoding,
     so httpx returns the raw gzip bytes (no auto-decompression)."""
     def _do() -> bytes:
-        resp = ss._get_upload_client().get(f"/object/{CHAPTER_TEXT_BUCKET}/{path}")
+        resp = ss._get_direct_client().get(f"/object/{CHAPTER_TEXT_BUCKET}/{path}")
         if resp.status_code >= 400:
             raise ss.StorageUploadError(resp.status_code, resp.text, CHAPTER_TEXT_BUCKET, path)
         return resp.content
@@ -152,7 +152,7 @@ def main() -> None:
         f" | book={args.book_id}" if args.book_id else "",
     )
     ss._get_storage()        # warm singletons before threads race for them
-    ss._get_upload_client()
+    ss._get_direct_client()
 
     logger.info("Enumerating objects…")
     objects = list(list_objects(args.book_id))

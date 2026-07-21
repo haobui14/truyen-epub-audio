@@ -130,7 +130,7 @@ async def download_book_epub(book_id: str):
     fetch_offset = 0
     while True:
         page = db.table("chapters").select(
-            "id,chapter_index,title"
+            "id,chapter_index,title,updated_at"
         ).eq("book_id", book_id).order("chapter_index").range(
             fetch_offset, fetch_offset + PAGE_SIZE - 1
         ).execute()
@@ -149,7 +149,9 @@ async def download_book_epub(book_id: str):
 
     async def _fetch_text(ch: dict) -> str:
         async with sem:
-            return await storage_service.get_chapter_text_by_ids(book_id, ch["id"])
+            return await storage_service.get_chapter_text_by_ids(
+                book_id, ch["id"], ch.get("updated_at")
+            )
 
     texts = await asyncio.gather(*(_fetch_text(ch) for ch in chapters))
 
@@ -353,7 +355,9 @@ async def strip_string_from_chapters(
 
     async def _strip_one(ch: dict) -> bool:
         async with sem:
-            text = await storage_service.get_chapter_text_by_ids(book_id, ch["id"])
+            text = await storage_service.get_chapter_text_by_ids(
+                book_id, ch["id"], ch.get("updated_at")
+            )
             if target not in text:
                 return False
             new_text = text.replace(target, "")
@@ -368,7 +372,7 @@ async def strip_string_from_chapters(
 
     fetch_offset = 0
     while True:
-        page = db.table("chapters").select("id").eq("book_id", book_id).order(
+        page = db.table("chapters").select("id,updated_at").eq("book_id", book_id).order(
             "chapter_index"
         ).range(fetch_offset, fetch_offset + PAGE_SIZE - 1).execute()
         batch = page.data or []
@@ -750,7 +754,7 @@ async def auto_split_book(
     fetch_offset = 0
     while True:
         page = db.table("chapters").select(
-            "id,chapter_index"
+            "id,chapter_index,updated_at"
         ).eq("book_id", book_id).order("chapter_index").range(
             fetch_offset, fetch_offset + PAGE_SIZE - 1
         ).execute()
@@ -770,7 +774,9 @@ async def auto_split_book(
 
     async def _fetch_text(ch: dict) -> str:
         async with dl_sem:
-            return await storage_service.get_chapter_text_by_ids(book_id, ch["id"])
+            return await storage_service.get_chapter_text_by_ids(
+                book_id, ch["id"], ch.get("updated_at")
+            )
 
     chapter_texts = await asyncio.gather(*(_fetch_text(ch) for ch in chapters))
 

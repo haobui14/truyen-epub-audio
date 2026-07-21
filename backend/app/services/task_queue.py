@@ -54,13 +54,15 @@ async def _process_chapter(book_id: str, chapter_id: str) -> None:
 
     try:
         # Fetch chapter row (status check) and text from Storage
-        result = db.table("chapters").select("title,status").eq("id", chapter_id).single().execute()
+        result = db.table("chapters").select("title,status,updated_at").eq("id", chapter_id).single().execute()
         chapter = result.data
 
         if not chapter or chapter.get("status") == "ready":
             return
 
-        text = await storage_service.get_chapter_text_by_ids(book_id, chapter_id)
+        text = await storage_service.get_chapter_text_by_ids(
+            book_id, chapter_id, chapter.get("updated_at")
+        )
         if not text:
             _mark_chapter_error(chapter_id, "No text content")
             return
