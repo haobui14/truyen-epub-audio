@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { isReaderRoute } from "@/lib/readerRoute";
 import { getUser, clearAuth, isAdmin as checkAdmin } from "@/lib/auth";
 import type { AuthUser } from "@/lib/auth";
 
@@ -74,6 +75,12 @@ export function BottomNav() {
   const btnCls = `flex-1 flex flex-col items-center justify-center gap-0.5 py-1 text-[10px] font-medium tracking-wide transition-colors ${
     profileActive ? "text-accent" : "text-text-faint"
   }`;
+
+  // The reader hides the tab bar: it has its own back button in the header and
+  // its own bottom bar for chapter navigation, and both used to sit at
+  // `fixed bottom-0 z-30` — the chapter bar was rendered underneath this one
+  // and never visible. Placed after every hook so hook order stays stable.
+  if (isReaderRoute(pathname)) return null;
 
   return (
     <>

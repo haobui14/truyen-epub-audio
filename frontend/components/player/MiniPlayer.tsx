@@ -1,12 +1,20 @@
 "use client";
 import Link from "next/link";
 import Image from "next/image";
+import { usePathname } from "next/navigation";
 import { usePlayerContext } from "@/context/PlayerContext";
+import { isReaderRoute } from "@/lib/readerRoute";
 import { Spinner } from "@/components/ui/Spinner";
 
 export function MiniPlayer() {
   const { track, isPlaying, isBuffering, progress, toggle, nativeChapterOverride } =
     usePlayerContext();
+  const pathname = usePathname();
+  // While reading, this bar is competing with the text: it drops the heavy
+  // drop-shadow and the glowing progress line, gets shorter, and sits above
+  // the reader's own chapter bar (the tab bar it normally clears is hidden
+  // there, so the usual 3.5rem offset would leave it floating).
+  const reading = isReaderRoute(pathname);
 
   // Render even with NO track when the native service holds a session — a
   // cold start lands on the home page with audio possibly still playing (or a
@@ -36,17 +44,29 @@ export function MiniPlayer() {
 
   return (
     <div
-      className="fixed left-0 right-0 z-50 bg-raised/95 backdrop-blur-lg border-t border-hairline shadow-[0_-12px_32px_rgba(0,0,0,0.45)]"
-      style={{ bottom: "calc(3.5rem + var(--sab))" }}
+      className={`fixed left-0 right-0 z-50 bg-raised/95 backdrop-blur-lg border-t border-hairline ${
+        reading ? "shadow-none" : "shadow-[0_-12px_32px_rgba(0,0,0,0.45)]"
+      }`}
+      style={{
+        bottom: reading
+          ? "calc(4.25rem + var(--sab))"
+          : "calc(3.5rem + var(--sab))",
+      }}
     >
       <div className="h-[2px] bg-hairline-soft">
         <div
-          className="h-full bg-accent transition-all duration-300 shadow-[0_0_10px_var(--color-accent-glow)]"
+          className={`h-full bg-accent transition-all duration-300 ${
+            reading ? "" : "shadow-[0_0_10px_var(--color-accent-glow)]"
+          }`}
           style={{ width: `${progressPct}%` }}
         />
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center gap-3">
+      <div
+        className={`max-w-7xl mx-auto px-4 sm:px-6 flex items-center gap-3 ${
+          reading ? "h-12" : "h-16"
+        }`}
+      >
         <Link href={listenUrl} className="shrink-0">
           <div className="w-10 h-10 rounded-md overflow-hidden bg-raised-hi ring-1 ring-hairline">
             {coverUrl ? (
