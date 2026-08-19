@@ -152,7 +152,10 @@ def _chapters_to_epub(
             file_name=f"chapter_{i + 1:04d}.xhtml",
             lang="vi",
         )
-        item.set_content(html)
+        # MUST be bytes. ebooklib >=0.18 silently drops str content — the chapter
+        # files are still written into the archive, but at zero length, so the
+        # EPUB looks structurally valid and then parses to "no readable chapters".
+        item.set_content(html.encode("utf-8"))
         book.add_item(item)
         epub_chapters.append(item)
         toc.append(epub.Link(f"chapter_{i + 1:04d}.xhtml", ch["title"], f"chap{i + 1}"))

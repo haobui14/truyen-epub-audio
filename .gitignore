@@ -59,3 +59,6 @@ frontend/android/app/debug/
 # sensitive) — committed so every machine signs debug builds identically.
 # See build.gradle's signingConfigs.debug comment.
 !frontend/android/app/debug.keystore
+
+# Book conversion working files (Chinese source, translated chapters)
+work/
