@@ -350,6 +350,12 @@ class StripStringRequest(BaseModel):
 # queue), so an in-process set is enough to reject the overlap.
 _strip_running: set[str] = set()
 
+# Auto-split deletes every chapter row and reinserts new ones, so two
+# overlapping runs on one book could interleave their deletes and inserts. The
+# admin UI gives up before the server does on a big book, and the natural
+# reaction is to press the button again.
+_autosplit_running: set[str] = set()
+
 
 def _build_strip_pattern(body: StripStringRequest) -> "re.Pattern[str]":
     try:
@@ -831,7 +837,11 @@ async def auto_split_book(
 
     Returns old_count, new_count, and any chapters whose header had no body.
     """
-    from app.services.epub_parser import split_text_by_headers
+    from app.services.epub_parser import (
+        split_text_by_headers,
+        merge_short_chapters,
+        MIN_CHAPTER_WORDS,
+    )
     import asyncio
     import uuid as _uuid
 
@@ -840,168 +850,194 @@ async def auto_split_book(
     if not book.data:
         raise HTTPException(status_code=404, detail="Book not found")
 
-    # Fetch ALL chapters in reading order using pagination.
-    # PostgREST enforces a server-side max_rows cap (default 1000 on Supabase)
-    # that ignores client-specified limits above it. Paginate to bypass this.
-    PAGE_SIZE = 500
-    chapters: list[dict] = []
-    fetch_offset = 0
-    while True:
-        page = db.table("chapters").select(
-            "id,chapter_index,updated_at"
-        ).eq("book_id", book_id).order("chapter_index").range(
-            fetch_offset, fetch_offset + PAGE_SIZE - 1
-        ).execute()
-        batch = page.data or []
-        chapters.extend(batch)
-        if len(batch) < PAGE_SIZE:
-            break
-        fetch_offset += PAGE_SIZE
-    old_count = len(chapters)
-    if not chapters:
-        raise HTTPException(status_code=400, detail="No chapters to split")
-
-    # Download text for each chapter from Storage in parallel.
-    # See storage_service.STORAGE_CONCURRENCY for why this is capped low.
-    DOWNLOAD_CONCURRENCY = 8
-    dl_sem = asyncio.Semaphore(DOWNLOAD_CONCURRENCY)
-
-    async def _fetch_text(ch: dict) -> str:
-        async with dl_sem:
-            return await storage_service.get_chapter_text_by_ids(
-                book_id, ch["id"], ch.get("updated_at")
-            )
-
-    chapter_texts = await asyncio.gather(*(_fetch_text(ch) for ch in chapters))
-
-    # Merge every chapter's text in reading order, then split by headers.
-    combined = "\n".join(chapter_texts)
-    parts = split_text_by_headers(combined)
-
-    if not parts:
-        raise HTTPException(status_code=400, detail="No chapter headers detected in text")
-
-    missing_chapters = [
-        {"title": p["title"], "chapter_index": i}
-        for i, p in enumerate(parts)
-        if not p["has_body"]
-    ]
-
-    # Build new chapter rows with pre-generated UUIDs. Use a large offset
-    # (1_000_000 + i) so the temporary indices don't collide with existing rows.
-    OFFSET = 1_000_000
-    new_chapters = [
-        {
-            "id": str(_uuid.uuid4()),
-            "book_id": book_id,
-            "chapter_index": OFFSET + i,
-            "title": p["title"],
-            "word_count": len(p["text_content"].split()),
-            "status": "pending",
-            "_text": p["text_content"],
-        }
-        for i, p in enumerate(parts)
-    ]
-
-    # Upload each new chapter's text to Storage in parallel.
-    up_sem = asyncio.Semaphore(8)
-
-    async def _upload_one(ch: dict) -> None:
-        async with up_sem:
-            ch["text_storage_path"] = await storage_service.upload_chapter_text(
-                book_id, ch["id"], ch["_text"]
-            )
-
-    await asyncio.gather(*(_upload_one(ch) for ch in new_chapters))
-    # Strip the in-memory _text field before insert (not a column).
-    insert_rows = [{k: v for k, v in ch.items() if k != "_text"} for ch in new_chapters]
-
-    # Clean up any orphaned offset-indexed chapters from a previous failed split
-    # attempt. Without this, re-running auto-split hits a unique constraint on
-    # (book_id, chapter_index) because those rows were never normalized/deleted.
-    try:
-        db.table("chapters").delete().eq("book_id", book_id).gte("chapter_index", OFFSET).execute()
-    except Exception:
-        pass
-
-    # INSERT new rows first. If this fails (e.g. DB timeout) the old chapters
-    # are still intact and the book is not left empty. Rows now only carry
-    # text_storage_path — the heavy text lives in Storage — so larger batches
-    # are safe.
-    BATCH_SIZE = 100
-    inserted_ids: list[str] = []
-    try:
-        for i in range(0, len(insert_rows), BATCH_SIZE):
-            db.table("chapters").insert(insert_rows[i : i + BATCH_SIZE]).execute()
-            inserted_ids.extend(ch["id"] for ch in insert_rows[i : i + BATCH_SIZE])
-    except Exception as insert_err:
-        # Roll back any rows we managed to insert before the failure
-        if inserted_ids:
-            try:
-                db.table("chapters").delete().eq("book_id", book_id).gte("chapter_index", OFFSET).execute()
-            except Exception:
-                pass
+    if book_id in _autosplit_running:
         raise HTTPException(
-            status_code=500,
-            detail=f"Failed to insert new chapters (no data was lost): {insert_err}",
+            status_code=409,
+            detail="Lần tách trước cho truyện này vẫn đang chạy — đợi nó xong rồi thử lại.",
         )
 
-    # Only now that new chapters are safely stored: delete old chapters' audio + text.
-    # Fan out per-chapter deletes — best effort, capped concurrency.
-    chapter_ids = [ch["id"] for ch in chapters]
-    del_sem = asyncio.Semaphore(8)
-
-    async def _delete_old(ch: dict) -> None:
-        async with del_sem:
-            try:
-                await storage_service.delete_path("audio", f"{book_id}/{ch['id']}.mp3")
-            except Exception:
-                pass
-            try:
-                await storage_service.delete_chapter_text(book_id, ch["id"])
-            except Exception:
-                pass
-
-    await asyncio.gather(*(_delete_old(ch) for ch in chapters))
-    # Delete only the chapters we actually fetched and processed, in batches of
-    # 100 to stay within URL length limits (each UUID is ~36 chars).
-    DELETE_BATCH = 100
-    for i in range(0, len(chapter_ids), DELETE_BATCH):
-        db.table("chapters").delete().in_("id", chapter_ids[i : i + DELETE_BATCH]).execute()
-
-    # Normalize chapter_index back to 0-based now that old rows are gone.
-    # Prefer the single-statement RPC (normalize_chapter_offset); if it's not
-    # deployed yet (older schema), fall back to parallel per-row updates.
+    # Registered for the whole run so a retry after the client gives up is
+    # rejected rather than starting a second delete-and-reinsert pass.
+    _autosplit_running.add(book_id)
     try:
-        await asyncio.to_thread(
-            lambda: db.rpc("normalize_chapter_offset", {
-                "p_book_id": book_id,
-                "p_offset": OFFSET,
-            }).execute()
-        )
-    except Exception as rpc_err:
-        # Fallback: N parallel UPDATEs via thread pool.
-        norm_sem = asyncio.Semaphore(20)
+        # Fetch ALL chapters in reading order using pagination.
+        # PostgREST enforces a server-side max_rows cap (default 1000 on Supabase)
+        # that ignores client-specified limits above it. Paginate to bypass this.
+        PAGE_SIZE = 500
+        chapters: list[dict] = []
+        fetch_offset = 0
+        while True:
+            page = db.table("chapters").select(
+                "id,chapter_index,updated_at"
+            ).eq("book_id", book_id).order("chapter_index").range(
+                fetch_offset, fetch_offset + PAGE_SIZE - 1
+            ).execute()
+            batch = page.data or []
+            chapters.extend(batch)
+            if len(batch) < PAGE_SIZE:
+                break
+            fetch_offset += PAGE_SIZE
+        old_count = len(chapters)
+        if not chapters:
+            raise HTTPException(status_code=400, detail="No chapters to split")
 
-        async def _renumber_one(ch: dict) -> None:
-            real_index = ch["chapter_index"] - OFFSET
-            async with norm_sem:
-                await asyncio.to_thread(
-                    lambda: db.table("chapters").update(
-                        {"chapter_index": real_index}
-                    ).eq("id", ch["id"]).execute()
+        # Download text for each chapter from Storage in parallel.
+        # See storage_service.STORAGE_CONCURRENCY for why this is capped low.
+        DOWNLOAD_CONCURRENCY = 8
+        dl_sem = asyncio.Semaphore(DOWNLOAD_CONCURRENCY)
+
+        async def _fetch_text(ch: dict) -> str:
+            async with dl_sem:
+                return await storage_service.get_chapter_text_by_ids(
+                    book_id, ch["id"], ch.get("updated_at")
                 )
 
-        await asyncio.gather(*(_renumber_one(ch) for ch in new_chapters))
+        chapter_texts = await asyncio.gather(*(_fetch_text(ch) for ch in chapters))
 
-    new_count = len(new_chapters)
-    db.table("books").update({"total_chapters": new_count}).eq("id", book_id).execute()
+        # Merge every chapter's text in reading order, then split by headers.
+        combined = "\n".join(chapter_texts)
+        parts = split_text_by_headers(combined)
 
-    return {
-        "old_count": old_count,
-        "new_count": new_count,
-        "missing_chapters": missing_chapters,
-    }
+        if not parts:
+            raise HTTPException(status_code=400, detail="No chapter headers detected in text")
+
+        missing_chapters = [
+            {"title": p["title"], "chapter_index": i}
+            for i, p in enumerate(parts)
+            if not p["has_body"]
+        ]
+
+        # Same floor as the ingest path: a contents or glossary page is a run of
+        # "Chương N" lines that split_text_by_headers turns into one part each, so
+        # without this a 200-line contents page becomes 200 chapters. Doing it here
+        # matters more than at upload — this endpoint deletes the existing rows, so
+        # the damage takes reading progress and XP with it.
+        prelim, merged_short = merge_short_chapters(
+            [{"title": p["title"], "text_content": p["text_content"]} for p in parts]
+        )
+        if merged_short:
+            logger.info(
+                "Auto-split %s: merged %d entries under %d words into the preceding chapter",
+                book_id, merged_short, MIN_CHAPTER_WORDS,
+            )
+
+        # Build new chapter rows with pre-generated UUIDs. Use a large offset
+        # (1_000_000 + i) so the temporary indices don't collide with existing rows.
+        OFFSET = 1_000_000
+        new_chapters = [
+            {
+                "id": str(_uuid.uuid4()),
+                "book_id": book_id,
+                "chapter_index": OFFSET + i,
+                "title": p["title"],
+                "word_count": p["word_count"],
+                "status": "pending",
+                "_text": p["text_content"],
+            }
+            for i, p in enumerate(prelim)
+        ]
+
+        # Upload each new chapter's text to Storage in parallel.
+        up_sem = asyncio.Semaphore(8)
+
+        async def _upload_one(ch: dict) -> None:
+            async with up_sem:
+                ch["text_storage_path"] = await storage_service.upload_chapter_text(
+                    book_id, ch["id"], ch["_text"]
+                )
+
+        await asyncio.gather(*(_upload_one(ch) for ch in new_chapters))
+        # Strip the in-memory _text field before insert (not a column).
+        insert_rows = [{k: v for k, v in ch.items() if k != "_text"} for ch in new_chapters]
+
+        # Clean up any orphaned offset-indexed chapters from a previous failed split
+        # attempt. Without this, re-running auto-split hits a unique constraint on
+        # (book_id, chapter_index) because those rows were never normalized/deleted.
+        try:
+            db.table("chapters").delete().eq("book_id", book_id).gte("chapter_index", OFFSET).execute()
+        except Exception:
+            pass
+
+        # INSERT new rows first. If this fails (e.g. DB timeout) the old chapters
+        # are still intact and the book is not left empty. Rows now only carry
+        # text_storage_path — the heavy text lives in Storage — so larger batches
+        # are safe.
+        BATCH_SIZE = 100
+        inserted_ids: list[str] = []
+        try:
+            for i in range(0, len(insert_rows), BATCH_SIZE):
+                db.table("chapters").insert(insert_rows[i : i + BATCH_SIZE]).execute()
+                inserted_ids.extend(ch["id"] for ch in insert_rows[i : i + BATCH_SIZE])
+        except Exception as insert_err:
+            # Roll back any rows we managed to insert before the failure
+            if inserted_ids:
+                try:
+                    db.table("chapters").delete().eq("book_id", book_id).gte("chapter_index", OFFSET).execute()
+                except Exception:
+                    pass
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to insert new chapters (no data was lost): {insert_err}",
+            )
+
+        # Only now that new chapters are safely stored: delete old chapters' audio + text.
+        # Fan out per-chapter deletes — best effort, capped concurrency.
+        chapter_ids = [ch["id"] for ch in chapters]
+        del_sem = asyncio.Semaphore(8)
+
+        async def _delete_old(ch: dict) -> None:
+            async with del_sem:
+                try:
+                    await storage_service.delete_path("audio", f"{book_id}/{ch['id']}.mp3")
+                except Exception:
+                    pass
+                try:
+                    await storage_service.delete_chapter_text(book_id, ch["id"])
+                except Exception:
+                    pass
+
+        await asyncio.gather(*(_delete_old(ch) for ch in chapters))
+        # Delete only the chapters we actually fetched and processed, in batches of
+        # 100 to stay within URL length limits (each UUID is ~36 chars).
+        DELETE_BATCH = 100
+        for i in range(0, len(chapter_ids), DELETE_BATCH):
+            db.table("chapters").delete().in_("id", chapter_ids[i : i + DELETE_BATCH]).execute()
+
+        # Normalize chapter_index back to 0-based now that old rows are gone.
+        # Prefer the single-statement RPC (normalize_chapter_offset); if it's not
+        # deployed yet (older schema), fall back to parallel per-row updates.
+        try:
+            await asyncio.to_thread(
+                lambda: db.rpc("normalize_chapter_offset", {
+                    "p_book_id": book_id,
+                    "p_offset": OFFSET,
+                }).execute()
+            )
+        except Exception as rpc_err:
+            # Fallback: N parallel UPDATEs via thread pool.
+            norm_sem = asyncio.Semaphore(20)
+
+            async def _renumber_one(ch: dict) -> None:
+                real_index = ch["chapter_index"] - OFFSET
+                async with norm_sem:
+                    await asyncio.to_thread(
+                        lambda: db.table("chapters").update(
+                            {"chapter_index": real_index}
+                        ).eq("id", ch["id"]).execute()
+                    )
+
+            await asyncio.gather(*(_renumber_one(ch) for ch in new_chapters))
+
+        new_count = len(new_chapters)
+        db.table("books").update({"total_chapters": new_count}).eq("id", book_id).execute()
+
+        return {
+            "old_count": old_count,
+            "new_count": new_count,
+            "missing_chapters": missing_chapters,
+        }
+    finally:
+        _autosplit_running.discard(book_id)
 
 
 @router.post("/{book_id}/chapters", response_model=ChapterResponse, status_code=201)

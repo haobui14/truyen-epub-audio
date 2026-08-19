@@ -535,12 +535,22 @@ export const api = {
       body: JSON.stringify(data),
     }),
   // Admin: join all chapters and re-split by Chương/Chapter headers
-  autoSplitBook: (bookId: string) =>
-    request<{
+  // Admin: re-split a book by chapter headers. Rewrites every chapter through
+  // Storage, so on a big book it runs for minutes — REQUEST_TIMEOUT_MS would
+  // abort the client while the server carried on deleting and reinserting
+  // rows. Own signal with a bulk-sized budget, same as stripStringFromChapters.
+  autoSplitBook: (bookId: string) => {
+    const ctrl = new AbortController();
+    const timeoutId = setTimeout(() => ctrl.abort(), 600_000);
+    return request<{
       old_count: number;
       new_count: number;
       missing_chapters: Array<{ title: string; chapter_index: number }>;
-    }>(`/api/books/${bookId}/auto-split`, { method: "POST" }),
+    }>(`/api/books/${bookId}/auto-split`, {
+      method: "POST",
+      signal: ctrl.signal,
+    }).finally(() => clearTimeout(timeoutId));
+  },
 
   // Admin: re-run the EPUB parser against the original file in epub-uploads.
   // Wipes existing chapters + audio first. Returns immediately; parsing runs
