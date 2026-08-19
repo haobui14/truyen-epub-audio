@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 from typing import Optional
 from pydantic import BaseModel
 from app.database import get_client
-from app.dependencies import get_admin_user
+from app.dependencies import get_admin_user, get_approved_user
 from app.models.chapter import ChapterResponse, AudioSummary
 from app.config import settings
 from app.services import storage_service
@@ -30,7 +30,10 @@ async def get_chapter(chapter_id: str):
 
 
 @router.get("/chapters/{chapter_id}/text")
-async def get_chapter_text(chapter_id: str):
+async def get_chapter_text(
+    chapter_id: str,
+    _user: dict = Depends(get_approved_user),
+):
     db = get_client()
     result = db.table("chapters").select("id,updated_at").eq("id", chapter_id).maybe_single().execute()
     if not result.data:
@@ -46,7 +49,10 @@ async def get_chapter_text(chapter_id: str):
 
 
 @router.get("/audio/{chapter_id}")
-async def get_audio(chapter_id: str):
+async def get_audio(
+    chapter_id: str,
+    _user: dict = Depends(get_approved_user),
+):
     db = get_client()
     result = db.table("chapters").select(
         "id,book_id,audio_url,audio_storage_path,audio_duration_seconds,audio_file_size_bytes,created_at"

@@ -1,4 +1,5 @@
 import logging
+import re
 
 from fastapi import APIRouter, HTTPException, Query, Depends, Response, UploadFile, File, Form
 from typing import List, Optional
@@ -6,10 +7,10 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.database import get_client
-from app.dependencies import get_admin_user
+from app.dependencies import get_admin_user, get_approved_user
 from app.models.book import BookResponse
 from app.models.chapter import ChapterResponse, AudioSummary, PaginatedChaptersResponse
-from app.services import storage_service
+from app.services import storage_service, text_cleanup
 
 router = APIRouter(prefix="/api/books", tags=["books"])
 logger = logging.getLogger(__name__)
@@ -95,14 +96,17 @@ async def get_book_chapters(
 
 
 @router.get("/{book_id}/epub")
-async def download_book_epub(book_id: str):
+async def download_book_epub(
+    book_id: str,
+    _user: dict = Depends(get_approved_user),
+):
     """Generate an EPUB of the book from its CURRENT chapters and return it as
     a file download. Built from chapter-text Storage rather than the stored
     original, so it reflects every edit/append/split, works for books uploaded
     as PDF/TXT/MOBI, and survives the original upload having been cleaned up.
 
-    Public — the same content is already readable chapter-by-chapter without
-    auth via GET /api/chapters/{id}/text."""
+    Requires an approved account, same as reading a chapter — this hands over
+    the whole book in one file, so leaving it open would defeat the gate."""
     import asyncio
     import re
     import unicodedata
@@ -326,6 +330,34 @@ async def feature_book(
 
 class StripStringRequest(BaseModel):
     target: str
+    # Treat target as a regular expression instead of a literal string. Needed
+    # for machine-translated site watermarks, which come out slightly different
+    # in every chapter (one book had 137 variants of the same promo line).
+    regex: bool = False
+    # Delete the whole LINE containing a match, not just the match itself.
+    # Watermarks sit on their own paragraph — removing only the matched
+    # fragment would leave a mangled leftover sentence behind.
+    whole_line: bool = False
+    # Count matches without writing anything. Always preview first: an exact
+    # string that matches nothing looks identical to a successful run.
+    dry_run: bool = False
+
+
+# A bulk strip walks every chapter of the book through Storage, so on a big
+# book it runs for minutes. If the admin's browser gives up first and they
+# click again, a second full pass used to start on top of the first one,
+# doubling Storage load. Single uvicorn worker (same assumption as the TTS
+# queue), so an in-process set is enough to reject the overlap.
+_strip_running: set[str] = set()
+
+
+def _build_strip_pattern(body: StripStringRequest) -> "re.Pattern[str]":
+    try:
+        return text_cleanup.build_pattern(body.target, body.regex)
+    except re.error as e:
+        raise HTTPException(
+            status_code=400, detail=f"Biểu thức chính quy không hợp lệ: {e}"
+        )
 
 
 @router.post("/{book_id}/strip-string")
@@ -334,57 +366,119 @@ async def strip_string_from_chapters(
     body: StripStringRequest,
     _admin: dict = Depends(get_admin_user),
 ):
-    """Remove every occurrence of a literal string from all chapters' text."""
+    """Remove a literal string (or regex match) from every chapter's text."""
     import asyncio
     if not body.target:
         raise HTTPException(status_code=400, detail="target string cannot be empty")
+
+    pattern = _build_strip_pattern(body)
 
     db = get_client()
     book = db.table("books").select("id").eq("id", book_id).maybe_single().execute()
     if not book.data:
         raise HTTPException(status_code=404, detail="Book not found")
 
+    if not body.dry_run and book_id in _strip_running:
+        raise HTTPException(
+            status_code=409,
+            detail="Lần xóa trước cho truyện này vẫn đang chạy — đợi nó xong rồi thử lại.",
+        )
+
     # Paginate through all chapters; for each, download text from Storage,
-    # remove every occurrence of target, re-upload + update word_count.
+    # strip matches, re-upload + update word_count.
     PAGE_SIZE = 500
     # Keep storage fan-out low — see storage_service.STORAGE_CONCURRENCY note.
     CONCURRENCY = 8
     sem = asyncio.Semaphore(CONCURRENCY)
-    target = body.target
-    updated_count = 0
+    scanned = matched = occurrences = updated_count = failed_count = 0
+    samples: list[str] = []
+    first_error: str | None = None
 
-    async def _strip_one(ch: dict) -> bool:
+    async def _strip_one(ch: dict) -> int:
+        """Returns occurrences removed (0 = chapter untouched)."""
+        nonlocal matched, occurrences
         async with sem:
             text = await storage_service.get_chapter_text_by_ids(
                 book_id, ch["id"], ch.get("updated_at")
             )
-            if target not in text:
-                return False
-            new_text = text.replace(target, "")
+            if not text:
+                return 0
+            new_text, hits, removed = text_cleanup.apply_strip(
+                text, pattern, body.whole_line
+            )
+            if not hits:
+                return 0
+            matched += 1
+            occurrences += hits
+            if len(samples) < 8:
+                samples.extend(removed[: 8 - len(samples)])
+            if body.dry_run:
+                return hits
             new_word_count = len(new_text.split()) if new_text.strip() else 0
-            await storage_service.write_chapter_text(book_id, ch["id"], new_text)
+            path = await storage_service.upload_chapter_text(
+                book_id, ch["id"], new_text
+            )
+            # Single row update for path + word_count (write_chapter_text plus a
+            # second update doubled the DB round-trips across hundreds of
+            # chapters). The updated_at trigger still fires, so offline caches
+            # and the CDN version key pick up the edit.
             await asyncio.to_thread(
                 lambda: db.table("chapters").update({
+                    "text_storage_path": path,
                     "word_count": new_word_count,
                 }).eq("id", ch["id"]).execute()
             )
-            return True
+            return hits
 
-    fetch_offset = 0
-    while True:
-        page = db.table("chapters").select("id,updated_at").eq("book_id", book_id).order(
-            "chapter_index"
-        ).range(fetch_offset, fetch_offset + PAGE_SIZE - 1).execute()
-        batch = page.data or []
-        if not batch:
-            break
-        results = await asyncio.gather(*(_strip_one(ch) for ch in batch))
-        updated_count += sum(1 for r in results if r)
-        if len(batch) < PAGE_SIZE:
-            break
-        fetch_offset += PAGE_SIZE
+    if not body.dry_run:
+        _strip_running.add(book_id)
+    try:
+        fetch_offset = 0
+        while True:
+            page = db.table("chapters").select("id,updated_at").eq("book_id", book_id).order(
+                "chapter_index"
+            ).range(fetch_offset, fetch_offset + PAGE_SIZE - 1).execute()
+            batch = page.data or []
+            if not batch:
+                break
+            # return_exceptions: one chapter failing (Storage blip, row gone)
+            # must not abandon the other 499 and collapse the whole request
+            # into an opaque 500 — count it, log it, keep going.
+            results = await asyncio.gather(
+                *(_strip_one(ch) for ch in batch), return_exceptions=True
+            )
+            for ch, res in zip(batch, results):
+                scanned += 1
+                if isinstance(res, BaseException):
+                    failed_count += 1
+                    if first_error is None:
+                        first_error = f"{type(res).__name__}: {res}"
+                    logger.warning(
+                        "strip-string: chapter %s failed: %s", ch["id"], res
+                    )
+                elif res and not body.dry_run:
+                    updated_count += 1
+            logger.info(
+                "strip-string %s: scanned %d, matched %d, updated %d, failed %d%s",
+                book_id, scanned, matched, updated_count, failed_count,
+                " (dry run)" if body.dry_run else "",
+            )
+            if len(batch) < PAGE_SIZE:
+                break
+            fetch_offset += PAGE_SIZE
+    finally:
+        _strip_running.discard(book_id)
 
-    return {"updated_chapters": updated_count}
+    return {
+        "dry_run": body.dry_run,
+        "scanned_chapters": scanned,
+        "matched_chapters": matched,
+        "total_occurrences": occurrences,
+        "updated_chapters": updated_count,
+        "failed_chapters": failed_count,
+        "error_sample": first_error,
+        "samples": samples,
+    }
 
 
 @router.post("/{book_id}/reparse")

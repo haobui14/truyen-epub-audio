@@ -350,6 +350,52 @@ $$;
 -- unaffected. This closes the Supabase database linter warnings
 -- 0013_rls_disabled_in_public and 0023_sensitive_columns_exposed.
 
+-- ============================================================
+-- Admin approval gate for new accounts
+-- ============================================================
+-- New signups land as 'pending' and get no tokens back, so they cannot sign
+-- in until an admin approves them -- either in the admin UI (Người dùng) or by
+-- editing this column straight from the Supabase table editor. No email
+-- service is involved anywhere in the flow.
+--
+-- The backfill lives inside the DO block so it runs ONLY when the column is
+-- first created. Re-running this whole file (the normal way schema changes
+-- reach Supabase here) must never silently approve someone who is genuinely
+-- waiting for a decision.
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'users' AND column_name = 'approval_status'
+    ) THEN
+        ALTER TABLE users
+            ADD COLUMN approval_status TEXT NOT NULL DEFAULT 'pending'
+                CHECK (approval_status IN ('pending', 'approved', 'rejected')),
+            ADD COLUMN approval_decided_at TIMESTAMPTZ,
+            ADD COLUMN approval_decided_by UUID;
+        -- Everyone who already had an account keeps their access.
+        UPDATE users SET approval_status = 'approved', approval_decided_at = now();
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_users_approval_status ON users(approval_status);
+
+-- Signup audit log -- one row per account actually created. Survives the user
+-- row being deleted (ON DELETE SET NULL) so the registration history stays
+-- readable, and carries IP/user-agent for spotting bulk signup attempts.
+CREATE TABLE IF NOT EXISTS signup_log (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id    UUID REFERENCES users(id) ON DELETE SET NULL,
+    email      TEXT NOT NULL,
+    ip         TEXT,
+    user_agent TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_signup_log_created_at ON signup_log(created_at DESC);
+
+
 ALTER TABLE books            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE chapters         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE users            ENABLE ROW LEVEL SECURITY;
@@ -360,6 +406,7 @@ ALTER TABLE user_settings    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_stats       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE genres           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE book_genres      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE signup_log       ENABLE ROW LEVEL SECURITY;
 
 -- ============================================================
 -- Revoke discovery & RPC from anon / authenticated
@@ -379,7 +426,7 @@ ALTER TABLE book_genres      ENABLE ROW LEVEL SECURITY;
 REVOKE SELECT ON
     books, chapters, users, refresh_tokens,
     user_roles, user_progress, user_settings, user_stats,
-    genres, book_genres
+    genres, book_genres, signup_log
 FROM anon, authenticated;
 
 REVOKE EXECUTE ON FUNCTION

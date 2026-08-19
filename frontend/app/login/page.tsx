@@ -11,17 +11,25 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    setNotice("");
     setLoading(true);
     try {
-      const result =
-        mode === "login"
-          ? await api.login(email, password)
-          : await api.signup(email, password);
+      // Signing up no longer signs you in: the account is created pending an
+      // admin decision, so there is no session to store yet.
+      if (mode === "signup") {
+        const pending = await api.signup(email, password);
+        setNotice(pending.message);
+        setPassword("");
+        setMode("login");
+        return;
+      }
+      const result = await api.login(email, password);
       await setAuth(
         result.access_token,
         {
@@ -62,8 +70,8 @@ export default function LoginPage() {
         </h1>
         <p className="text-sm text-text-mute dark:text-text-mute mt-1">
           {mode === "login"
-            ? "Đăng nhập để lưu tiến trình đọc và nghe"
-            : "Tạo tài khoản mới để bắt đầu"}
+            ? "Đăng nhập để đọc và nghe truyện"
+            : "Tài khoản mới cần quản trị viên duyệt trước khi đăng nhập"}
         </p>
       </div>
 
@@ -103,6 +111,12 @@ export default function LoginPage() {
         {error && (
           <div className="text-sm text-vermillion dark:text-vermillion bg-vermillion/10 dark:bg-vermillion/30 px-3.5 py-2.5 rounded-xl">
             {error}
+          </div>
+        )}
+
+        {notice && (
+          <div className="text-sm text-accent dark:text-accent bg-accent/10 dark:bg-accent/20 px-3.5 py-2.5 rounded-xl">
+            {notice}
           </div>
         )}
 

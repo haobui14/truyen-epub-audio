@@ -25,6 +25,37 @@ export interface AppendChaptersResult {
   replaced_original: boolean;
 }
 
+// Result of POST /api/books/{id}/strip-string. dry_run reports what WOULD be
+// removed without writing — always preview first, because a target that
+// matches nothing is indistinguishable from a successful run.
+export interface StripStringResult {
+  dry_run: boolean;
+  scanned_chapters: number;
+  matched_chapters: number;
+  total_occurrences: number;
+  updated_chapters: number;
+  failed_chapters: number;
+  error_sample: string | null;
+  samples: string[];
+}
+
+// Signup returns no tokens: the account is created in a 'pending' state and an
+// admin has to approve it before the first sign-in is possible.
+export interface SignupResult {
+  status: string;
+  message: string;
+}
+
+// A row in the admin approval queue.
+export interface AdminUser {
+  id: string;
+  email: string;
+  display_name: string | null;
+  created_at: string;
+  approval_status: "pending" | "approved" | "rejected";
+  approval_decided_at: string | null;
+}
+
 // Per-request timeout. Generous enough to ride out a Railway cold start but
 // short enough that a truly dead request surfaces a retryable error instead of
 // an infinite spinner.
@@ -181,14 +212,18 @@ export const api = {
         featured_label: featured_label ?? null,
       }),
     }),
-  // URL of the generated EPUB export (public endpoint) — used directly on
-  // Android where DownloadManager must fetch it itself.
+  // URL of the generated EPUB export — used directly on Android, where
+  // DownloadManager fetches it itself and must be handed the bearer token
+  // separately (see TtsBridge.downloadFile).
   bookEpubUrl: (bookId: string) => `${API_URL}/api/books/${bookId}/epub`,
   // Fetch the generated EPUB as a Blob. Deliberately NOT request(): the file
   // is built on demand and can outlive REQUEST_TIMEOUT_MS on big books, and
   // the response is binary, not JSON.
   fetchBookEpub: async (bookId: string): Promise<Blob> => {
-    const res = await fetch(`${API_URL}/api/books/${bookId}/epub`);
+    const token = getToken();
+    const res = await fetch(`${API_URL}/api/books/${bookId}/epub`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
     if (!res.ok) {
       let detail = "";
       try {
@@ -417,17 +452,26 @@ export const api = {
       body: JSON.stringify({ email, password }),
     }),
   signup: (email: string, password: string) =>
-    request<{
-      access_token: string;
-      refresh_token?: string;
-      user_id: string;
-      email: string;
-      role: string;
-    }>("/api/auth/signup", {
+    request<SignupResult>("/api/auth/signup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
     }),
+
+  // Admin: the approval queue.
+  listUsers: () => request<AdminUser[]>("/api/auth/users"),
+  decideApproval: (
+    userId: string,
+    status: "approved" | "rejected" | "pending",
+  ) =>
+    request<{ id: string; approval_status: string }>(
+      `/api/auth/users/${userId}/approval`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      },
+    ),
   getMe: () =>
     request<{ id: string; email: string; role: string; display_name: string | null; avatar_base64: string | null }>("/api/auth/me"),
   updateProfile: (fields: { display_name?: string; avatar_base64?: string }) =>
@@ -507,13 +551,29 @@ export const api = {
       { method: "POST" },
     ),
 
-  // Admin: remove a literal string from all chapters' text_content
-  stripStringFromChapters: (bookId: string, target: string) =>
-    request<{ updated_chapters: number }>(`/api/books/${bookId}/strip-string`, {
+  // Admin: remove a literal string (or regex match) from all chapters' text.
+  // Rewrites every affected chapter in Storage, so on big books it runs for
+  // minutes — REQUEST_TIMEOUT_MS would abort it mid-flight. Own signal
+  // (request() then skips its default timeout) with a bulk-sized budget.
+  stripStringFromChapters: (
+    bookId: string,
+    target: string,
+    opts: { regex?: boolean; wholeLine?: boolean; dryRun?: boolean } = {},
+  ) => {
+    const ctrl = new AbortController();
+    const timeoutId = setTimeout(() => ctrl.abort(), 600_000);
+    return request<StripStringResult>(`/api/books/${bookId}/strip-string`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ target }),
-    }),
+      body: JSON.stringify({
+        target,
+        regex: opts.regex ?? false,
+        whole_line: opts.wholeLine ?? false,
+        dry_run: opts.dryRun ?? false,
+      }),
+      signal: ctrl.signal,
+    }).finally(() => clearTimeout(timeoutId));
+  },
 
   // Admin: manual chapter creation
   createChapter: (

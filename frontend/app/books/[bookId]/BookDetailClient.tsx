@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useSearchParams, useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { isLoggedIn, isAdmin } from "@/lib/auth";
+import { isLoggedIn, isAdmin, getToken } from "@/lib/auth";
 import { ChapterList } from "@/components/books/ChapterList";
 import { Spinner } from "@/components/ui/Spinner";
 import { GenreTag } from "@/components/books/GenreManager";
@@ -49,6 +49,9 @@ export default function BookDetailPage() {
     "idle",
   );
   const [epubError, setEpubError] = useState<string | null>(null);
+  // Shown when a guest taps a button whose endpoint now needs an approved
+  // account — friendlier than letting the request come back 401.
+  const [gateMsg, setGateMsg] = useState<string | null>(null);
 
   useEffect(() => {
     const sync = () => setAdmin(isAdmin());
@@ -176,6 +179,10 @@ export default function BookDetailPage() {
 
   async function handleDownloadBook() {
     if (dlProgress) return;
+    if (!isLoggedIn()) {
+      setGateMsg("Cần đăng nhập để tải truyện về máy");
+      return;
+    }
     // Re-triggerable: a chapter whose cached copy already matches the
     // server's current version is skipped near-instantly (see
     // canUseCachedChapterText below), so re-running this after the first
@@ -254,6 +261,10 @@ export default function BookDetailPage() {
   async function handleDownloadEpub() {
     if (epubState === "working") return;
     setEpubError(null);
+    if (!isLoggedIn()) {
+      setGateMsg("Cần đăng nhập để tải file EPUB");
+      return;
+    }
     const fileName =
       `${(book?.title ?? "").replace(/[\\/:*?"<>|]+/g, " ").trim() || "truyen"}.epub`;
 
@@ -262,7 +273,11 @@ export default function BookDetailPage() {
     if (isNativePlatform()) {
       const bridge = getTtsBridge();
       if (bridge?.downloadFile) {
-        bridge.downloadFile(api.bookEpubUrl(bookId), fileName);
+        bridge.downloadFile(
+          api.bookEpubUrl(bookId),
+          fileName,
+          getToken() ?? "",
+        );
         setEpubState("done");
       } else {
         setEpubError("Cần cập nhật ứng dụng để tải file EPUB");
@@ -673,6 +688,14 @@ export default function BookDetailPage() {
             )}
             {epubError && (
               <p className="text-xs text-vermillion text-center">{epubError}</p>
+            )}
+            {gateMsg && (
+              <p className="text-xs text-vermillion text-center">
+                {gateMsg} —{" "}
+                <Link href="/login" className="underline hover:text-accent">
+                  Đăng nhập
+                </Link>
+              </p>
             )}
           </div>
         ) : null}

@@ -1,9 +1,10 @@
 import asyncio
 import io
-from fastapi import APIRouter, HTTPException, Body
+from fastapi import APIRouter, HTTPException, Body, Depends
 from fastapi.responses import StreamingResponse
 from app.database import get_client
 from app.services import task_queue
+from app.dependencies import get_approved_user
 
 router = APIRouter(prefix="/api/tts", tags=["tts"])
 
@@ -131,7 +132,11 @@ async def speak_text(
 
 
 @router.get("/chapter-audio/{chapter_id}")
-async def chapter_full_audio(chapter_id: str, voice: str = "vi-VN-HoaiMyNeural"):
+async def chapter_full_audio(
+    chapter_id: str,
+    voice: str = "vi-VN-HoaiMyNeural",
+    _user: dict = Depends(get_approved_user),
+):
     """
     Return the full chapter as a single MP3 for offline caching.
 

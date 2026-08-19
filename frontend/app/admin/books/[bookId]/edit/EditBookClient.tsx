@@ -9,6 +9,7 @@ import {
   ACCEPTED_UPLOAD_EXTS,
   MAX_UPLOAD_MB,
   type AppendChaptersResult,
+  type StripStringResult,
 } from "@/lib/api";
 import { isAdmin, isAuthReady } from "@/lib/auth";
 import { ChapterList } from "@/components/books/ChapterList";
@@ -38,9 +39,35 @@ export default function EditBookClient() {
   const [reparseError, setReparseError] = useState<string | null>(null);
 
   const [stripTarget, setStripTarget] = useState("");
-  const [stripRunning, setStripRunning] = useState(false);
-  const [stripResult, setStripResult] = useState<{ updated_chapters: number } | null>(null);
+  const [stripRegex, setStripRegex] = useState(false);
+  const [stripWholeLine, setStripWholeLine] = useState(false);
+  const [stripRunning, setStripRunning] = useState<"preview" | "apply" | null>(null);
+  const [stripResult, setStripResult] = useState<StripStringResult | null>(null);
   const [stripError, setStripError] = useState<string | null>(null);
+
+  // Preview (dry run) and apply share one call — the only difference is whether
+  // the backend writes. Preview first: a target that matches nothing otherwise
+  // looks exactly like a successful strip.
+  const runStrip = async (mode: "preview" | "apply") => {
+    setStripRunning(mode);
+    setStripResult(null);
+    setStripError(null);
+    try {
+      const result = await api.stripStringFromChapters(bookId, stripTarget, {
+        regex: stripRegex,
+        wholeLine: stripWholeLine,
+        dryRun: mode === "preview",
+      });
+      setStripResult(result);
+      if (mode === "apply") {
+        queryClient.invalidateQueries({ queryKey: ["chapters", bookId] });
+      }
+    } catch (err) {
+      setStripError(err instanceof Error ? err.message : "Lỗi không xác định");
+    } finally {
+      setStripRunning(null);
+    }
+  };
 
   useEffect(() => {
     const checkAdmin = () => {
@@ -424,7 +451,9 @@ export default function EditBookClient() {
         </div>
         <div className="p-5 space-y-3">
           <p className="text-xs text-text-mute dark:text-text-mute">
-            Nhập chuỗi cần xóa (khớp chính xác) khỏi nội dung văn bản của mọi chương trong truyện.
+            Nhập chuỗi cần xóa khỏi nội dung văn bản của mọi chương trong truyện.
+            Bấm <span className="text-text dark:text-text">Xem trước</span> trước đã —
+            nó đếm số chương khớp mà không sửa gì.
           </p>
           <textarea
             rows={3}
@@ -433,35 +462,80 @@ export default function EditBookClient() {
             placeholder="Nhập chuỗi cần xóa…"
             className="w-full rounded-lg border border-hairline-soft dark:border-hairline bg-ink dark:bg-surface text-sm text-text dark:text-text px-3 py-2 focus:outline-none focus:ring-2 focus:ring-accent font-mono"
           />
-          <button
-            type="button"
-            disabled={stripRunning || !stripTarget}
-            onClick={async () => {
-              setStripRunning(true);
-              setStripResult(null);
-              setStripError(null);
-              try {
-                const result = await api.stripStringFromChapters(bookId, stripTarget);
-                setStripResult(result);
-                queryClient.invalidateQueries({ queryKey: ["chapters", bookId] });
-              } catch (err) {
-                setStripError(err instanceof Error ? err.message : "Lỗi không xác định");
-              } finally {
-                setStripRunning(false);
-              }
-            }}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-accent dark:text-accent border border-accent/40 dark:border-accent/40 rounded-lg hover:bg-accent/15 dark:hover:bg-accent/30 disabled:opacity-60 transition-colors"
-          >
-            {stripRunning && <Spinner className="w-4 h-4" />}
-            {stripRunning ? "Đang xóa…" : "Xóa chuỗi"}
-          </button>
+          <div className="flex flex-wrap gap-4">
+            <label className="flex items-center gap-2 text-xs text-text-mute dark:text-text-mute cursor-pointer">
+              <input
+                type="checkbox"
+                checked={stripRegex}
+                onChange={(e) => { setStripRegex(e.target.checked); setStripResult(null); setStripError(null); }}
+                className="accent-accent"
+              />
+              Dùng regex (khớp nhiều biến thể)
+            </label>
+            <label className="flex items-center gap-2 text-xs text-text-mute dark:text-text-mute cursor-pointer">
+              <input
+                type="checkbox"
+                checked={stripWholeLine}
+                onChange={(e) => { setStripWholeLine(e.target.checked); setStripResult(null); setStripError(null); }}
+                className="accent-accent"
+              />
+              Xóa cả dòng chứa chuỗi
+            </label>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={!!stripRunning || !stripTarget}
+              onClick={() => runStrip("preview")}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-text dark:text-text border border-hairline-soft dark:border-hairline rounded-lg hover:bg-raised/60 dark:hover:bg-raised disabled:opacity-60 transition-colors"
+            >
+              {stripRunning === "preview" && <Spinner className="w-4 h-4" />}
+              {stripRunning === "preview" ? "Đang quét…" : "Xem trước"}
+            </button>
+            <button
+              type="button"
+              disabled={!!stripRunning || !stripTarget}
+              onClick={() => runStrip("apply")}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-accent dark:text-accent border border-accent/40 dark:border-accent/40 rounded-lg hover:bg-accent/15 dark:hover:bg-accent/30 disabled:opacity-60 transition-colors"
+            >
+              {stripRunning === "apply" && <Spinner className="w-4 h-4" />}
+              {stripRunning === "apply" ? "Đang xóa…" : "Xóa chuỗi"}
+            </button>
+          </div>
           {stripError && (
             <p className="text-xs text-vermillion dark:text-vermillion">{stripError}</p>
           )}
           {stripResult && (
-            <p className="text-xs text-accent dark:text-accent font-medium">
-              Hoàn thành: đã cập nhật {stripResult.updated_chapters} chương.
-            </p>
+            <div className="space-y-1">
+              {stripResult.matched_chapters === 0 ? (
+                <p className="text-xs font-medium text-text-mute dark:text-text-mute">
+                  Không khớp chương nào (đã quét {stripResult.scanned_chapters} chương) — kiểm tra lại chuỗi.
+                </p>
+              ) : stripResult.dry_run ? (
+                <p className="text-xs font-medium text-accent dark:text-accent">
+                  Xem trước: {stripResult.matched_chapters}/{stripResult.scanned_chapters} chương khớp,{" "}
+                  {stripResult.total_occurrences} lần xuất hiện. Chưa sửa gì.
+                </p>
+              ) : (
+                <p className="text-xs font-medium text-accent dark:text-accent">
+                  Hoàn thành: đã cập nhật {stripResult.updated_chapters} chương (
+                  {stripResult.total_occurrences} lần xuất hiện).
+                </p>
+              )}
+              {stripResult.samples.length > 0 && (
+                <ul className="text-[11px] text-text-mute dark:text-text-mute font-mono space-y-0.5">
+                  {stripResult.samples.slice(0, 5).map((sample, i) => (
+                    <li key={i} className="truncate">− {sample}</li>
+                  ))}
+                </ul>
+              )}
+              {stripResult.failed_chapters > 0 && (
+                <p className="text-xs text-vermillion dark:text-vermillion">
+                  {stripResult.failed_chapters} chương lỗi, đã bỏ qua — chạy lại để thử tiếp
+                  {stripResult.error_sample ? ": " + stripResult.error_sample : ""}
+                </p>
+              )}
+            </div>
           )}
         </div>
       </section>

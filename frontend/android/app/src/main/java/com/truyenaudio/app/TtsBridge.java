@@ -690,6 +690,17 @@ public class TtsBridge {
      */
     @JavascriptInterface
     public void downloadFile(String url, String fileName) {
+        downloadFile(url, fileName, null);
+    }
+
+    /**
+     * Same, but authenticated. The EPUB export now requires an approved
+     * account, and DownloadManager fetches outside the WebView, so it carries
+     * none of the WebView's headers — the bearer token has to be attached to
+     * the request explicitly or the download comes back 401.
+     */
+    @JavascriptInterface
+    public void downloadFile(String url, String fileName, String token) {
         mainHandler.post(() -> {
             try {
                 if (url == null
@@ -704,11 +715,7 @@ public class TtsBridge {
                         context.getSystemService(Context.DOWNLOAD_SERVICE);
                 if (dm == null) return;
 
-                DownloadManager.Request req =
-                        new DownloadManager.Request(Uri.parse(url));
-                req.setTitle(name);
-                req.setNotificationVisibility(
-                        DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                DownloadManager.Request req = buildDownloadRequest(url, name, token);
                 req.setDestinationInExternalPublicDir(
                         Environment.DIRECTORY_DOWNLOADS, name);
                 try {
@@ -718,10 +725,7 @@ public class TtsBridge {
                     // write to public Downloads — retry into the app-scoped
                     // downloads dir, which needs no permission on any API.
                     DownloadManager.Request fallback =
-                            new DownloadManager.Request(Uri.parse(url));
-                    fallback.setTitle(name);
-                    fallback.setNotificationVisibility(
-                            DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                            buildDownloadRequest(url, name, token);
                     fallback.setDestinationInExternalFilesDir(
                             context, Environment.DIRECTORY_DOWNLOADS, name);
                     dm.enqueue(fallback);
@@ -733,6 +737,20 @@ public class TtsBridge {
                 e.printStackTrace();
             }
         });
+    }
+
+    /** Shared setup for the primary and app-scoped-fallback download requests. */
+    private DownloadManager.Request buildDownloadRequest(
+            String url, String name, String token) {
+        DownloadManager.Request req =
+                new DownloadManager.Request(Uri.parse(url));
+        req.setTitle(name);
+        req.setNotificationVisibility(
+                DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+        if (token != null && !token.isEmpty()) {
+            req.addRequestHeader("Authorization", "Bearer " + token);
+        }
+        return req;
     }
 
     /**

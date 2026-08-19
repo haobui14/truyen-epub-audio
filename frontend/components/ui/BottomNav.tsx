@@ -308,6 +308,30 @@ export function BottomNav() {
                       Quản lý truyện
                     </span>
                   </Link>
+                  <Link
+                    href="/admin/users"
+                    onClick={closeSheet}
+                    className="flex items-center gap-3.5 px-5 py-3 hover:bg-raised transition-colors"
+                  >
+                    <span className="w-8 h-8 rounded-full bg-gold/15 ring-1 ring-gold/30 flex items-center justify-center shrink-0">
+                      <svg
+                        className="w-4 h-4 text-gold"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M17 20h5v-2a3 3 0 00-5.36-1.86M17 20H7m10 0v-2c0-.66-.13-1.3-.36-1.86m0 0a5 5 0 00-9.28 0M7 20H2v-2a3 3 0 015.36-1.86M7 20v-2c0-.66.13-1.3.36-1.86m0 0a5 5 0 019.28 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"
+                        />
+                      </svg>
+                    </span>
+                    <span className="text-sm font-medium text-text-dim">
+                      Người dùng
+                    </span>
+                  </Link>
                   <div className="h-px mx-5 bg-hairline-soft my-1" />
                 </>
               )}

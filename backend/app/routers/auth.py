@@ -1,17 +1,26 @@
+import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from jose import jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
 
 from app.config import settings
 from app.database import get_client
-from app.dependencies import get_current_user, _lookup_role
+from app.dependencies import (
+    get_current_user,
+    get_admin_user,
+    _lookup_role,
+    lookup_approval,
+    PENDING_MESSAGE,
+    REJECTED_MESSAGE,
+)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
 
 _ALGORITHM = "HS256"
 _ACCESS_TOKEN_EXPIRE_MINUTES = 60
@@ -33,6 +42,17 @@ class AuthResponse(BaseModel):
     role: str = "user"
     display_name: str | None = None
     avatar_base64: str | None = None
+
+
+class SignupResponse(BaseModel):
+    """Signup deliberately returns NO tokens: the account exists but cannot be
+    used until an admin approves it."""
+    status: str
+    message: str
+
+
+class ApprovalDecision(BaseModel):
+    status: str  # 'approved' | 'rejected' | 'pending'
 
 
 class UpdateProfileRequest(BaseModel):
@@ -87,8 +107,28 @@ def _cleanup_expired_tokens(user_id: str) -> None:
         pass
 
 
-@router.post("/signup", response_model=AuthResponse)
-async def signup(body: AuthRequest):
+def _log_signup(request: Request, user_id: str, email: str) -> None:
+    """Audit row for every account created. Best effort — a logging failure
+    must never turn a successful registration into an error for the user."""
+    try:
+        db = get_client()
+        # Railway sits behind a proxy, so request.client.host is the proxy.
+        forwarded = request.headers.get("x-forwarded-for", "")
+        ip = forwarded.split(",")[0].strip() if forwarded else (
+            request.client.host if request.client else None
+        )
+        db.table("signup_log").insert({
+            "user_id": user_id,
+            "email": email,
+            "ip": ip,
+            "user_agent": (request.headers.get("user-agent") or "")[:500],
+        }).execute()
+    except Exception as e:
+        logger.warning("signup_log insert failed for %s: %s", email, e)
+
+
+@router.post("/signup", response_model=SignupResponse)
+async def signup(body: AuthRequest, request: Request):
     db = get_client()
     try:
         existing = db.table("users").select("id").eq("email", body.email).maybe_single().execute()
@@ -97,21 +137,19 @@ async def signup(body: AuthRequest):
 
         user_id = str(uuid.uuid4())
         password_hash = _pwd_context.hash(body.password)
+        # approval_status is left to the column default ('pending') so this
+        # insert still works on a database where the migration hasn't been run
+        # yet — one less way for a deploy to take signups down.
         db.table("users").insert({
             "id": user_id,
             "email": body.email,
             "password_hash": password_hash,
         }).execute()
+        _log_signup(request, user_id, body.email)
 
-        access_token = _create_access_token(user_id, body.email)
-        refresh_token = _create_refresh_token(user_id)
-        return AuthResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            user_id=user_id,
-            email=body.email,
-            role=_lookup_role(user_id),
-        )
+        logger.info("New signup awaiting approval: %s (%s)", body.email, user_id)
+        # No tokens: the account is inert until an admin approves it.
+        return SignupResponse(status="pending", message=PENDING_MESSAGE)
     except HTTPException:
         raise
     except Exception as e:
@@ -171,6 +209,14 @@ async def login(body: AuthRequest):
             raise HTTPException(status_code=401, detail="Email hoặc mật khẩu không đúng")
 
         user_id = user_data["id"]
+        # Checked separately (not selected above) so an un-migrated database
+        # keeps letting existing users in rather than 503-ing every login.
+        approval = lookup_approval(user_id)
+        if approval == "pending":
+            raise HTTPException(status_code=403, detail=PENDING_MESSAGE)
+        if approval != "approved":
+            raise HTTPException(status_code=403, detail=REJECTED_MESSAGE)
+
         access_token = _create_access_token(user_id, user_data["email"])
         refresh_token = _create_refresh_token(user_id)
         return AuthResponse(
@@ -215,6 +261,14 @@ async def refresh(body: RefreshRequest):
             raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
 
         user_id = row.data["user_id"]
+        approval = lookup_approval(user_id)
+        if approval != "approved":
+            # Revoking access has to bite on the refresh path too, otherwise a
+            # rejected user keeps riding a valid refresh token for 90 days.
+            raise HTTPException(
+                status_code=403,
+                detail=PENDING_MESSAGE if approval == "pending" else REJECTED_MESSAGE,
+            )
         user_row = db.table("users").select("email, display_name, avatar_base64").eq("id", user_id).maybe_single().execute()
         if not user_row or not user_row.data:
             raise HTTPException(status_code=401, detail="User not found")
@@ -255,6 +309,54 @@ async def refresh(body: RefreshRequest):
         # and signs the user out. 503 keeps the session intact so the user can
         # retry once the backend recovers.
         raise HTTPException(status_code=503, detail="Token refresh temporarily unavailable")
+
+
+@router.get("/users")
+async def list_users(_admin: dict = Depends(get_admin_user)):
+    """Every account with its approval state — the admin approval queue."""
+    db = get_client()
+    rows = (
+        db.table("users")
+        .select("id,email,display_name,created_at,approval_status,approval_decided_at")
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return rows.data or []
+
+
+@router.post("/users/{user_id}/approval")
+async def decide_approval(
+    user_id: str,
+    body: ApprovalDecision,
+    admin: dict = Depends(get_admin_user),
+):
+    """Approve, reject, or move an account back to pending."""
+    if body.status not in ("approved", "rejected", "pending"):
+        raise HTTPException(status_code=400, detail="Trạng thái không hợp lệ")
+
+    db = get_client()
+    row = db.table("users").select("id,email").eq("id", user_id).maybe_single().execute()
+    if not row or not row.data:
+        raise HTTPException(status_code=404, detail="Không tìm thấy người dùng")
+
+    db.table("users").update({
+        "approval_status": body.status,
+        "approval_decided_at": datetime.now(timezone.utc).isoformat(),
+        "approval_decided_by": admin["id"],
+    }).eq("id", user_id).execute()
+
+    if body.status != "approved":
+        # Kill live sessions immediately — the refresh check alone would leave
+        # the current access token working until it expires.
+        try:
+            db.table("refresh_tokens").delete().eq("user_id", user_id).execute()
+        except Exception as e:
+            logger.warning("Failed to revoke tokens for %s: %s", user_id, e)
+
+    logger.info(
+        "Approval %s for %s by admin %s", body.status, row.data["email"], admin["id"]
+    )
+    return {"id": user_id, "approval_status": body.status}
 
 
 @router.get("/me")

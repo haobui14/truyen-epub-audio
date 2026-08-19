@@ -1,11 +1,6 @@
 import { Suspense } from "react";
-import ListenPageClient from "./ListenPageClient";
+import UsersClient from "./UsersClient";
 import { Spinner } from "@/components/ui/Spinner";
-import { RequireApproved } from "@/components/auth/RequireApproved";
-
-export function generateStaticParams() {
-  return [{ bookId: "placeholder" }];
-}
 
 export default function Page() {
   return (
@@ -16,9 +11,7 @@ export default function Page() {
         </div>
       }
     >
-      <RequireApproved>
-        <ListenPageClient />
-      </RequireApproved>
+      <UsersClient />
     </Suspense>
   );
 }

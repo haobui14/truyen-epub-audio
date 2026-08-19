@@ -14,7 +14,7 @@ from bs4 import BeautifulSoup
 
 from app.database import get_client
 from app.utils.text_cleaner import html_to_text
-from app.services import storage_service
+from app.services import storage_service, text_cleanup
 
 logger = logging.getLogger(__name__)
 
@@ -371,6 +371,27 @@ def extract_epub_contents(epub_bytes: bytes, book_id: str) -> dict:
                 + (f" ({len(missing_titles)} headers had no body)" if missing_titles else "")
             )
             chapters_data = split_chapters
+
+        # Strip source-site watermarks before anything reaches Storage, so a
+        # freshly uploaded book never carries the scraper's advertising into
+        # the reader, the generated audio, or the EPUB export. Runs after the
+        # auto-split so chapter headings are already assigned and protected.
+        scrubbed = 0
+        rule_totals: dict[str, int] = {}
+        for ch in chapters_data:
+            clean, counts = text_cleanup.scrub_watermarks(ch["text_content"])
+            if not counts:
+                continue
+            ch["text_content"] = clean
+            ch["word_count"] = len(clean.split())
+            for label, n in counts.items():
+                rule_totals[label] = rule_totals.get(label, 0) + n
+                scrubbed += n
+        if scrubbed:
+            logger.info(
+                f"Book {book_id}: scrubbed {scrubbed} watermark(s) across "
+                f"{len(chapters_data)} chapters {rule_totals}"
+            )
 
         return {
             "title": title,

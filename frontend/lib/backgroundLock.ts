@@ -59,7 +59,9 @@ interface TtsBridgeNative {
    * DownloadManager — the WebView itself silently drops download links.
    * (Optional — newer APKs.)
    */
-  downloadFile?(url: string, fileName: string): void;
+  // token is optional so an older APK (2-arg native method) still binds;
+  // without it the gated EPUB endpoint answers 401.
+  downloadFile?(url: string, fileName: string, token?: string): void;
   updateTitle(title: string): void;
   /** Set the cover image URL shown on the lockscreen / media notification. */
   updateCover(url: string): void;
