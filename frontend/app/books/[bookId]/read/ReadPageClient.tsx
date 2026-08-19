@@ -530,47 +530,11 @@ export default function ReadPage() {
     };
   }, [showToc]);
 
-  // Pointer-based swipe + edge-tap navigation. Pure DOM events, no library.
-  const swipeStart = useRef<{ x: number; y: number; t: number } | null>(null);
-
-  const onContentPointerDown = (e: React.PointerEvent) => {
-    if (!e.isPrimary) return;
-    swipeStart.current = { x: e.clientX, y: e.clientY, t: e.timeStamp };
-  };
-
-  const onContentPointerUp = (e: React.PointerEvent) => {
-    const start = swipeStart.current;
-    swipeStart.current = null;
-    if (!start || !e.isPrimary) return;
-
-    // Don't hijack a long-press text selection.
-    const sel = typeof window !== "undefined" ? window.getSelection() : null;
-    if (sel && sel.toString().length > 0) return;
-
-    const dx = e.clientX - start.x;
-    const dy = e.clientY - start.y;
-    const dt = e.timeStamp - start.t;
-
-    // Horizontal swipe.
-    if (dt < 500 && Math.abs(dx) > 60 && Math.abs(dy) < 40) {
-      if (dx < 0 && nextChapter) navigateTo(nextChapter);
-      else if (dx > 0 && prevChapter) navigateTo(prevChapter);
-      return;
-    }
-
-    // Edge-tap: native only, clear tap (no movement, < 300ms).
-    if (
-      isNativePlatform() &&
-      dt < 300 &&
-      Math.abs(dx) < 10 &&
-      Math.abs(dy) < 10
-    ) {
-      const w = window.innerWidth;
-      const x = e.clientX;
-      if (x < w * 0.2 && prevChapter) navigateTo(prevChapter);
-      else if (x > w * 0.8 && nextChapter) navigateTo(nextChapter);
-    }
-  };
+  // Chapter navigation is buttons only -- see the bottom bar. Swipe and
+  // edge-tap used to live here and both fired during ordinary scrolling: a
+  // thumb flick arcs far enough sideways to read as a swipe, and a tap to halt
+  // momentum scrolling is identical to an edge tap. No amount of threshold
+  // tuning separates them reliably from a scroll, so the gestures are gone.
 
   // Filtered chapter list for the TOC search input.
   const filteredChapters = useMemo(() => {
@@ -646,11 +610,13 @@ export default function ReadPage() {
       // One continuous surface — escape AppMain's horizontal padding so the
       // theme bg goes edge-to-edge on Android. The whole reader (top bar,
       // hero, content, handoff) sits on this single background.
-      className="-mx-4 sm:-mx-6 -my-2 px-4 sm:px-6 min-h-[calc(100dvh-3.5rem)] transition-colors duration-300"
+      className="-mx-4 sm:-mx-6 -my-2 px-3 sm:px-6 min-h-[calc(100dvh-3.5rem)] transition-colors duration-300"
       style={{
         backgroundColor: effectiveTheme.bg,
         color: effectiveTheme.text,
         paddingTop: "calc(var(--sat) + 0.5rem)",
+        // Clears the fixed nav bar so the last lines are never hidden behind it.
+        paddingBottom: "calc(5rem + var(--sab))",
         overscrollBehaviorY: "contain",
       }}
     >
@@ -840,32 +806,23 @@ export default function ReadPage() {
         </div>
       )}
 
-      {/* Chapter header — design pattern: mono eyebrow / display title / hairline + ❖ ornament */}
-      <div className="mb-6 text-center">
-        <p className="font-mono text-[10px] tracking-[0.18em] uppercase text-text-faint">
-          Chương thứ {currentChapter.chapter_index + 1}
-        </p>
-        <h1 className="font-display text-2xl sm:text-3xl text-text leading-tight mt-2">
-          {currentChapter.title}
-        </h1>
-        <div className="flex items-center justify-center gap-3 mt-3">
-          <span className="h-px w-14 bg-hairline" />
-          <span className="font-display text-sm text-accent">❖</span>
-          <span className="h-px w-14 bg-hairline" />
-        </div>
-        <p className="font-mono text-[10px] tracking-widest uppercase text-text-faint mt-2">
-          {currentChapter.word_count.toLocaleString()} từ · {allChapters.length}{" "}
-          chương
-        </p>
-      </div>
+      {/* Chapter title — deliberately plain. The eyebrow, ❖ ornament and word
+          count that used to sit here were decoration competing with the text,
+          and the chapter number already shows in the top bar. Colour comes from
+          the reader theme rather than the app palette so it doesn't clash on
+          sepia / neon / warm. */}
+      <h1
+        className="mb-6 text-lg sm:text-xl font-semibold leading-snug text-balance"
+        style={{ color: effectiveTheme.text }}
+      >
+        {currentChapter.title}
+      </h1>
 
       {/* Reading content — no card; inherits the page's theme bg so the
           whole reader reads as one continuous surface. */}
       <div
         ref={contentRef}
-        className="min-h-[50vh] py-2 touch-pan-y"
-        onPointerDown={onContentPointerDown}
-        onPointerUp={onContentPointerUp}
+        className="min-h-[50vh] py-2"
       >
         {isLoadingText ? (
           <div
@@ -896,40 +853,14 @@ export default function ReadPage() {
                 .split(/\n+/)
                 .map((p) => p.trim())
                 .filter(Boolean);
+              // Every paragraph renders the same way. The first one used to get
+              // a large accent-coloured drop cap, which drew the eye away from
+              // the text instead of into it.
               return paragraphs.map((para, i) => {
-                if (i === 0) {
-                  // Drop-cap on first paragraph — design pattern
-                  const first = para.charAt(0);
-                  const rest = para.slice(1);
-                  return (
-                    <p
-                      key={i}
-                      className="mb-4"
-                      style={{
-                        lineHeight: 1.8,
-                        color: effectiveTheme.text,
-                        textIndent: 0,
-                      }}
-                    >
-                      <span
-                        className="font-display float-left mr-2 mt-1.5"
-                        style={{
-                          fontSize: `${fontSize * 3.2}px`,
-                          lineHeight: 0.9,
-                          color: "var(--color-accent)",
-                          fontWeight: 600,
-                        }}
-                      >
-                        {first}
-                      </span>
-                      {rest}
-                    </p>
-                  );
-                }
                 return (
                   <p
                     key={i}
-                    className="mb-4 last:mb-0"
+                    className="mb-4 last:mb-0 text-pretty"
                     style={{
                       lineHeight: 1.8,
                       color: effectiveTheme.text,
@@ -992,24 +923,43 @@ export default function ReadPage() {
         </Link>
       </div>
 
-      {/* Bottom nav strip — transparent, inherits the page bg */}
+      {/* Bottom nav bar — the only way to change chapters now, so it stays
+          reachable mid-chapter rather than only at the end of the page.
+          Fixed rather than sticky: sticky depends on the containing block and
+          on no ancestor clipping overflow, and this bar sits outside the
+          article wrapper. Fixed always works, at the cost of the page needing
+          bottom padding to clear it (see the root element above).
+          It is also opaque now — transparent let the text scroll through it.
+          The hairline is neutral grey at low alpha so it reads correctly on
+          every reader theme. */}
       <div
-        className="sticky bottom-0 -mx-4 px-4 mt-8 border-t border-current/10"
+        className="fixed bottom-0 left-0 right-0 z-30 px-3"
         style={{
           paddingTop: "0.75rem",
           paddingBottom: "calc(0.75rem + var(--sab))",
           color: effectiveTheme.text,
+          backgroundColor: effectiveTheme.bg,
+          boxShadow:
+            "0 -1px 0 0 rgba(128,128,128,0.2), 0 -10px 24px -14px rgba(0,0,0,0.45)",
         }}
       >
-        <div className="flex items-center justify-between gap-2 max-w-3xl mx-auto">
+        <div className="flex items-stretch gap-2 max-w-3xl mx-auto">
+          {/* Colours come from currentColor so the strip follows the reader
+              theme (sepia, neon, warm) instead of the app's grey palette.
+              min-h-11 keeps every target above the 44px touch minimum — the
+              old chevrons were roughly 32px. */}
           <button
             onClick={() => prevChapter && navigateTo(prevChapter)}
             disabled={!prevChapter}
-            className="flex items-center gap-1.5 px-3 py-2 -ml-2 rounded-lg text-sm font-medium text-text-dim dark:text-text-mute hover:text-accent dark:hover:text-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-            aria-label="Chương trước"
+            className="flex items-center gap-1.5 shrink-0 min-h-11 px-3.5 rounded-xl bg-current/5 hover:bg-current/10 disabled:opacity-25 disabled:pointer-events-none active:scale-[0.96] transition-[transform,background-color] duration-150"
+            aria-label={
+              prevChapter
+                ? `Chương ${prevChapter.chapter_index + 1}`
+                : "Không có chương trước"
+            }
           >
             <svg
-              className="w-4 h-4"
+              className="w-5 h-5 shrink-0"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -1021,41 +971,43 @@ export default function ReadPage() {
                 d="M15 19l-7-7 7-7"
               />
             </svg>
-            <span className="hidden sm:inline">Chương trước</span>
+            <span className="text-sm font-medium tabular-nums">
+              <span className="hidden sm:inline">Chương </span>
+              {prevChapter ? prevChapter.chapter_index + 1 : "—"}
+            </span>
           </button>
 
           {/* Open searchable chapter list */}
           <button
             onClick={() => setShowToc(true)}
-            className="flex-1 min-w-0 flex items-center justify-center gap-1.5 text-sm bg-surface dark:bg-raised border border-hairline-soft dark:border-hairline rounded-lg px-3 py-2 text-text-dim dark:text-text-faint hover:border-accent/40 dark:hover:border-accent transition-colors"
+            className="flex-1 min-w-0 flex flex-col items-center justify-center min-h-11 px-3 rounded-xl border border-current/15 hover:bg-current/5 active:scale-[0.96] transition-[transform,background-color] duration-150"
+            aria-label="Danh sách chương"
           >
-            <svg
-              className="w-4 h-4 shrink-0 text-text-mute"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M4 6h16M4 12h16M4 18h16"
-              />
-            </svg>
-            <span className="truncate">
-              {currentChapter.chapter_index + 1}. {currentChapter.title}
+            <span className="text-[11px] leading-none opacity-60 tabular-nums">
+              {currentChapter.chapter_index + 1}
+              {allChapters.length > 0 ? ` / ${allChapters.length}` : ""}
+            </span>
+            <span className="text-sm leading-tight mt-0.5 truncate max-w-full">
+              {currentChapter.title}
             </span>
           </button>
 
           <button
             onClick={() => nextChapter && navigateTo(nextChapter)}
             disabled={!nextChapter}
-            className="flex items-center gap-1.5 px-3 py-2 -mr-2 rounded-lg text-sm font-medium text-text-dim dark:text-text-mute hover:text-accent dark:hover:text-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-            aria-label="Chương tiếp"
+            className="flex items-center gap-1.5 shrink-0 min-h-11 px-3.5 rounded-xl bg-current/5 hover:bg-current/10 disabled:opacity-25 disabled:pointer-events-none active:scale-[0.96] transition-[transform,background-color] duration-150"
+            aria-label={
+              nextChapter
+                ? `Chương ${nextChapter.chapter_index + 1}`
+                : "Không có chương tiếp"
+            }
           >
-            <span className="hidden sm:inline">Chương tiếp</span>
+            <span className="text-sm font-medium tabular-nums">
+              <span className="hidden sm:inline">Chương </span>
+              {nextChapter ? nextChapter.chapter_index + 1 : "—"}
+            </span>
             <svg
-              className="w-4 h-4"
+              className="w-5 h-5 shrink-0"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
