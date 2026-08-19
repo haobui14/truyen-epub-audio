@@ -64,6 +64,62 @@ _CHAPTER_HEADER_RE = re.compile(
 )
 
 
+# A real chapter in these books runs to hundreds of words. Anything shorter is
+# a table-of-contents line, a glossary entry, an author note or a separator that
+# merely starts with "Chương N" — _CHAPTER_HEADER_RE matches those exactly like
+# a real heading, so without a floor a 500-line contents page becomes 500
+# chapters.
+MIN_CHAPTER_WORDS = 100
+
+
+def merge_short_chapters(
+    chapters: list[dict], min_words: int = MIN_CHAPTER_WORDS
+) -> tuple[list[dict], int]:
+    """Fold chapters shorter than `min_words` into the one before them.
+
+    Merged rather than dropped on purpose: a short entry is usually junk, but
+    silently losing real text during ingest is unrecoverable without a
+    re-upload, so the text rides along inside the previous chapter where it
+    stays visible (and removable with the strip-string tool). Short entries
+    that appear before any qualifying chapter are held and prepended to the
+    first one that qualifies — the same treatment split_text_by_headers gives
+    to preamble.
+
+    Returns (chapters, merged_count) and renumbers chapter_index / word_count.
+    """
+    if not chapters:
+        return chapters, 0
+
+    kept: list[dict] = []
+    pending: list[str] = []
+
+    for ch in chapters:
+        text = ch.get("text_content") or ""
+        if len(text.split()) >= min_words:
+            entry = dict(ch)
+            if pending:
+                entry["text_content"] = "\n".join(pending + [text]).strip()
+                pending = []
+            kept.append(entry)
+        elif kept:
+            prev = kept[-1]
+            prev["text_content"] = (prev["text_content"] + "\n" + text).strip()
+        else:
+            pending.append(text)
+
+    if not kept:
+        # Nothing clears the bar — a genuinely tiny book, or a file that is
+        # nothing but headings. Returning an empty list here would surface as
+        # "No readable chapters found", so keep what we had.
+        return chapters, 0
+
+    for i, entry in enumerate(kept):
+        entry["chapter_index"] = i
+        entry["word_count"] = len(entry["text_content"].split())
+
+    return kept, len(chapters) - len(kept)
+
+
 def split_text_by_headers(text: str) -> list[dict]:
     """Split text into parts by Chương/Chapter headers.
 
@@ -150,8 +206,18 @@ def auto_split_chapters(chapters_data: list[dict]) -> tuple[list[dict], list[str
         for i, p in enumerate(parts)
     ]
 
+    new_chapters, merged = merge_short_chapters(new_chapters)
+
+    # Re-check after merging. If folding the short entries back together leaves
+    # no more chapters than the EPUB already had, the extra "chapters" were a
+    # contents/glossary page rather than real content the spine had merged —
+    # keep the EPUB's own structure.
+    if len(new_chapters) <= len(chapters_data):
+        return chapters_data, []
+
     logger.info(
         f"Auto-split: {len(chapters_data)} EPUB items → {len(new_chapters)} chapters"
+        + (f", {merged} short entries merged (<{MIN_CHAPTER_WORDS} words)" if merged else "")
         + (f", {len(missing_titles)} missing body" if missing_titles else "")
     )
     return new_chapters, missing_titles
@@ -391,6 +457,15 @@ def extract_epub_contents(epub_bytes: bytes, book_id: str) -> dict:
             logger.info(
                 f"Book {book_id}: scrubbed {scrubbed} watermark(s) across "
                 f"{len(chapters_data)} chapters {rule_totals}"
+            )
+
+        # Covers the path where auto_split never fires (a well-structured EPUB
+        # whose own spine items include a contents page or author note).
+        chapters_data, merged_short = merge_short_chapters(chapters_data)
+        if merged_short:
+            logger.info(
+                f"Book {book_id}: merged {merged_short} entries under "
+                f"{MIN_CHAPTER_WORDS} words into the preceding chapter"
             )
 
         return {
