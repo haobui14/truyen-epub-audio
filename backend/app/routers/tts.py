@@ -3,74 +3,19 @@ import io
 from fastapi import APIRouter, HTTPException, Body, Depends
 from fastapi.responses import StreamingResponse
 from app.database import get_client
-from app.services import task_queue
 from app.dependencies import get_approved_user
 
 router = APIRouter(prefix="/api/tts", tags=["tts"])
 
 
-@router.post("/book/{book_id}")
-async def enqueue_book_tts(book_id: str):
-    db = get_client()
-    book = db.table("books").select("id,status").eq("id", book_id).maybe_single().execute()
-    if not book.data:
-        raise HTTPException(status_code=404, detail="Book not found")
-
-    chapters = db.table("chapters").select("id,status").eq("book_id", book_id).execute()
-    enqueued = 0
-    for ch in (chapters.data or []):
-        if ch["status"] in ("pending", "error"):
-            await task_queue.enqueue(book_id, ch["id"])
-            enqueued += 1
-
-    if enqueued > 0:
-        db.table("books").update({"status": "converting"}).eq("id", book_id).execute()
-
-    return {"enqueued": enqueued}
-
-
-@router.post("/chapter/{chapter_id}")
-async def enqueue_chapter_tts(chapter_id: str):
-    db = get_client()
-    chapter = db.table("chapters").select("id,book_id,status").eq("id", chapter_id).maybe_single().execute()
-    if not chapter.data:
-        raise HTTPException(status_code=404, detail="Chapter not found")
-
-    ch = chapter.data
-    await task_queue.enqueue(ch["book_id"], chapter_id)
-    db.table("chapters").update({"status": "pending", "error_message": None}).eq("id", chapter_id).execute()
-    return {"status": "enqueued"}
-
-
-@router.post("/prefetch/{book_id}")
-async def prefetch_chapters(book_id: str, from_index: int = 0, count: int = 3):
-    """
-    Enqueue TTS for `count` pending chapters starting at `from_index`.
-    Called by the frontend when the user starts playing chapter N to
-    pre-generate chapters N+1 … N+count.
-    """
-    db = get_client()
-    chapters = (
-        db.table("chapters")
-        .select("id,chapter_index,status")
-        .eq("book_id", book_id)
-        .gte("chapter_index", from_index)
-        .lt("chapter_index", from_index + count)
-        .order("chapter_index")
-        .execute()
-    )
-
-    enqueued = 0
-    for ch in (chapters.data or []):
-        if ch["status"] == "pending":
-            await task_queue.enqueue(book_id, ch["id"])
-            enqueued += 1
-
-    if enqueued > 0:
-        db.table("books").update({"status": "converting"}).eq("id", book_id).execute()
-
-    return {"enqueued": enqueued, "from_index": from_index, "count": count}
-
+# Audio is never pre-generated or stored any more: playback synthesizes from the
+# chapter text on demand, either on the device (native / browser voices) or here
+# via edge-tts. The old /book, /chapter and /prefetch endpoints queued MP3s into
+# the Supabase `audio` bucket -- by far the biggest storage cost -- and the
+# /status endpoint only reported that queue's progress. All four are gone along
+# with the worker, so no code path can write an MP3 to storage.
+#
+# What remains below generates audio in a temp file, streams it, and deletes it.
 
 EDGE_TTS_VOICES = {"vi-VN-HoaiMyNeural", "vi-VN-NamMinhNeural"}
 
@@ -227,28 +172,3 @@ async def chapter_full_audio(
         media_type="audio/mpeg",
         headers={"Cache-Control": "public, max-age=86400"},
     )
-
-
-@router.get("/status/{book_id}")
-async def get_tts_status(book_id: str):
-    db = get_client()
-    chapters = db.table("chapters").select(
-        "id,chapter_index,title,status,error_message"
-    ).eq("book_id", book_id).order("chapter_index").execute()
-
-    data = chapters.data or []
-    total = len(data)
-    ready = sum(1 for c in data if c["status"] == "ready")
-    failed = sum(1 for c in data if c["status"] == "error")
-    converting = sum(1 for c in data if c["status"] == "converting")
-    pending = sum(1 for c in data if c["status"] == "pending")
-
-    return {
-        "book_id": book_id,
-        "total_chapters": total,
-        "ready": ready,
-        "failed": failed,
-        "converting": converting,
-        "pending": pending,
-        "chapters": data,
-    }

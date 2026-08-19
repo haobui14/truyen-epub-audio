@@ -9,7 +9,6 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.database import get_client
 from app.gzip_middleware import SmartGZipMiddleware
-from app.services import task_queue
 from app.routers import auth, books, chapters, progress, upload, tts, genres, stats
 from app.routers import settings as settings_router
 
@@ -57,9 +56,9 @@ def _recover_stuck_parsing_books() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: recover orphaned parses, then launch TTS queue worker
+    # Startup: recover orphaned parses. There is no TTS worker -- audio is
+    # synthesized on demand for playback and never stored.
     _recover_stuck_parsing_books()
-    await task_queue.start_worker()
     logger.info("Application started")
     yield
     # Shutdown
