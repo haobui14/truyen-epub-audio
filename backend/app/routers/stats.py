@@ -18,8 +18,10 @@ class CompleteChapterRequest(BaseModel):
     word_count: int = 0
 
 
+# Sync handlers (`def`): FastAPI runs them on the worker thread pool so the
+# blocking Supabase client stays off the single worker's event loop.
 @router.post("/complete-chapter")
-async def complete_chapter(
+def complete_chapter(
     body: CompleteChapterRequest,
     user: dict = Depends(get_current_user),
 ) -> Dict[str, Any]:
@@ -98,7 +100,7 @@ async def complete_chapter(
 
 
 @router.get("/me")
-async def get_my_stats(user: dict = Depends(get_current_user)) -> Dict[str, Any]:
+def get_my_stats(user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     """Return aggregate XP and reading stats for the current user."""
     try:
         db = get_client()

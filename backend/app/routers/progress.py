@@ -9,8 +9,11 @@ from app.models.progress import ProgressUpsert, ProgressResponse
 router = APIRouter(prefix="/api/progress", tags=["progress"])
 
 
+# All handlers here are sync (`def`) so FastAPI runs them on the worker thread
+# pool: the blocking Supabase client would otherwise stall the single uvicorn
+# worker's event loop, and progress writes fire constantly during playback.
 @router.put("", response_model=ProgressResponse)
-async def save_progress(body: ProgressUpsert, user: dict = Depends(get_current_user)):
+def save_progress(body: ProgressUpsert, user: dict = Depends(get_current_user)):
     """Upsert progress for user + book (one row per book)."""
     db = get_client()
     data = {
@@ -42,7 +45,7 @@ async def save_progress(body: ProgressUpsert, user: dict = Depends(get_current_u
 
 
 @router.get("/chapter/{chapter_id}", response_model=Optional[ProgressResponse])
-async def get_chapter_progress(
+def get_chapter_progress(
     chapter_id: str,
     user: dict = Depends(get_current_user),
 ):
@@ -71,7 +74,7 @@ async def get_chapter_progress(
 
 
 @router.get("/my-books", response_model=List[Dict[str, Any]])
-async def get_my_books(user: dict = Depends(get_current_user)):
+def get_my_books(user: dict = Depends(get_current_user)):
     """
     Return one entry per book the user has progress on.
     Each entry contains book metadata + the last-stopped chapter info.
@@ -107,7 +110,7 @@ async def get_my_books(user: dict = Depends(get_current_user)):
 
 
 @router.get("/book/{book_id}", response_model=Optional[ProgressResponse])
-async def get_book_progress(
+def get_book_progress(
     book_id: str,
     user: dict = Depends(get_current_user),
 ):

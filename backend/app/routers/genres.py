@@ -20,8 +20,10 @@ def _validate_color(color: str) -> str:
     return color
 
 
+# Sync handlers (`def`): FastAPI runs them on the worker thread pool so the
+# blocking Supabase client stays off the single worker's event loop.
 @router.get("", response_model=List[GenreResponse])
-async def list_genres(_user: dict = Depends(get_current_user)):
+def list_genres(_user: dict = Depends(get_current_user)):
     """List all genres. Accessible to any authenticated user (read-only)."""
     db = get_client()
     result = (
@@ -34,7 +36,7 @@ async def list_genres(_user: dict = Depends(get_current_user)):
 
 
 @router.post("", response_model=GenreResponse, status_code=201)
-async def create_genre(body: GenreCreate, _admin: dict = Depends(get_admin_user)):
+def create_genre(body: GenreCreate, _admin: dict = Depends(get_admin_user)):
     color = _validate_color(body.color)
     name = body.name.strip()
     if not name:
@@ -58,7 +60,7 @@ async def create_genre(body: GenreCreate, _admin: dict = Depends(get_admin_user)
 
 
 @router.patch("/{genre_id}", response_model=GenreResponse)
-async def update_genre(genre_id: str, body: GenreUpdate, _admin: dict = Depends(get_admin_user)):
+def update_genre(genre_id: str, body: GenreUpdate, _admin: dict = Depends(get_admin_user)):
     db = get_client()
     existing = db.table("genres").select("id").eq("id", genre_id).maybe_single().execute()
     if not existing or not existing.data:
@@ -89,7 +91,7 @@ async def update_genre(genre_id: str, body: GenreUpdate, _admin: dict = Depends(
 
 
 @router.delete("/{genre_id}", status_code=204)
-async def delete_genre(genre_id: str, _admin: dict = Depends(get_admin_user)):
+def delete_genre(genre_id: str, _admin: dict = Depends(get_admin_user)):
     db = get_client()
     existing = db.table("genres").select("id").eq("id", genre_id).maybe_single().execute()
     if not existing or not existing.data:
@@ -101,7 +103,7 @@ async def delete_genre(genre_id: str, _admin: dict = Depends(get_admin_user)):
 # ── Book ↔ Genre assignment (admin only) ──
 
 @router.post("/assign/{book_id}/{genre_id}", status_code=204)
-async def assign_genre(book_id: str, genre_id: str, _admin: dict = Depends(get_admin_user)):
+def assign_genre(book_id: str, genre_id: str, _admin: dict = Depends(get_admin_user)):
     db = get_client()
     book = db.table("books").select("id").eq("id", book_id).maybe_single().execute()
     if not book or not book.data:
@@ -114,6 +116,6 @@ async def assign_genre(book_id: str, genre_id: str, _admin: dict = Depends(get_a
 
 
 @router.delete("/assign/{book_id}/{genre_id}", status_code=204)
-async def remove_genre(book_id: str, genre_id: str, _admin: dict = Depends(get_admin_user)):
+def remove_genre(book_id: str, genre_id: str, _admin: dict = Depends(get_admin_user)):
     db = get_client()
     db.table("book_genres").delete().eq("book_id", book_id).eq("genre_id", genre_id).execute()

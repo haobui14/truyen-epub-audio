@@ -9,8 +9,10 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 _DEFAULTS = {"playback_rate": 1, "playback_pitch": 1}
 
 
+# Sync handlers (`def`): FastAPI runs them on the worker thread pool so the
+# blocking Supabase client stays off the single worker's event loop.
 @router.get("", response_model=SettingsResponse)
-async def get_settings(user: dict = Depends(get_current_user)):
+def get_settings(user: dict = Depends(get_current_user)):
     """Return the authenticated user's playback settings (or defaults)."""
     db = get_client()
     result = (
@@ -31,7 +33,7 @@ async def get_settings(user: dict = Depends(get_current_user)):
 
 
 @router.put("", response_model=SettingsResponse)
-async def save_settings(
+def save_settings(
     body: SettingsUpsert, user: dict = Depends(get_current_user)
 ):
     """Upsert playback rate & pitch for the authenticated user."""

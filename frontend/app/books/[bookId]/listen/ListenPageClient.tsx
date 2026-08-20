@@ -114,7 +114,7 @@ export default function ListenPage() {
       }
     },
     retry: false,
-    staleTime: 60_000,
+    staleTime: 10 * 60_000,
   });
 
   const { data: chaptersData, isPending: chaptersPending } = useQuery({
@@ -146,7 +146,13 @@ export default function ListenPage() {
       }
     },
     retry: false,
-    staleTime: 60_000,
+    // The full chapter list (thousands of rows on big books) changes only on
+    // admin edits, which invalidate ["chapters", bookId] explicitly — and
+    // app-foreground invalidation still refetches it. 10 min keeps
+    // read↔listen↔detail navigation instant; the long gcTime keeps the big
+    // payload cached across page switches instead of re-downloading it.
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
   });
 
   // Fetch text for the current chapter — on native checks IndexedDB first

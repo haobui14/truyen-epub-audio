@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 
@@ -9,8 +10,8 @@ from app.config import settings
 from app.database import get_client
 from app.dependencies import get_admin_user, get_approved_user
 from app.models.book import BookResponse
-from app.models.chapter import ChapterResponse, AudioSummary, PaginatedChaptersResponse
-from app.services import storage_service, text_cleanup
+from app.models.chapter import ChapterResponse
+from app.services import image_service, storage_service, text_cleanup
 
 router = APIRouter(prefix="/api/books", tags=["books"])
 logger = logging.getLogger(__name__)
@@ -33,24 +34,27 @@ _BOOK_SELECT = (
 )
 
 
+# Read endpoints are sync (`def`) so FastAPI runs them on the worker thread
+# pool: the blocking Supabase client would otherwise stall the single uvicorn
+# worker's event loop for a full DB round-trip per call.
 @router.get("", response_model=List[BookResponse])
-async def list_books():
+def list_books():
     db = get_client()
     result = db.table("books").select(_BOOK_SELECT).order("created_at", desc=True).execute()
     return _attach_genres(result.data)
 
 
 @router.get("/{book_id}", response_model=BookResponse)
-async def get_book(book_id: str):
+def get_book(book_id: str):
     db = get_client()
     result = db.table("books").select(_BOOK_SELECT).eq("id", book_id).maybe_single().execute()
-    if not result.data:
+    if not result or not result.data:
         raise HTTPException(status_code=404, detail="Book not found")
     return _attach_genres([result.data])[0]
 
 
-@router.get("/{book_id}/chapters", response_model=PaginatedChaptersResponse)
-async def get_book_chapters(
+@router.get("/{book_id}/chapters", response_model=None)
+def get_book_chapters(
     book_id: str,
     page: int = Query(1, ge=1, description="Page number (1-based)"),
     page_size: int = Query(100, ge=1, le=10000, description="Chapters per page"),
@@ -58,7 +62,7 @@ async def get_book_chapters(
     db = get_client()
     # Verify book exists
     book = db.table("books").select("id,total_chapters").eq("id", book_id).maybe_single().execute()
-    if not book.data:
+    if not book or not book.data:
         raise HTTPException(status_code=404, detail="Book not found")
 
     total = book.data.get("total_chapters", 0)
@@ -67,31 +71,31 @@ async def get_book_chapters(
     offset = (page - 1) * page_size
     end = offset + page_size - 1
 
+    # Clients only consume id/book_id/index/title/word_count/status/updated_at
+    # (updated_at is load-bearing: it versions the offline chapter-text
+    # caches). The audio_* columns are always NULL since the pre-generation
+    # pipeline was removed, and error_message/created_at have no consumer —
+    # dropping them roughly halves the JSON for a 5,000-chapter book.
     chapters = db.table("chapters").select(
-        "id,book_id,chapter_index,title,word_count,status,error_message,created_at,updated_at,audio_url,audio_duration_seconds,audio_file_size_bytes"
+        "id,book_id,chapter_index,title,word_count,status,updated_at"
     ).eq("book_id", book_id).order("chapter_index").range(offset, end).execute()
-
-    items = []
-    for ch in (chapters.data or []):
-        audio = AudioSummary(
-            audio_url=ch["audio_url"],
-            audio_duration_seconds=ch.get("audio_duration_seconds"),
-            audio_file_size_bytes=ch.get("audio_file_size_bytes"),
-        ) if ch.get("audio_url") else None
-        ch_response = ChapterResponse(
-            **{k: v for k, v in ch.items() if k in ChapterResponse.model_fields},
-            audio=audio,
-        )
-        items.append(ch_response)
 
     total_pages = max(1, -(-total // page_size))  # ceil division
 
-    return PaginatedChaptersResponse(
-        items=items,
-        total=total,
-        page=page,
-        page_size=page_size,
-        total_pages=total_pages,
+    # Hand-built JSON instead of response_model: validating thousands of
+    # ChapterResponse objects per request was pure event-loop CPU. The rows
+    # are already JSON-safe dicts from PostgREST, and this handler is sync,
+    # so serialization happens on the worker thread too.
+    payload = {
+        "items": chapters.data or [],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+    }
+    return Response(
+        content=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        media_type="application/json",
     )
 
 
@@ -246,12 +250,18 @@ async def update_book(
         updates["story_status"] = story_status
 
     if cover and cover.filename:
+        import asyncio
+
         content_type = cover.content_type or ""
         if content_type not in VALID_COVER_TYPES:
             raise HTTPException(status_code=400, detail="Cover must be JPEG, PNG, or WebP")
         cover_data = await cover.read()
         if len(cover_data) > 5 * 1024 * 1024:
             raise HTTPException(status_code=400, detail="Cover image must be under 5MB")
+        # Bounded WebP re-encode; falls back to the original if undecodable.
+        optimized = await asyncio.to_thread(image_service.optimize_cover, cover_data)
+        if optimized:
+            cover_data, content_type, _ = optimized
         ext = content_type.split("/")[-1].replace("jpeg", "jpg")
         cover_path = f"{book_id}/cover.{ext}"
         try:
@@ -261,7 +271,10 @@ async def update_book(
                 data=cover_data,
                 content_type=content_type,
             )
-            updates["cover_url"] = cover_url
+            # ?v= gives the replacement a fresh CDN cache key — the CDN does
+            # not invalidate on upsert, so without it the OLD cover keeps
+            # being served from the same path until the TTL.
+            updates["cover_url"] = image_service.versioned_cover_url(cover_url)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Cover upload failed: {e}")
 

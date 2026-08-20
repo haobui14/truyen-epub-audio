@@ -86,6 +86,9 @@ export default function BookDetailPage() {
       const status = query.state.data?.status;
       return status === "pending" || status === "parsing" ? 2000 : false;
     },
+    // Fresh-for-10-min on mount; the parsing poll above still fires on its
+    // own interval, and app-foreground invalidation still forces a refetch.
+    staleTime: 10 * 60_000,
   });
 
   const isParsing = book?.status === "pending" || book?.status === "parsing";
@@ -104,6 +107,7 @@ export default function BookDetailPage() {
       }
     },
     enabled: !!book && !isParsing,
+    staleTime: 10 * 60_000,
   });
 
   const { data: bookProgress } = useQuery({

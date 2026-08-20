@@ -63,13 +63,13 @@ export default function SearchClient() {
         throw new Error("offline");
       }
     },
-    staleTime: 30_000,
+    staleTime: 5 * 60_000,
   });
 
   const { data: genres } = useQuery({
     queryKey: ["genres"],
     queryFn: api.listGenres,
-    staleTime: 60_000,
+    staleTime: 30 * 60_000,
   });
 
   // Only show genres that are actually used by at least one book

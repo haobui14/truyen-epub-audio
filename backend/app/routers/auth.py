@@ -14,10 +14,17 @@ from app.dependencies import (
     get_current_user,
     get_admin_user,
     _lookup_role,
+    invalidate_user_caches,
     lookup_approval,
     PENDING_MESSAGE,
     REJECTED_MESSAGE,
 )
+
+# Every handler in this router is deliberately sync (`def`, not `async def`):
+# FastAPI runs sync handlers on its worker thread pool, which keeps the
+# blocking Supabase client AND bcrypt (~100–300ms of pure CPU per hash/verify)
+# off the single worker's event loop. As `async def`, one login attempt froze
+# every in-flight request for the duration of the bcrypt check.
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 logger = logging.getLogger(__name__)
@@ -128,7 +135,7 @@ def _log_signup(request: Request, user_id: str, email: str) -> None:
 
 
 @router.post("/signup", response_model=SignupResponse)
-async def signup(body: AuthRequest, request: Request):
+def signup(body: AuthRequest, request: Request):
     db = get_client()
     try:
         existing = db.table("users").select("id").eq("email", body.email).maybe_single().execute()
@@ -160,7 +167,7 @@ async def signup(body: AuthRequest, request: Request):
 
 
 @router.patch("/update-profile")
-async def update_profile(
+def update_profile(
     body: UpdateProfileRequest,
     user: dict = Depends(get_current_user),
 ):
@@ -190,7 +197,7 @@ async def update_profile(
 
 
 @router.post("/login", response_model=AuthResponse)
-async def login(body: AuthRequest):
+def login(body: AuthRequest):
     db = get_client()
     try:
         result = (
@@ -242,7 +249,7 @@ async def login(body: AuthRequest):
 
 
 @router.post("/refresh", response_model=AuthResponse)
-async def refresh(body: RefreshRequest):
+def refresh(body: RefreshRequest):
     db = get_client()
     try:
         row = (
@@ -312,7 +319,7 @@ async def refresh(body: RefreshRequest):
 
 
 @router.get("/users")
-async def list_users(_admin: dict = Depends(get_admin_user)):
+def list_users(_admin: dict = Depends(get_admin_user)):
     """Every account with its approval state — the admin approval queue."""
     db = get_client()
     rows = (
@@ -325,7 +332,7 @@ async def list_users(_admin: dict = Depends(get_admin_user)):
 
 
 @router.post("/users/{user_id}/approval")
-async def decide_approval(
+def decide_approval(
     user_id: str,
     body: ApprovalDecision,
     admin: dict = Depends(get_admin_user),
@@ -345,6 +352,10 @@ async def decide_approval(
         "approval_decided_by": admin["id"],
     }).eq("id", user_id).execute()
 
+    # The read/listen gate caches approval per user — drop the entry so the
+    # decision bites immediately instead of after the cache TTL.
+    invalidate_user_caches(user_id)
+
     if body.status != "approved":
         # Kill live sessions immediately — the refresh check alone would leave
         # the current access token working until it expires.
@@ -360,7 +371,7 @@ async def decide_approval(
 
 
 @router.get("/me")
-async def get_me(user: dict = Depends(get_current_user)):
+def get_me(user: dict = Depends(get_current_user)):
     db = get_client()
     row = db.table("users").select("display_name, avatar_base64").eq("id", user["id"]).maybe_single().execute()
     extra = row.data if row and row.data else {}

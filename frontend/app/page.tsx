@@ -160,13 +160,19 @@ export default function HomePage() {
         throw new Error("offline");
       }
     },
-    refetchInterval: 10_000,
+    // Catalog data — no polling. Refetching the whole books list every 10s
+    // kept every open client hammering the backend (6 req/min each, forever)
+    // for a list that changes only when an admin uploads. New books still
+    // appear on navigation back home and on app-foreground invalidation
+    // (providers.tsx); the parse-status poll on the book detail page is
+    // separate and untouched.
+    staleTime: 5 * 60_000,
   });
 
   const { data: genres } = useQuery({
     queryKey: ["genres"],
     queryFn: api.listGenres,
-    staleTime: 60_000,
+    staleTime: 30 * 60_000,
   });
 
   const { data: myBooks } = useQuery({

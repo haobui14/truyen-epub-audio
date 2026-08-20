@@ -29,8 +29,10 @@ export interface Chapter {
   title: string;
   word_count: number;
   status: "pending" | "converting" | "ready" | "error";
+  /** Not returned by the chapters-list endpoint anymore (payload slimming);
+   *  still present on single-chapter responses. */
   error_message?: string;
-  created_at: string;
+  created_at?: string;
   /** Bumped by a DB trigger on every row update — used to detect a stale
    *  offline-cached copy of the chapter text (see lib/chapterTextCache.ts). */
   updated_at: string;

@@ -559,15 +559,31 @@ async def parse_epub_task(book_id: str, epub_bytes: bytes) -> None:
         author = extracted["author"]
         chapters_data = extracted["chapters"]
 
-        # Upload cover
+        # Upload cover (bounded WebP re-encode; keep the raw bytes only if
+        # they can't be decoded).
         cover_url = None
         if extracted["cover_bytes"]:
-            cover_path = f"covers/{book_id}/cover.jpg"
-            cover_url = await storage_service.upload_bytes(
-                bucket="covers",
-                path=cover_path,
-                data=extracted["cover_bytes"],
-                content_type="image/jpeg",
+            from app.services import image_service
+
+            raw_cover = extracted["cover_bytes"]
+            optimized = await asyncio.to_thread(
+                image_service.optimize_cover, raw_cover
+            )
+            if optimized:
+                cover_data, cover_ct, cover_ext = optimized
+            else:
+                cover_data, cover_ct, cover_ext = raw_cover, "image/jpeg", "jpg"
+            # {book_id}/cover.* — the old path had a stray "covers/" prefix
+            # inside the covers bucket, which delete_book's
+            # delete_folder("covers", book_id) never cleaned up.
+            cover_path = f"{book_id}/cover.{cover_ext}"
+            cover_url = image_service.versioned_cover_url(
+                await storage_service.upload_bytes(
+                    bucket="covers",
+                    path=cover_path,
+                    data=cover_data,
+                    content_type=cover_ct,
+                )
             )
 
         # Chapter text is stored in Storage at the deterministic path

@@ -268,7 +268,7 @@ export default function ReadPage() {
       }
     },
     retry: false,
-    staleTime: 60_000,
+    staleTime: 10 * 60_000,
   });
 
   const {
@@ -288,7 +288,11 @@ export default function ReadPage() {
       }
     },
     retry: false,
-    staleTime: 60_000,
+    // Same policy as ListenPageClient's all-chapters query: admin edits
+    // invalidate explicitly, foreground invalidation still refetches, and the
+    // long gcTime keeps the big list cached across read↔listen switches.
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
   });
 
   const { data: chapterText, isLoading: isLoadingText } = useQuery({

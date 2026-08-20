@@ -11,7 +11,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
 from app.database import get_client
 from app.config import settings
 from app.dependencies import get_admin_user
-from app.services import storage_service, epub_parser
+from app.services import image_service, storage_service, epub_parser
 from app.services.converter import txt_to_epub, pdf_to_epub, prc_to_epub
 
 router = APIRouter(prefix="/api", tags=["upload"])
@@ -105,6 +105,13 @@ async def upload_book(
         cover_content = await cover.read()
         if len(cover_content) > 5 * 1024 * 1024:
             raise HTTPException(status_code=400, detail="Cover image must be under 5MB")
+        # Bounded WebP re-encode (Pillow is CPU work → worker thread). Falls
+        # back to the original bytes if the image can't be decoded.
+        optimized = await asyncio.to_thread(
+            image_service.optimize_cover, cover_content
+        )
+        if optimized:
+            cover_content, cover_content_type, _ = optimized
 
     # Read and size-check uploaded file
     content = await file.read()
@@ -142,12 +149,15 @@ async def upload_book(
         if not cover_content or not cover_path:
             return None
         try:
-            return await storage_service.upload_bytes(
+            url = await storage_service.upload_bytes(
                 bucket="covers",
                 path=cover_path,
                 data=cover_content,
                 content_type=cover_content_type,  # type: ignore[arg-type]
             )
+            # ?v= makes any later cover REPLACEMENT at the same path a fresh
+            # CDN cache key (Supabase's CDN doesn't invalidate on upsert).
+            return image_service.versioned_cover_url(url)
         except Exception as e:
             logger.warning(f"Cover upload failed for book {book_id}: {e}")
             return None

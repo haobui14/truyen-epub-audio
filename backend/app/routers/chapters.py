@@ -1,3 +1,6 @@
+import asyncio
+import logging
+
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from typing import Optional
@@ -9,10 +12,14 @@ from app.config import settings
 from app.services import storage_service
 
 router = APIRouter(prefix="/api", tags=["chapters"])
+logger = logging.getLogger(__name__)
 
 
+# Read endpoints are sync (`def`) so FastAPI runs them on the worker thread
+# pool: the blocking Supabase client would otherwise stall the single uvicorn
+# worker's event loop for a full DB round-trip per call.
 @router.get("/chapters/{chapter_id}", response_model=ChapterResponse)
-async def get_chapter(chapter_id: str):
+def get_chapter(chapter_id: str):
     db = get_client()
     result = db.table("chapters").select(
         "id,book_id,chapter_index,title,word_count,status,error_message,created_at,updated_at,audio_url,audio_duration_seconds,audio_file_size_bytes"
@@ -35,21 +42,44 @@ async def get_chapter_text(
     _user: dict = Depends(get_approved_user),
 ):
     db = get_client()
-    result = db.table("chapters").select("id,updated_at").eq("id", chapter_id).maybe_single().execute()
-    if not result.data:
+    # Hottest endpoint in the app (every chapter open, web and Android).
+    # Selecting text_storage_path here lets us download from Storage directly
+    # instead of going through storage_service.get_chapter_text, which
+    # re-fetched this same row a second time. to_thread keeps the sync
+    # client's round-trip off the event loop.
+    result = await asyncio.to_thread(
+        lambda: db.table("chapters")
+        .select("id,text_storage_path,updated_at")
+        .eq("id", chapter_id)
+        .maybe_single()
+        .execute()
+    )
+    if not result or not result.data:
         raise HTTPException(status_code=404, detail="Chapter not found")
-    text = await storage_service.get_chapter_text(chapter_id)
+    row = result.data
+    # Same contract as before: no stored path or a failed download → "".
+    text = ""
+    path = row.get("text_storage_path")
+    if path:
+        try:
+            text = await storage_service.download_chapter_text(
+                path, row.get("updated_at")
+            )
+        except Exception as e:
+            logger.warning(
+                f"Storage download failed for chapter {chapter_id} ({path}): {e}"
+            )
     # updated_at lets clients that cache this text offline (Android app)
     # detect an admin edit and refetch instead of serving stale text forever.
     return {
-        "id": result.data["id"],
+        "id": row["id"],
         "text_content": text,
-        "updated_at": result.data["updated_at"],
+        "updated_at": row["updated_at"],
     }
 
 
 @router.get("/audio/{chapter_id}")
-async def get_audio(
+def get_audio(
     chapter_id: str,
     _user: dict = Depends(get_approved_user),
 ):
