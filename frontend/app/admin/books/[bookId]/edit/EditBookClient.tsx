@@ -31,6 +31,7 @@ export default function EditBookClient() {
     old_count: number;
     new_count: number;
     missing_chapters: Array<{ title: string; chapter_index: number }>;
+    unchanged?: boolean;
   } | null>(null);
   const [autoSplitError, setAutoSplitError] = useState<string | null>(null);
 
@@ -417,9 +418,16 @@ export default function EditBookClient() {
           )}
           {autoSplitResult && (
             <div className="space-y-2">
-              <p className="text-xs text-accent dark:text-accent font-medium">
-                Hoàn thành: {autoSplitResult.old_count} → {autoSplitResult.new_count} chương
-              </p>
+              {autoSplitResult.unchanged ? (
+                <p className="text-xs text-text-mute dark:text-text-mute font-medium">
+                  Cách tách đã đúng sẵn ({autoSplitResult.old_count} chương) — không
+                  ghi lại gì, tiến trình đọc giữ nguyên.
+                </p>
+              ) : (
+                <p className="text-xs text-accent dark:text-accent font-medium">
+                  Hoàn thành: {autoSplitResult.old_count} → {autoSplitResult.new_count} chương
+                </p>
+              )}
               {autoSplitResult.missing_chapters.length > 0 && (
                 <div>
                   <p className="text-xs font-medium text-gold dark:text-gold mb-1">

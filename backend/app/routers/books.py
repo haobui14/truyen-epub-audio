@@ -868,7 +868,7 @@ async def auto_split_book(
         fetch_offset = 0
         while True:
             page = db.table("chapters").select(
-                "id,chapter_index,updated_at"
+                "id,chapter_index,title,updated_at"
             ).eq("book_id", book_id).order("chapter_index").range(
                 fetch_offset, fetch_offset + PAGE_SIZE - 1
             ).execute()
@@ -920,6 +920,25 @@ async def auto_split_book(
                 "Auto-split %s: merged %d entries under %d words into the preceding chapter",
                 book_id, merged_short, MIN_CHAPTER_WORDS,
             )
+
+        # Re-splitting a book that is already split this way reproduces exactly
+        # the structure it has: same boundaries, same text, new UUIDs. That
+        # costs roughly four Storage round-trips per chapter (download, upload,
+        # then two deletes) and resets every reader's progress, for no change at
+        # all. Compare before writing anything and stop if there is nothing to do.
+        old_titles = [(c.get("title") or "").strip() for c in chapters]
+        new_titles = [p["title"].strip() for p in prelim]
+        if old_titles == new_titles:
+            logger.info(
+                "Auto-split %s: split matches the existing %d chapters — nothing written",
+                book_id, old_count,
+            )
+            return {
+                "old_count": old_count,
+                "new_count": old_count,
+                "missing_chapters": missing_chapters,
+                "unchanged": True,
+            }
 
         # Build new chapter rows with pre-generated UUIDs. Use a large offset
         # (1_000_000 + i) so the temporary indices don't collide with existing rows.
@@ -980,17 +999,18 @@ async def auto_split_book(
                 detail=f"Failed to insert new chapters (no data was lost): {insert_err}",
             )
 
-        # Only now that new chapters are safely stored: delete old chapters' audio + text.
-        # Fan out per-chapter deletes — best effort, capped concurrency.
+        # Only now that new chapters are safely stored: delete the old chapters'
+        # text. Fan out per-chapter deletes — best effort, capped concurrency.
+        #
+        # This used to delete `audio/{book}/{chapter}.mp3` for every chapter too.
+        # Audio is no longer generated or stored anywhere, so that was one wasted
+        # Storage round-trip per chapter on every run — 5,421 of them on the
+        # largest book — against a bucket that cannot contain anything.
         chapter_ids = [ch["id"] for ch in chapters]
         del_sem = asyncio.Semaphore(8)
 
         async def _delete_old(ch: dict) -> None:
             async with del_sem:
-                try:
-                    await storage_service.delete_path("audio", f"{book_id}/{ch['id']}.mp3")
-                except Exception:
-                    pass
                 try:
                     await storage_service.delete_chapter_text(book_id, ch["id"])
                 except Exception:

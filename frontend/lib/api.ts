@@ -546,6 +546,9 @@ export const api = {
       old_count: number;
       new_count: number;
       missing_chapters: Array<{ title: string; chapter_index: number }>;
+      // Set when the split reproduced the structure the book already had, so
+      // nothing was rewritten.
+      unchanged?: boolean;
     }>(`/api/books/${bookId}/auto-split`, {
       method: "POST",
       signal: ctrl.signal,
