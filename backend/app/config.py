@@ -14,6 +14,12 @@ class Settings(BaseSettings):
     # Used only by scripts/translate_chapters_deepseek.py (offline tooling).
     deepseek_api_key: Optional[str] = None
     deepseek_model: str = "deepseek-chat"
+    # Latest Android APK version (semver). Bump the ANDROID_LATEST_VERSION env
+    # var on Railway after distributing a new APK; installs running an older
+    # NEXT_PUBLIC_APP_VERSION show an update notice. Optional download link
+    # shown with the notice (e.g. a shared-drive URL).
+    android_latest_version: str = "1.1.0"
+    android_download_url: Optional[str] = None
 
     @property
     def cors_origins(self) -> list[str]:

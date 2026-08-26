@@ -195,6 +195,28 @@ export default function HomePage() {
       .slice(0, 12);
   }, [books]);
 
+  // Books whose chapters GREW after upload (append-chapters / manual add) —
+  // ongoing stories that got fresh chapters. The >24h guard keeps this row
+  // from mirroring "Mới thêm": every book's last_chapter_added_at starts ≈
+  // created_at when it is first parsed.
+  const updatedBooks = useMemo(() => {
+    if (!books) return [];
+    return books
+      .filter(
+        (b) =>
+          b.last_chapter_added_at &&
+          new Date(b.last_chapter_added_at).getTime() -
+            new Date(b.created_at).getTime() >
+            24 * 60 * 60 * 1000,
+      )
+      .sort(
+        (a, b) =>
+          new Date(b.last_chapter_added_at!).getTime() -
+          new Date(a.last_chapter_added_at!).getTime(),
+      )
+      .slice(0, 12);
+  }, [books]);
+
   const genreSections = useMemo(() => {
     if (!books || !genres) return [];
     return genres
@@ -418,6 +440,13 @@ export default function HomePage() {
             </section>
           )}
 
+          {updatedBooks.length > 0 && (
+            <BookScrollRow
+              title="Mới cập nhật"
+              seeAllHref="/search"
+              books={updatedBooks}
+            />
+          )}
           <BookScrollRow
             title="Mới thêm"
             seeAllHref="/search"

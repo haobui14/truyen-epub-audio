@@ -25,11 +25,11 @@ pytesseract==0.3.13
 Pillow>=10.0
 
 python-jose[cryptography]==3.5.0
-passlib[bcrypt]==1.7.4
-# passlib 1.7.4 (latest release, unmaintained) reads bcrypt.__about__, which was
-# removed in bcrypt >= 4.1 — bumping bcrypt breaks password hashing at runtime.
-# Keep 4.0.1 until passlib is replaced (e.g. pwdlib or direct bcrypt).
-bcrypt==4.0.1
+# Direct bcrypt (passlib was dropped 2026-08: unmaintained, and it pinned
+# bcrypt to 4.0.1). Existing $2b$ hashes verify unchanged via bcrypt.checkpw.
+bcrypt>=4.1
 openai>=2.45.0
 # Used by scripts/translate_chapters_claude.py (offline book-translation tooling).
 anthropic>=0.118.0
+# Tests (backend/tests): parser split/merge + watermark cleanup regressions.
+pytest>=8.0

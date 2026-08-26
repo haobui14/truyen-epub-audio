@@ -66,11 +66,65 @@ def _download(path: str) -> bytes:
     return ss._retry_sync(_do, what=f"download {BUCKET}/{path}")
 
 
+def purge_legacy(apply: bool) -> None:
+    """Delete the pre-optimization originals under the legacy nested
+    covers/{book_id}/ prefix (inside the covers bucket) — the path delete_book
+    never cleaned. Refuses to run while any book still points there."""
+    db = get_client()
+    still_referenced = [
+        b["id"] for b in (db.table("books").select("id,cover_url").execute().data or [])
+        if b.get("cover_url") and f"/object/public/{BUCKET}/covers/" in b["cover_url"]
+    ]
+    if still_referenced:
+        logger.warning(
+            "NOT purging: %d book(s) still reference legacy cover paths (run the "
+            "re-encode first): %s", len(still_referenced), still_referenced[:5],
+        )
+        return
+
+    paths: list[str] = []
+    offset = 0
+    while True:
+        folders = ss._sync_list(BUCKET, "covers", limit=1000, offset=offset)
+        if not folders:
+            break
+        for folder in folders:
+            if folder.get("id") is not None:
+                paths.append(f"covers/{folder['name']}")  # stray file at this level
+                continue
+            files = ss._sync_list(BUCKET, f"covers/{folder['name']}", limit=1000, offset=0)
+            paths.extend(
+                f"covers/{folder['name']}/{f['name']}" for f in files if f.get("id")
+            )
+        if len(folders) < 1000:
+            break
+        offset += 1000
+
+    if not paths:
+        logger.info("No legacy cover objects found — nothing to purge.")
+        return
+    logger.info("%s %d legacy cover object(s)", "Deleting" if apply else "Would delete", len(paths))
+    if not apply:
+        return
+    for i in range(0, len(paths), 100):
+        ss._get_storage().from_(BUCKET).remove(paths[i:i + 100])
+    logger.info("Purged %d object(s).", len(paths))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="write changes (default: dry run)")
     parser.add_argument("--book-id", help="only this book")
+    parser.add_argument(
+        "--purge-legacy", action="store_true",
+        help="instead of re-encoding, delete the legacy nested covers/{book_id}/ "
+             "originals (only once no book references them; respects --apply)",
+    )
     args = parser.parse_args()
+
+    if args.purge_legacy:
+        purge_legacy(args.apply)
+        return
 
     db = get_client()
     query = db.table("books").select("id,title,cover_url")

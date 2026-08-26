@@ -20,6 +20,8 @@ export interface Book {
   is_featured?: boolean;
   featured_label?: string | null;
   story_status?: "ongoing" | "completed" | "unknown";
+  /** When chapters were last ADDED (append/manual) — drives "Mới cập nhật". */
+  last_chapter_added_at?: string | null;
 }
 
 export interface Chapter {

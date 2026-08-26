@@ -3,11 +3,12 @@ import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Request
 from jose import jwt
-from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
 
+from app import rate_limit
 from app.config import settings
 from app.database import get_client
 from app.dependencies import (
@@ -33,7 +34,27 @@ _ALGORITHM = "HS256"
 _ACCESS_TOKEN_EXPIRE_MINUTES = 60
 _REFRESH_TOKEN_EXPIRE_DAYS = 90
 
-_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Direct bcrypt instead of passlib: passlib 1.7.4 is unmaintained and pinned
+# the whole app to bcrypt 4.0.1. Existing hashes are standard $2b$ strings, so
+# they keep verifying unchanged.
+
+
+def _hash_password(password: str) -> str:
+    # passlib silently truncated to bcrypt's 72-byte input limit; keep that
+    # behaviour so any existing long-password account still round-trips.
+    return bcrypt.hashpw(
+        password.encode("utf-8")[:72], bcrypt.gensalt()
+    ).decode("ascii")
+
+
+def _verify_password(password: str, password_hash: str) -> bool:
+    try:
+        return bcrypt.checkpw(
+            password.encode("utf-8")[:72], password_hash.encode("ascii")
+        )
+    except ValueError:
+        # Malformed stored hash — wrong password, never a 500.
+        return False
 
 
 class AuthRequest(BaseModel):
@@ -136,6 +157,9 @@ def _log_signup(request: Request, user_id: str, email: str) -> None:
 
 @router.post("/signup", response_model=SignupResponse)
 def signup(body: AuthRequest, request: Request):
+    # Signups are admin-approved anyway; the limit just stops bulk-created
+    # pending rows and repeated bcrypt work from one address.
+    rate_limit.check("signup", rate_limit.client_ip(request), limit=5, window_seconds=3600)
     db = get_client()
     try:
         existing = db.table("users").select("id").eq("email", body.email).maybe_single().execute()
@@ -143,7 +167,7 @@ def signup(body: AuthRequest, request: Request):
             raise HTTPException(status_code=400, detail="Email đã được đăng ký")
 
         user_id = str(uuid.uuid4())
-        password_hash = _pwd_context.hash(body.password)
+        password_hash = _hash_password(body.password)
         # approval_status is left to the column default ('pending') so this
         # insert still works on a database where the migration hasn't been run
         # yet — one less way for a deploy to take signups down.
@@ -197,7 +221,10 @@ def update_profile(
 
 
 @router.post("/login", response_model=AuthResponse)
-def login(body: AuthRequest):
+def login(body: AuthRequest, request: Request):
+    # Each attempt costs a bcrypt verify (~100–300ms CPU) — brake brute force
+    # per source address. 10 per 5 minutes is far above honest retry rates.
+    rate_limit.check("login", rate_limit.client_ip(request), limit=10, window_seconds=300)
     db = get_client()
     try:
         result = (
@@ -212,7 +239,7 @@ def login(body: AuthRequest):
         
         user_data = result.data
         password_hash = user_data.get("password_hash")
-        if not password_hash or not _pwd_context.verify(body.password, password_hash):
+        if not password_hash or not _verify_password(body.password, password_hash):
             raise HTTPException(status_code=401, detail="Email hoặc mật khẩu không đúng")
 
         user_id = user_data["id"]

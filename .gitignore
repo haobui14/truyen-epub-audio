@@ -1,3 +1,7 @@
+# Local backups written by backend/scripts/backup_all.py — never commit
+# a mirror of the production DB + buckets.
+backend/backups/
+
 # Python
 __pycache__/
 *.pyc

@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.database import get_client
 from app.gzip_middleware import SmartGZipMiddleware
-from app.routers import auth, books, chapters, progress, upload, tts, genres, stats
+from app.routers import auth, books, chapters, client_log, progress, upload, tts, genres, stats
 from app.routers import settings as settings_router
 
 logging.basicConfig(level=logging.INFO)
@@ -54,11 +54,27 @@ def _recover_stuck_parsing_books() -> None:
         logger.warning("Stuck-parsing recovery skipped: %s", e)
 
 
+CLIENT_LOG_RETENTION_DAYS = 60
+
+
+def _trim_client_log() -> None:
+    """Drop old client error reports so the table stays bounded. Best effort."""
+    try:
+        db = get_client()
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=CLIENT_LOG_RETENTION_DAYS)
+        ).isoformat()
+        db.table("client_log").delete().lt("created_at", cutoff).execute()
+    except Exception as e:
+        logger.warning("client_log trim skipped: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: recover orphaned parses. There is no TTS worker -- audio is
     # synthesized on demand for playback and never stored.
     _recover_stuck_parsing_books()
+    _trim_client_log()
     logger.info("Application started")
     yield
     # Shutdown
@@ -114,8 +130,35 @@ app.include_router(progress.router)
 app.include_router(settings_router.router)
 app.include_router(genres.router)
 app.include_router(stats.router)
+app.include_router(client_log.router)
 
 
+# Sync (`def`) so the optional DB probe runs on the worker thread pool.
 @app.get("/api/health")
-async def health():
-    return {"status": "ok", "version": "1.0.0"}
+def health(deep: bool = False):
+    """Liveness check. `?deep=1` also times one tiny DB query — deployed, that
+    number IS the backend↔Supabase round-trip, which multiplies through every
+    endpoint (useful for checking the Railway region is co-located)."""
+    out: dict = {"status": "ok", "version": "1.0.0"}
+    if deep:
+        import time as _time
+
+        t0 = _time.perf_counter()
+        try:
+            get_client().table("books").select("id").limit(1).execute()
+            out["db_ms"] = round((_time.perf_counter() - t0) * 1000)
+        except Exception as e:
+            out["status"] = "degraded"
+            out["db_error"] = f"{type(e).__name__}: {e}"[:200]
+    return out
+
+
+@app.get("/api/app-version")
+def app_version():
+    """Latest distributed Android APK version. The APK compares this against
+    its baked NEXT_PUBLIC_APP_VERSION and shows an update notice when behind.
+    Bump ANDROID_LATEST_VERSION on Railway after sharing a new APK."""
+    return {
+        "latest": settings.android_latest_version,
+        "download_url": settings.android_download_url,
+    }

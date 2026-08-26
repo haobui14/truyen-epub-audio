@@ -25,6 +25,15 @@ CREATE TABLE IF NOT EXISTS books (
 -- instead of only setting status='error'. Safe to re-run.
 ALTER TABLE books ADD COLUMN IF NOT EXISTS error_message TEXT;
 
+-- Migration (idempotent): when chapters were last ADDED to the book — bumped
+-- by append-chapters and manual chapter creation, drives the home page's
+-- "Mới cập nhật" row. Seeded from max(chapters.created_at) so existing books
+-- have real data immediately.
+ALTER TABLE books ADD COLUMN IF NOT EXISTS last_chapter_added_at TIMESTAMPTZ;
+UPDATE books b SET last_chapter_added_at = c.max_created
+FROM (SELECT book_id, max(created_at) AS max_created FROM chapters GROUP BY book_id) c
+WHERE c.book_id = b.id AND b.last_chapter_added_at IS NULL;
+
 CREATE INDEX IF NOT EXISTS idx_books_created_at  ON books(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_books_status      ON books(status);
 CREATE INDEX IF NOT EXISTS idx_books_featured    ON books(is_featured) WHERE is_featured = TRUE;
@@ -59,12 +68,17 @@ ALTER TABLE chapters ADD COLUMN IF NOT EXISTS text_storage_path TEXT;
 -- automatically by the trigger below on every UPDATE.
 ALTER TABLE chapters ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
 
-CREATE OR REPLACE FUNCTION touch_chapter_updated_at() RETURNS TRIGGER AS $$
+-- SET search_path = '' pins name resolution (security linter 0011); pg_catalog
+-- is always searched implicitly, so now() still resolves.
+CREATE OR REPLACE FUNCTION touch_chapter_updated_at() RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
 BEGIN
     NEW.updated_at = now();
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
 DROP TRIGGER IF EXISTS trg_chapters_updated_at ON chapters;
 CREATE TRIGGER trg_chapters_updated_at
@@ -124,6 +138,10 @@ CREATE TABLE IF NOT EXISTS user_progress (
 
 CREATE INDEX IF NOT EXISTS idx_user_progress_user_book    ON user_progress(user_id, book_id);
 CREATE INDEX IF NOT EXISTS idx_user_progress_user_chapter ON user_progress(user_id, chapter_id);
+-- FK covering indexes: without these, deleting a book/chapter scans the whole
+-- progress table per cascaded row (performance linter 0001).
+CREATE INDEX IF NOT EXISTS idx_user_progress_book_id      ON user_progress(book_id);
+CREATE INDEX IF NOT EXISTS idx_user_progress_chapter_id   ON user_progress(chapter_id);
 
 -- Playback settings (speed, pitch) synced across devices
 CREATE TABLE IF NOT EXISTS user_settings (
@@ -394,6 +412,27 @@ CREATE TABLE IF NOT EXISTS signup_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_signup_log_created_at ON signup_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_signup_log_user_id    ON signup_log(user_id);
+
+-- Client error reports posted by the app (web + Android) via POST
+-- /api/client-log — device-side failures used to vanish without a trace.
+-- user_id is a plain UUID on purpose (no FK): it's a log, and it must survive
+-- the user row being deleted without needing another FK index.
+CREATE TABLE IF NOT EXISTS client_log (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    user_id     UUID,
+    platform    TEXT,
+    app_version TEXT,
+    url         TEXT,
+    message     TEXT NOT NULL,
+    stack       TEXT,
+    user_agent  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_client_log_created_at ON client_log(created_at DESC);
+
+-- Legacy cleanup: table from the removed audio pre-generation pipeline.
+DROP TABLE IF EXISTS audio_files;
 
 
 ALTER TABLE books            ENABLE ROW LEVEL SECURITY;
@@ -407,6 +446,7 @@ ALTER TABLE user_stats       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE genres           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE book_genres      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE signup_log       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE client_log       ENABLE ROW LEVEL SECURITY;
 
 -- ============================================================
 -- Revoke discovery & RPC from anon / authenticated
@@ -426,7 +466,7 @@ ALTER TABLE signup_log       ENABLE ROW LEVEL SECURITY;
 REVOKE SELECT ON
     books, chapters, users, refresh_tokens,
     user_roles, user_progress, user_settings, user_stats,
-    genres, book_genres, signup_log
+    genres, book_genres, signup_log, client_log
 FROM anon, authenticated;
 
 REVOKE EXECUTE ON FUNCTION

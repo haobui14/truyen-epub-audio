@@ -18,8 +18,13 @@ export function AppHeader() {
   if (immersive) return null;
 
   return (
+    // Fixed rather than sticky: the Android WebView paints a ghost copy of a
+    // position:sticky + backdrop-filter element while flinging back to the
+    // top (the logo header showed up twice on every tab). The fixed bottom
+    // bars never ghost, so position this one the same way; AppMain pads its
+    // top to make up for the header no longer being in normal flow.
     <header
-      className="bg-ink/85 backdrop-blur-md border-b border-hairline-soft sticky z-40"
+      className="fixed inset-x-0 bg-ink/85 backdrop-blur-md border-b border-hairline-soft z-40"
       style={{ top: "var(--sat)" }}
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
@@ -56,7 +61,8 @@ export function AppMain({ children }: { children: React.ReactNode }) {
   return (
     <main
       className={`flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 ${
-        immersive ? "py-2" : "py-6"
+        // pt-20 = the fixed header's h-14 plus the old py-6 breathing room.
+        immersive ? "py-2" : "pt-20 pb-6"
       }`}
     >
       {children}

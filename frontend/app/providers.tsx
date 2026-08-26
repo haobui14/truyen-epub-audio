@@ -8,6 +8,8 @@ import { getTtsBridge } from "@/lib/backgroundLock";
 import { hydrateAuthFromNative } from "@/lib/auth";
 import { isNativePlatform } from "@/lib/capacitor";
 import { api, tryRefreshToken } from "@/lib/api";
+import { initErrorReporter } from "@/lib/errorReporter";
+import { UpdateNotice } from "@/components/UpdateNotice";
 import {
   isLoggedIn,
   getUser,
@@ -38,6 +40,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
   // On native, restore auth from SharedPreferences into localStorage.
   // After hydration, sync role from server and invalidate all queries.
   useEffect(() => {
+    // Uncaught errors / rejections → POST /api/client-log. Installed before
+    // anything async so startup failures are captured too.
+    initErrorReporter();
     const init = async () => {
       if (isNativePlatform()) {
         await hydrateAuthFromNative();
@@ -155,6 +160,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <QueryClientProvider client={queryClient}>
       <PlayerProvider>
         <NativeUrlRestorer />
+        <UpdateNotice />
         {children}
       </PlayerProvider>
     </QueryClientProvider>
