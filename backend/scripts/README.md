@@ -4,7 +4,7 @@ Two unrelated families of scripts live here:
 
 | Family | What it touches | Scripts |
 |---|---|---|
-| **Translation pipeline** | Local files only (`backend/work/…`). Never touches the database. | `clean_source_txt`, `split_book_chapters`, `glossary_from_markdown`, `build_glossary_deepseek`, `translate_chapters_*`, `audit_translation`, `sanitize_translation`, `merge_chapters` |
+| **Translation pipeline** | Local files only (`backend/work/…`). Never touches the database. | `clean_source_txt`, `split_book_chapters`, `glossary_from_markdown`, `build_glossary_deepseek`, `translate_chapters_*`, `audit_translation`, `sanitize_translation`, `merge_chapters`, `scrape_wikidich` |
 | **Production maintenance** | Live Supabase DB + Storage. | `export_book_txt`, `strip_string_from_book`, `remove_spam_paragraphs`, `compress_chapter_text`, `migrate_chapter_text_to_storage`, `cleanup_storage` |
 
 The translation pipeline turns a raw Chinese novel `.txt` into a Vietnamese
@@ -412,6 +412,28 @@ python -m scripts.merge_chapters work/emo/vi -o work/emo/Ac_Ma_Phap_Tac_vi.txt
 ```
 
 Then upload the `.txt` through the admin UI like any other book.
+
+### `scrape_wikidich.py` — download a book straight from wikidichvn.com
+
+For books that are already Vietnamese converts on wikidichvn.com — skips the
+whole CN→VI translation front of the pipeline and produces `vi/0001_slug.txt`
+files directly (heading first line, blank-line paragraphs), ready for
+`merge_chapters` → upload.
+
+Chapters are discovered by walking each page's *next* link because the site's
+own `/get/listchap` endpoint only serves the first 200 chapters. The walk is
+resumable: the chapter-number → URL map persists in `wikidich_map.json` next to
+`vi/`, existing files are never re-fetched, and a re-run first back-fills
+failures by direct URL before continuing the walk. Dry run by default;
+`--apply` downloads at a deliberately polite ~1 req/s (do not lower `--delay`).
+
+```bash
+python -m scripts.scrape_wikidich https://wikidichvn.com/<book-slug> -o work/<book>
+python -m scripts.scrape_wikidich https://wikidichvn.com/<book-slug> -o work/<book> --apply
+```
+
+Obvious site boilerplate lines are dropped during extraction; anything subtler
+rides through to the upload sanitizer like any other source.
 
 ---
 
