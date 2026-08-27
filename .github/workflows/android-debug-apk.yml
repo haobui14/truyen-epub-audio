@@ -1,0 +1,115 @@
+# Builds the Capacitor debug APK whenever frontend code lands on main and
+# pushes it to Google Drive, so a phone can always install the newest build
+# from one stable Drive file/link.
+#
+# One-time setup for the Drive upload (skipped gracefully until done):
+#   1. Locally: `rclone config` → new Google Drive remote named "gdrive"
+#      (scope drive.file is enough — rclone then only sees files it created).
+#   2. Base64-encode rclone.conf and save it as repo secret RCLONE_CONF_B64.
+# Without the secret the build still runs and the APK is kept as a 7-day
+# workflow artifact on the run page.
+
+name: Android debug APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/android-debug-apk.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: android-debug-apk
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RCLONE_CONF_B64: ${{ secrets.RCLONE_CONF_B64 }}
+      # Baked into the APK at build time (lib/constants.ts falls back to
+      # localhost:8000 without it). Public URL, so it can live here; set the
+      # repo variable NEXT_PUBLIC_API_URL to override if the backend moves.
+      NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL || 'https://truyen-epub-audio-production.up.railway.app' }}
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm version comes from package.json "packageManager"
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      # Capacitor 8's android project compiles against Java 21
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+          cache-dependency-path: |
+            frontend/android/**/*.gradle*
+            frontend/android/gradle/wrapper/gradle-wrapper.properties
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web assets (Capacitor static export)
+        run: pnpm build:cap
+
+      # Regenerates capacitor.settings.gradle for this runner's pnpm layout
+      # and copies out/ into android/app/src/main/assets/public
+      - name: Sync web assets into the android project
+        run: pnpm exec cap sync android
+
+      # Signed with the committed android/app/debug.keystore, so this APK
+      # installs over debug builds from any machine without uninstalling.
+      - name: Build debug APK
+        working-directory: frontend/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Stamp APK with version and commit
+        id: apk
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          NAME="TruyenAudio-debug-v${VERSION}-${GITHUB_SHA::7}.apk"
+          cp android/app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/$NAME"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+      # Backup copy on the run page even when the Drive upload is unavailable
+      - name: Keep APK as workflow artifact (7 days)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.apk.outputs.name }}
+          path: ${{ runner.temp }}/${{ steps.apk.outputs.name }}
+          retention-days: 7
+
+      - name: Upload to Google Drive
+        if: env.RCLONE_CONF_B64 != ''
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq rclone
+          CONF="$RUNNER_TEMP/rclone.conf"
+          printf '%s' "$RCLONE_CONF_B64" | base64 -d > "$CONF"
+          # copyto updates the existing Drive file in place, so its file id —
+          # and any share link to it — keeps pointing at the newest build.
+          rclone --config "$CONF" copyto \
+            "$RUNNER_TEMP/${{ steps.apk.outputs.name }}" \
+            "gdrive:TruyenAudio-CI/app-debug.apk"
+          rm -f "$CONF"
+
+      - name: Note when Drive upload is skipped
+        if: env.RCLONE_CONF_B64 == ''
+        run: echo "::warning::RCLONE_CONF_B64 secret not set — APK kept only as a workflow artifact."
