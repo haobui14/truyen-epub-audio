@@ -190,6 +190,8 @@ export function useNativeTTSPlayer(
 
   const chapterIdRef = useRef(chapterId);
   chapterIdRef.current = chapterId;
+  const bookIdRef = useRef(bookId);
+  bookIdRef.current = bookId;
   const chapterTitleRef = useRef(chapterTitle);
   chapterTitleRef.current = chapterTitle;
   const voiceNameRef = useRef(voiceName);
@@ -464,11 +466,25 @@ export function useNativeTTSPlayer(
       const bridge = getTtsBridge();
       const nativeChId = bridge?.getCurrentChapterId?.() ?? "";
       const nativePlaying = bridge?.isPlaying?.() ?? false;
+      // A native session that belongs to a DIFFERENT book can never be the
+      // I5 cascade below — auto-advance never crosses books. It is always a
+      // leftover from a book the user navigated away from (book detail →
+      // another book's chapter); without this veto the UI shows the new book
+      // while the ears keep hearing the old one. Reading Java's book id here
+      // is safe: this effect runs BEFORE PlayerContext's setSessionInfo
+      // effect in the same commit (hook call order), so Java still reports
+      // the OLD session's book.
+      const nativeBookId = bridge?.getCurrentBookId?.() ?? "";
+      const crossBook =
+        nativeBookId !== "" && bookId !== "" && nativeBookId !== bookId;
 
       const nativeAlreadyPlaying =
         nativeChId === chapterId && nativePlaying;
       const nativeIsAhead =
-        nativePlaying && nativeChId !== "" && nativeChId !== chapterId;
+        nativePlaying &&
+        nativeChId !== "" &&
+        nativeChId !== chapterId &&
+        !crossBook;
 
       if (nativeAlreadyPlaying) {
         // I4 (lockscreen-resume): native is on THIS chapter and playing.
@@ -489,9 +505,22 @@ export function useNativeTTSPlayer(
         // resume position AND its persisted snapshot; toggle() resumes it in
         // place via resumePlayback().
       } else if (chapterId) {
-        // Normal fresh-start path: native idle, or was on same chapter but
-        // paused. Stop to clear any stale state; autoPlay branch starts fresh.
+        // Normal fresh-start path: native idle, paused on another chapter, or
+        // a cross-book leftover. Stop to clear any stale state; autoPlay
+        // branch starts fresh.
         bridge?.stopPlayback();
+        if (crossBook) {
+          // stopPlayback keeps pendingPlaylist (and Effect B may already have
+          // merged old-book chapters into the queue) — wipe both, like the
+          // stale-session guard does, so the old book cannot resurrect via
+          // self-fetch before Effect A re-seeds the new book's playlist.
+          try {
+            bridge?.clearNextChapter?.();
+          } catch {}
+          try {
+            bridge?.setPendingChapters?.("[]", "", "");
+          } catch {}
+        }
       }
       // chapterId empty (app launch, no track yet): leave native alone — a
       // session restored after a process kill is sitting there paused, and
@@ -562,6 +591,12 @@ export function useNativeTTSPlayer(
       const bridge = getTtsBridge();
       const nativeChId = bridge?.getCurrentChapterId?.() ?? "";
       const nativePlaying = bridge?.isPlaying?.() ?? false;
+      // Same cross-book veto as the stop branch above: a different book's
+      // session is never a cascade to defer to. (Recomputed here because this
+      // runs in a later commit — after text resolves — than the stop branch.)
+      const nativeBookId = bridge?.getCurrentBookId?.() ?? "";
+      const crossBook =
+        nativeBookId !== "" && bookId !== "" && nativeBookId !== bookId;
 
       if (nativeChId === chapterId && nativePlaying) {
         // Native is already playing this chapter (e.g. visibility-change navigation
@@ -573,7 +608,12 @@ export function useNativeTTSPlayer(
         playingRef.current = true;
         setIsPlaying(true);
         setIsBuffering(false);
-      } else if (nativePlaying && nativeChId !== "" && nativeChId !== chapterId) {
+      } else if (
+        nativePlaying &&
+        nativeChId !== "" &&
+        nativeChId !== chapterId &&
+        !crossBook
+      ) {
         // Native is ahead — playing a chapter JS hasn't caught up to yet.
         // Don't call startNativePlayback (it would interrupt what's playing).
         // The visibilitychange handler will navigate JS to the correct chapter.
@@ -581,7 +621,11 @@ export function useNativeTTSPlayer(
         setIsPlaying(false);
         setIsBuffering(false);
       } else {
-        // Native is idle or on the same chapter but not playing — start fresh.
+        // Native is idle, on the same chapter but not playing, or playing a
+        // cross-book leftover (stop it first) — start fresh. Bridge calls are
+        // posted to the main handler in order, so the stop lands before the
+        // playChunks below.
+        if (crossBook && nativePlaying) bridge?.stopPlayback();
         setIsBuffering(true);
         acquireBackgroundLock();
         startNativePlayback(startIdx);
@@ -700,8 +744,33 @@ export function useNativeTTSPlayer(
       // Resume whatever session native holds FIRST — its chunks in memory, or
       // a snapshot restored after a process kill (Java self-fetches the text).
       // This must not require JS chunks: after a cold start the MiniPlayer can
-      // resume the native session before any page has loaded a track.
-      if (bridge.getCurrentChunk() >= 0) {
+      // resume the native session before any page has loaded a track (bookId
+      // is "" then, so the cross-book veto below cannot trigger).
+      //
+      // EXCEPT when the held session belongs to a DIFFERENT book than this
+      // hook's track: resuming it would play the old book's audio under the
+      // new book's UI (the user paused book A during the chapters-loading
+      // window on book B's page, then tapped play). Kill that session and its
+      // queues instead, and start this book's chapter fresh. The branch test
+      // must use the flag — not re-read getCurrentChunk() — because bridge
+      // calls are posted to the main handler, so state reads right after
+      // stopPlayback() still see the old session.
+      const nativeBookId = bridge.getCurrentBookId?.() ?? "";
+      const crossBookSession =
+        nativeBookId !== "" &&
+        bookIdRef.current !== "" &&
+        nativeBookId !== bookIdRef.current &&
+        bridge.getCurrentChunk() >= 0;
+      if (crossBookSession) {
+        bridge.stopPlayback();
+        try {
+          bridge.clearNextChapter?.();
+        } catch {}
+        try {
+          bridge.setPendingChapters?.("[]", "", "");
+        } catch {}
+      }
+      if (!crossBookSession && bridge.getCurrentChunk() >= 0) {
         bridge.resumePlayback();
         playingRef.current = true;
         setIsPlaying(true);
