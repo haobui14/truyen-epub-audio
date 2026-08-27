@@ -143,8 +143,14 @@ async def run(args: argparse.Namespace) -> None:
                 if not text:
                     counters["missing"] += 1
                     return
+                # Chapter headings are structure, not content: a title like
+                # "Chương 69: ..." can match a site pattern by coincidence, and
+                # deleting it would take the heading and its whole body with it.
                 new_text, hits, removed = text_cleanup.apply_strip(
-                    text, pattern, args.whole_line
+                    text,
+                    pattern,
+                    args.whole_line,
+                    protect=text_cleanup.HEADING_LINE if args.whole_line else None,
                 )
                 if hits:
                     counters["matched"] += 1

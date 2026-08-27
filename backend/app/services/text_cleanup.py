@@ -145,7 +145,7 @@ WATERMARK_RULES: tuple[tuple[str, str, bool], ...] = (
 
 # Never delete a chapter heading, whatever it matches: "Chương 69: …" carries
 # the 69shuba site number, and headings are structure, not content.
-_HEADING = re.compile(r"^\s*Chương\s+\d+\s*[:.]")
+HEADING_LINE = re.compile(r"^\s*Chương\s+\d+\s*[:.]")
 
 _COMPILED_RULES = tuple(
     (label, re.compile(pattern, re.IGNORECASE | re.MULTILINE), whole_line)
@@ -161,7 +161,7 @@ def scrub_watermarks(text: str) -> tuple[str, dict[str, int]]:
     """
     counts: dict[str, int] = {}
     for label, pattern, whole_line in _COMPILED_RULES:
-        text, hits, _ = apply_strip(text, pattern, whole_line, protect=_HEADING)
+        text, hits, _ = apply_strip(text, pattern, whole_line, protect=HEADING_LINE)
         if hits:
             counts[label] = hits
     return text, counts
