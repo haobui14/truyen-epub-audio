@@ -79,6 +79,12 @@ jobs:
       - name: Build web assets (Capacitor static export)
         run: pnpm build:cap
 
+      # A clean checkout does not contain the generated
+      # capacitor-cordova-android-plugins/cordova.variables.gradle file.
+      # Generate all Android plugin projects before invoking Gradle.
+      - name: Sync web assets into the Android project
+        run: pnpm exec cap sync android
+
       - name: Install Chromium for mobile viewport tests
         run: pnpm exec playwright install --with-deps chromium
 
@@ -90,11 +96,6 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew testDebugUnitTest lintDebug --no-daemon
-
-      # Regenerates capacitor.settings.gradle for this runner's pnpm layout
-      # and copies out/ into android/app/src/main/assets/public
-      - name: Sync web assets into the android project
-        run: pnpm exec cap sync android
 
       - name: Enable KVM for emulator smoke test
         run: |
