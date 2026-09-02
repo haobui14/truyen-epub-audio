@@ -3,6 +3,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState, useEffect, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { PlayerProvider } from "@/context/PlayerContext";
+import { ConnectivityProvider } from "@/context/ConnectivityContext";
+import { OverlayProvider } from "@/context/OverlayContext";
+import { NoticeProvider } from "@/context/NoticeContext";
+import { App } from "@capacitor/app";
+import { BridgeCompatibilityNotice } from "@/components/BridgeCompatibilityNotice";
 import { flushProgressQueue } from "@/lib/progressQueue";
 import { getTtsBridge } from "@/lib/backgroundLock";
 import { hydrateAuthFromNative } from "@/lib/auth";
@@ -37,7 +42,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       }),
   );
 
-  // On native, restore auth from SharedPreferences into localStorage.
+  // On native, hydrate the Keystore-backed auth blob into memory only.
   // After hydration, sync role from server and invalidate all queries.
   useEffect(() => {
     // Uncaught errors / rejections → POST /api/client-log. Installed before
@@ -106,11 +111,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
   // token expires while backgrounded and the first API call after resume
   // triggers a 401 → clearAuth() → user gets logged out.
   useEffect(() => {
-    const handleVisibilityChange = async () => {
-      if (document.visibilityState !== "visible") return;
+    const handleForeground = async () => {
       if (isNativePlatform()) {
         await hydrateAuthFromNative();
       }
+      window.dispatchEvent(new Event("app-foreground"));
       if (isLoggedIn() && getRefreshToken()) {
         const ok = await tryRefreshToken();
         if (ok === false) {
@@ -125,9 +130,25 @@ export function Providers({ children }: { children: React.ReactNode }) {
         }
       }
     };
+    if (isNativePlatform()) {
+      let removed = false;
+      let cleanup = () => {};
+      void App.addListener("appStateChange", ({ isActive }) => {
+        if (isActive) void handleForeground();
+      }).then((listener) => {
+        if (removed) void listener.remove();
+        else cleanup = () => void listener.remove();
+      });
+      return () => {
+        removed = true;
+        cleanup();
+      };
+    }
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") void handleForeground();
+    };
     document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () =>
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, [queryClient]);
 
   // Proactively refresh the access token every 45 minutes while the app is
@@ -158,11 +179,18 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <PlayerProvider>
-        <NativeUrlRestorer />
-        <UpdateNotice />
-        {children}
-      </PlayerProvider>
+      <ConnectivityProvider>
+        <OverlayProvider>
+          <PlayerProvider>
+            <NoticeProvider>
+              <NativeUrlRestorer />
+              <UpdateNotice />
+              <BridgeCompatibilityNotice />
+              {children}
+            </NoticeProvider>
+          </PlayerProvider>
+        </OverlayProvider>
+      </ConnectivityProvider>
     </QueryClientProvider>
   );
 }

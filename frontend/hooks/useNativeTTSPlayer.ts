@@ -7,6 +7,7 @@ import {
   getTtsBridge,
 } from "@/lib/backgroundLock";
 import { splitIntoChunks } from "@/lib/textChunks";
+import { reportClientBreadcrumb } from "@/lib/errorReporter";
 
 export interface NativeVoiceOption {
   /** Player voice value: "native:vi-VN-default" or "native:voice:<name>". */
@@ -254,11 +255,19 @@ export function useNativeTTSPlayer(
       setIsBuffering(false);
       setChunkIndex(safeIdx);
       chunkRef.current = safeIdx;
+      reportClientBreadcrumb("playback", "start", "native-bridge-dispatched", {
+        chapter_id: chapterIdRef.current,
+        chunk_index: safeIdx,
+        chunk_count: chunksRef.current.length,
+      });
     } catch {
       // Bridge call failed — clear buffering so UI isn't stuck
       playingRef.current = false;
       setIsPlaying(false);
       setIsBuffering(false);
+      reportClientBreadcrumb("playback", "start-failed", "native-bridge", {
+        chapter_id: chapterIdRef.current,
+      });
     }
   }, []);
 
@@ -334,6 +343,9 @@ export function useNativeTTSPlayer(
       // each may resolve the same chapter ID. Only navigate once per chapter.
       if (resolvedChId && resolvedChId === lastAdvancedChapterRef.current) return;
       lastAdvancedChapterRef.current = resolvedChId;
+      reportClientBreadcrumb("playback", "chapter-advance", "native-event", {
+        chapter_id: resolvedChId,
+      });
 
       // Coalesce burst navigation: wait one tick and only navigate to the
       // FINAL chapter of the burst. A lone advance (the normal screen-on case)
@@ -367,6 +379,9 @@ export function useNativeTTSPlayer(
       // chapter with autoplay, restarting the playback the timer just stopped.
       // chunkIndex is kept so resume continues from the same spot.
       if ((e as CustomEvent<{ sleep?: boolean }>).detail?.sleep) {
+        reportClientBreadcrumb("playback", "stopped", "sleep-timer", {
+          chapter_id: chapterIdRef.current,
+        });
         chapterAdvancedRef.current = false;
         // On the last chapter (no onEnded) playback can't continue anyway —
         // release the KeepAwake lock like the natural-done path does, or the
@@ -390,6 +405,9 @@ export function useNativeTTSPlayer(
       // When there IS an onEnded (next chapter exists), keep the lock so the
       // service stays alive for seamless autoPlay on the next chapter.
       if (!onEndedRef.current) {
+        reportClientBreadcrumb("playback", "completed", "final-chapter", {
+          chapter_id: chapterIdRef.current,
+        });
         releaseBackgroundLock();
       }
     };
@@ -414,7 +432,8 @@ export function useNativeTTSPlayer(
     };
 
     const onNativeError = (e: Event) => {
-      const msg = (e as CustomEvent).detail?.message ?? "Lỗi giọng đọc";
+      const detail = (e as CustomEvent).detail;
+      const msg = detail?.message ?? "Lỗi giọng đọc";
       setTtsError(msg);
       playingRef.current = false;
       setIsPlaying(false);
@@ -424,6 +443,10 @@ export function useNativeTTSPlayer(
       try {
         getTtsBridge()?.stopPlayback();
       } catch {}
+      reportClientBreadcrumb("playback", "tts-failed", "native-event", {
+        code: detail?.code ?? "unknown",
+        chapter_id: chapterIdRef.current,
+      });
     };
 
     window.addEventListener("native-tts-chunk", onChunk);

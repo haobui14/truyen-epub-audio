@@ -66,3 +66,5 @@ frontend/android/app/debug/
 
 # Book conversion working files (Chinese source, translated chapters)
 work/
+# task-local package cache
+/.pnpm-store/

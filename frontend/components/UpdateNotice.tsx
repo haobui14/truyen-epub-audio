@@ -8,9 +8,10 @@
  * a dismissible banner when this build is older. Dismissal is remembered per
  * version, so each release nags at most until it's dismissed once.
  */
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { api } from "@/lib/api";
 import { isNativePlatform } from "@/lib/capacitor";
+import { useNotices } from "@/context/NoticeContext";
 
 const CURRENT = process.env.NEXT_PUBLIC_APP_VERSION || "0.0.0";
 
@@ -27,10 +28,7 @@ function isNewer(latest: string, current: string): boolean {
 }
 
 export function UpdateNotice() {
-  const [notice, setNotice] = useState<{
-    latest: string;
-    downloadUrl: string | null;
-  } | null>(null);
+  const { showNotice } = useNotices();
 
   useEffect(() => {
     if (!isNativePlatform()) return;
@@ -38,50 +36,32 @@ export function UpdateNotice() {
     const timer = setTimeout(async () => {
       try {
         const v = await api.getAppVersion();
-        if (!isNewer(v.latest, CURRENT)) return;
-        if (localStorage.getItem(`update-dismissed-${v.latest}`)) return;
-        setNotice({ latest: v.latest, downloadUrl: v.download_url });
+        const latest = v.version_name || v.latest;
+        const mandatory = !!v.minimum_supported_version &&
+          isNewer(v.minimum_supported_version, CURRENT);
+        if (!isNewer(latest, CURRENT)) return;
+        if (!mandatory && localStorage.getItem(`update-dismissed-${latest}`)) return;
+        showNotice({
+          id: `app-update-${latest}`,
+          title: mandatory
+            ? `Cần cập nhật TruyệnAudio (${latest})`
+            : `Có bản cập nhật mới (${latest})`,
+          message: `Bạn đang dùng bản ${CURRENT}${v.download_url ? " — tải bản mới để cập nhật." : "."}${v.sha256 ? ` Mã kiểm tra: ${v.sha256.slice(0, 12)}…` : ""}`,
+          actionLabel: v.download_url ? "Tải về" : undefined,
+          onAction: v.download_url
+            ? () => window.open(v.download_url!, "_blank", "noopener,noreferrer")
+            : undefined,
+          onDismiss: mandatory
+            ? undefined
+            : () => localStorage.setItem(`update-dismissed-${latest}`, "1"),
+          durationMs: null,
+        });
       } catch {
         // Offline or backend down — try again next app start.
       }
     }, 8000);
     return () => clearTimeout(timer);
-  }, []);
+  }, [showNotice]);
 
-  if (!notice) return null;
-
-  return (
-    <div className="fixed bottom-20 left-4 right-4 z-50 rounded-2xl bg-accent/10 ring-1 ring-accent/30 backdrop-blur-md px-4 py-3 flex items-center gap-3">
-      <div className="flex-1 min-w-0">
-        <p className="text-sm text-text font-medium">
-          Có bản cập nhật mới ({notice.latest})
-        </p>
-        <p className="text-xs text-text-mute mt-0.5">
-          Bạn đang dùng bản {CURRENT}
-          {notice.downloadUrl ? " — tải bản mới để cập nhật." : "."}
-        </p>
-      </div>
-      {notice.downloadUrl && (
-        <a
-          href={notice.downloadUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="shrink-0 text-sm font-medium text-accent"
-        >
-          Tải về
-        </a>
-      )}
-      <button
-        type="button"
-        aria-label="Đóng"
-        className="shrink-0 text-text-mute hover:text-text px-1"
-        onClick={() => {
-          localStorage.setItem(`update-dismissed-${notice.latest}`, "1");
-          setNotice(null);
-        }}
-      >
-        ✕
-      </button>
-    </div>
-  );
+  return null;
 }

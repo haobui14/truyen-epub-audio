@@ -46,6 +46,7 @@ import {
 import { useSleepTimer } from "@/hooks/useSleepTimer";
 import { api } from "@/lib/api";
 import { isLoggedIn } from "@/lib/auth";
+import { buildPlayerSessionSnapshot } from "@/lib/playerSession";
 
 const VOICE_STORAGE_KEY = "tts-voice";
 const RATE_STORAGE_KEY = "tts-playback-rate";
@@ -67,7 +68,28 @@ export interface PlayerTrack {
   autoPlay?: boolean;
 }
 
+/**
+ * The only playback shape consumer chrome should read. It deliberately merges
+ * a React-owned track with a session restored by the Android foreground
+ * service so visibility, metadata, and reserved layout space cannot disagree.
+ */
+export interface PlayerSessionSnapshot {
+  active: boolean;
+  source: "none" | "track" | "native-restored";
+  bookId: string;
+  bookTitle: string;
+  coverUrl: string | null;
+  chapterId: string;
+  chapterTitle: string;
+  chunkIndex: number;
+  totalChunks: number;
+  progress: number;
+  isPlaying: boolean;
+  isBuffering: boolean;
+}
+
 interface PlayerContextValue {
+  session: PlayerSessionSnapshot;
   // Current track (null = nothing loaded yet)
   track: PlayerTrack | null;
   setTrack: (track: PlayerTrack) => void;
@@ -241,7 +263,7 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
     if (storedRate) playerStateRef.current.changeRate(parseFloat(storedRate));
     if (storedPitch)
       playerStateRef.current.changePitch(parseFloat(storedPitch));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   // 2. Fetch settings from backend when logged in
   const { data: userSettings } = useQuery({
@@ -650,7 +672,15 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
       : "paused";
   }, [track?.chapter?.title, track?.book?.title, playerState.isPlaying]);
 
+  const session: PlayerSessionSnapshot = buildPlayerSessionSnapshot({
+    nativeEnabled: isNativeVoice,
+    nativeSession: nativeChapterOverride,
+    track,
+    player: playerState,
+  });
+
   const value: PlayerContextValue = {
+    session,
     track,
     setTrack,
     clearTrack,

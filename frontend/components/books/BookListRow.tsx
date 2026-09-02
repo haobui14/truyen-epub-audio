@@ -28,7 +28,7 @@ export function BookListRow({ book }: { book: Book }) {
   return (
     <Link
       href={`/book?id=${book.id}`}
-      className="flex items-start gap-3 sm:gap-4 bg-surface dark:bg-raised rounded-2xl border border-hairline-soft dark:border-hairline/60 hover:border-accent/40 dark:hover:border-accent/40/60 shadow-sm hover:shadow-md active:scale-[0.99] transition-all duration-200 p-3 group"
+      className="flex items-start gap-3 sm:gap-4 bg-surface dark:bg-raised rounded-2xl border border-hairline-soft dark:border-hairline/60 hover:border-accent/40 dark:hover:border-accent/40/60 shadow-sm hover:shadow-md active:scale-[0.96] transition-[transform,box-shadow,border-color] duration-200 p-3 group"
     >
       {/* Cover thumbnail */}
       <div className="flex-none w-14 sm:w-16 aspect-2/3 rounded-xl overflow-hidden bg-linear-to-br from-raised to-raised-hi dark:from-raised dark:to-raised-hi relative shadow-sm">

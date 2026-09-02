@@ -193,10 +193,13 @@ export default function ProfilePage() {
   // Keep user state in sync with any auth changes (login, token refresh, saves)
   // Initial read is deferred to useEffect to avoid SSR/hydration mismatch on Vercel
   useEffect(() => {
-    setUser(getUser());
+    const initialRead = window.setTimeout(() => setUser(getUser()), 0);
     const sync = () => setUser(getUser());
     window.addEventListener("auth-change", sync);
-    return () => window.removeEventListener("auth-change", sync);
+    return () => {
+      window.clearTimeout(initialRead);
+      window.removeEventListener("auth-change", sync);
+    };
   }, []);
 
   const [editOpen, setEditOpen] = useState(false);
@@ -333,9 +336,12 @@ export default function ProfilePage() {
           {/* Avatar + edit button */}
           <div className="relative shrink-0">
             {user.avatar_base64 ? (
-              <img
+              <Image
                 src={user.avatar_base64}
                 alt="avatar"
+                width={64}
+                height={64}
+                unoptimized
                 className="w-16 h-16 rounded-2xl object-cover shadow-md"
               />
             ) : (
@@ -390,7 +396,7 @@ export default function ProfilePage() {
             </div>
             <div className="h-2.5 bg-raised dark:bg-raised-hi rounded-full overflow-hidden">
               <div
-                className="h-full rounded-full transition-all duration-500"
+                className="h-full rounded-full transition-[width] duration-500"
                 style={{ width: `${progress * 100}%`, backgroundColor: lvl.color }}
               />
             </div>
@@ -492,9 +498,12 @@ export default function ProfilePage() {
                 aria-label="Chọn ảnh đại diện"
               >
                 {editAvatar ? (
-                  <img
+                  <Image
                     src={editAvatar}
                     alt="preview"
+                    width={80}
+                    height={80}
+                    unoptimized
                     className="w-20 h-20 rounded-2xl object-cover shadow"
                   />
                 ) : (

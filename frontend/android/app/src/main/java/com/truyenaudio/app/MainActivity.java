@@ -1,28 +1,30 @@
 package com.truyenaudio.app;
 
-import android.Manifest;
 import android.app.DownloadManager;
-import android.content.pm.PackageManager;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.webkit.URLUtil;
 import android.webkit.WebView;
 
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
-    private static final int REQ_POST_NOTIFICATIONS = 1001;
-
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        NativeCrashStore.install(this);
         super.onCreate(savedInstanceState);
+
+        // Target SDK 36 is edge-to-edge by definition. Opt in explicitly on
+        // older supported releases too, then forward measured insets to CSS so
+        // cutouts, gesture navigation, three-button nav, and landscape all use
+        // one native source of truth.
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
 
         // The UI is dark, so force light (white) status-bar and nav-bar icons.
         // Without this some OEM/OS versions default to dark icons that vanish
@@ -36,6 +38,26 @@ public class MainActivity extends BridgeActivity {
 
         WebView webView = getBridge().getWebView();
         webView.addJavascriptInterface(new TtsBridge(this, webView), "TtsBridge");
+        webView.addJavascriptInterface(new OfflineBridge(this), "OfflineBridge");
+        ViewCompat.setOnApplyWindowInsetsListener(webView, (view, windowInsets) -> {
+            androidx.core.graphics.Insets bars = windowInsets.getInsets(
+                    WindowInsetsCompat.Type.systemBars()
+                            | WindowInsetsCompat.Type.displayCutout());
+            float density = getResources().getDisplayMetrics().density;
+            final float top = bars.top / density;
+            final float right = bars.right / density;
+            final float bottom = bars.bottom / density;
+            final float left = bars.left / density;
+            webView.post(() -> webView.evaluateJavascript(
+                    "document.documentElement.style.setProperty('--sat-native','" + top + "px');"
+                            + "document.documentElement.style.setProperty('--sar-native','" + right + "px');"
+                            + "document.documentElement.style.setProperty('--sab-native','" + bottom + "px');"
+                            + "document.documentElement.style.setProperty('--sal-native','" + left + "px');"
+                            + "window.dispatchEvent(new CustomEvent('native-insets-change'));",
+                    null));
+            return windowInsets;
+        });
+        ViewCompat.requestApplyInsets(webView);
 
         // The WebView silently drops responses served with Content-Disposition:
         // attachment — the tap just does nothing. Route them to DownloadManager
@@ -59,43 +81,5 @@ public class MainActivity extends BridgeActivity {
             }
         });
 
-        // Android 13+ requires a runtime permission for the foreground-service
-        // notification to display. Without it, the media notification (and
-        // therefore lock-screen / BT controls) silently never appears.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
-                    != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(
-                        this,
-                        new String[]{Manifest.permission.POST_NOTIFICATIONS},
-                        REQ_POST_NOTIFICATIONS);
-            }
-        }
-    }
-
-    private long lastBackPressedMs = 0;
-
-    @Override
-    public void onBackPressed() {
-        // Pop WebView history first so the hardware back button navigates
-        // within the app (e.g. listen → book detail) instead of exiting on
-        // the first press, especially when the app cold-starts onto a deep
-        // link like /listen?id=…
-        WebView webView = getBridge() != null ? getBridge().getWebView() : null;
-        if (webView != null && webView.canGoBack()) {
-            webView.goBack();
-            return;
-        }
-        // At the root with no history: require a second press within 2s before
-        // exiting, so a stray back tap can't kill the app (and stop playback)
-        // out from under the user.
-        long now = System.currentTimeMillis();
-        if (now - lastBackPressedMs < 2000) {
-            super.onBackPressed();
-        } else {
-            lastBackPressedMs = now;
-            android.widget.Toast.makeText(
-                    this, "Nhấn back lần nữa để thoát", android.widget.Toast.LENGTH_SHORT).show();
-        }
     }
 }

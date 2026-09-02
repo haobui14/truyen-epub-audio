@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import Image from "next/image";
-import { useMemo, useSyncExternalStore } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { getCachedBooks, cacheBooks } from "@/lib/bookCache";
@@ -9,6 +9,8 @@ import { isAdmin, isLoggedIn } from "@/lib/auth";
 import { SpotlightCard } from "@/components/books/SpotlightCard";
 import { BookScrollRow } from "@/components/books/BookScrollRow";
 import { getColorClasses } from "@/components/books/GenreManager";
+import { ConnectivityStatus } from "@/components/ui/ConnectivityStatus";
+import { AsyncState } from "@/components/ui/AsyncState";
 
 // ── Recent-progress mini-card ─────────────────────────────────────────────────
 function RecentCard({
@@ -72,7 +74,7 @@ function RecentCard({
         {!isLastChapter && book.total_chapters > 0 && (
           <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-black/40">
             <div
-              className="h-full bg-accent transition-all"
+              className="h-full bg-accent transition-[width]"
               style={{
                 width: `${Math.round(((chapter.chapter_index + 1) / book.total_chapters) * 100)}%`,
               }}
@@ -125,6 +127,7 @@ function greetingForHour(h: number): string {
 
 // ── Home page ─────────────────────────────────────────────────────────────────
 export default function HomePage() {
+  const [usingCachedBooks, setUsingCachedBooks] = useState(false);
   const admin = useSyncExternalStore(
     (cb) => {
       window.addEventListener("auth-change", cb);
@@ -147,16 +150,21 @@ export default function HomePage() {
     data: books,
     isLoading,
     error,
+    refetch,
   } = useQuery({
     queryKey: ["books"],
     queryFn: async () => {
       try {
         const data = await api.listBooks();
+        setUsingCachedBooks(false);
         cacheBooks(data).catch(() => {});
         return data;
       } catch {
         const cached = await getCachedBooks();
-        if (cached) return cached;
+        if (cached) {
+          setUsingCachedBooks(true);
+          return cached;
+        }
         throw new Error("offline");
       }
     },
@@ -233,6 +241,7 @@ export default function HomePage() {
 
   return (
     <div>
+      <ConnectivityStatus cached={usingCachedBooks} />
       {/* Greeting hero — same view for guests and members; guests get a
           one-line pointer to what an account adds instead of "Đang nghe". */}
       {(hasBooks || isLoading) && (
@@ -299,7 +308,7 @@ export default function HomePage() {
           {admin && (
             <Link
               href="/upload"
-              className="inline-flex items-center gap-2 bg-accent text-ink font-medium px-6 py-3 rounded-md hover:bg-accent-dim active:scale-[0.98] transition-all shadow-[0_0_24px_var(--color-accent-glow)]"
+              className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-accent px-6 py-3 font-medium text-ink shadow-[0_0_24px_var(--color-accent-glow)] transition-[background-color,transform] hover:bg-accent-dim active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
             >
               <svg
                 className="w-5 h-5"
@@ -343,7 +352,7 @@ export default function HomePage() {
                 {admin && (
                   <Link
                     href="/admin/manage-books"
-                    className="p-2 rounded-md text-text-faint hover:text-accent hover:bg-raised transition-colors"
+                    className="inline-flex size-11 items-center justify-center rounded-lg text-text-faint transition-[color,background-color,transform] hover:bg-raised hover:text-accent active:scale-[0.96]"
                     title="Quản lý truyện"
                   >
                     <svg
@@ -379,27 +388,12 @@ export default function HomePage() {
       {isLoading && <LibrarySkeleton />}
 
       {error && (
-        <div className="text-center py-24">
-          <svg
-            className="w-12 h-12 mx-auto mb-3 text-vermillion/60"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={1.5}
-              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z"
-            />
-          </svg>
-          <p className="text-vermillion font-medium">
-            Không thể tải danh sách truyện
-          </p>
-          <p className="text-sm text-text-faint mt-1">
-            Vui lòng kiểm tra kết nối và thử lại.
-          </p>
-        </div>
+        <AsyncState
+          kind="error"
+          title="Không thể tải danh sách truyện"
+          message="Chưa có bản đã lưu. Hãy kiểm tra kết nối và thử lại."
+          onAction={() => void refetch()}
+        />
       )}
 
       {/* Sections */}

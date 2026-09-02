@@ -215,9 +215,14 @@ export const api = {
   // Latest distributed APK version — the native build compares it against its
   // baked NEXT_PUBLIC_APP_VERSION and shows an update notice when behind.
   getAppVersion: () =>
-    request<{ latest: string; download_url: string | null }>(
-      "/api/app-version",
-    ),
+    request<{
+      latest: string;
+      version_name: string;
+      version_code: number;
+      download_url: string | null;
+      sha256: string | null;
+      minimum_supported_version: string | null;
+    }>("/api/app-version"),
   // URL of the generated EPUB export — used directly on Android, where
   // DownloadManager fetches it itself and must be handed the bearer token
   // separately (see TtsBridge.downloadFile).

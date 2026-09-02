@@ -123,7 +123,7 @@ export default function LoginPage() {
         <button
           type="submit"
           disabled={loading}
-          className="w-full py-2.5 bg-accent text-white text-sm font-medium rounded-xl hover:bg-accent-dim active:scale-[0.98] disabled:opacity-50 transition-all shadow-sm"
+          className="min-h-11 w-full py-2.5 bg-accent text-white text-sm font-medium rounded-xl hover:bg-accent-dim active:scale-[0.96] disabled:opacity-50 transition-[transform,background-color,box-shadow,opacity] shadow-sm"
         >
           {loading
             ? "Đang xử lý..."

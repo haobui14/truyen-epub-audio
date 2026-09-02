@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { UploadZone } from "@/components/upload/UploadZone";
 import { Spinner } from "@/components/ui/Spinner";
@@ -159,9 +160,12 @@ export default function UploadPage() {
             <div className="flex items-center gap-4">
               {coverPreview ? (
                 <div className="relative w-16 h-20 shrink-0">
-                  <img
+                  <Image
                     src={coverPreview}
                     alt="Cover preview"
+                    width={64}
+                    height={80}
+                    unoptimized
                     className="w-full h-full object-cover rounded-lg border border-hairline-soft dark:border-hairline"
                   />
                   <button
@@ -292,7 +296,7 @@ export default function UploadPage() {
               </div>
               <div className="w-full h-2 bg-raised-hi dark:bg-raised-hi rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-accent rounded-full transition-all duration-200"
+                  className="h-full bg-accent rounded-full transition-[width] duration-200"
                   style={{ width: `${uploadProgress}%` }}
                 />
               </div>
@@ -303,7 +307,7 @@ export default function UploadPage() {
             <button
               type="submit"
               disabled={!file || isUploading}
-              className="flex-1 flex items-center justify-center gap-2 bg-accent text-white font-semibold py-3 rounded-xl hover:bg-accent-dim active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md"
+              className="min-h-11 flex-1 flex items-center justify-center gap-2 bg-accent text-white font-semibold py-3 rounded-xl hover:bg-accent-dim active:scale-[0.96] disabled:opacity-50 disabled:cursor-not-allowed transition-[transform,background-color,box-shadow,opacity] shadow-sm hover:shadow-md"
             >
               {isUploading ? (
                 <>
@@ -335,7 +339,7 @@ export default function UploadPage() {
               <button
                 type="button"
                 onClick={handleCancel}
-                className="px-4 py-3 rounded-xl border border-hairline dark:border-hairline text-sm font-medium text-text-dim dark:text-text-faint hover:border-vermillion/40 hover:text-vermillion hover:bg-vermillion/10 dark:hover:bg-vermillion/15 active:scale-[0.99] transition-all"
+                className="min-h-11 px-4 py-3 rounded-xl border border-hairline dark:border-hairline text-sm font-medium text-text-dim dark:text-text-faint hover:border-vermillion/40 hover:text-vermillion hover:bg-vermillion/10 dark:hover:bg-vermillion/15 active:scale-[0.96] transition-[transform,background-color,border-color,color]"
               >
                 Hủy
               </button>

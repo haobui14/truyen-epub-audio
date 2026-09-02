@@ -1,17 +1,20 @@
 "use client";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useSearchParams, useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { isLoggedIn, isAdmin, getToken } from "@/lib/auth";
 import { ChapterList } from "@/components/books/ChapterList";
+import { ChapterPickerSheet } from "@/components/books/ChapterPickerSheet";
 import { Spinner } from "@/components/ui/Spinner";
+import { AsyncState } from "@/components/ui/AsyncState";
+import { ConnectivityStatus } from "@/components/ui/ConnectivityStatus";
 import { GenreTag } from "@/components/books/GenreManager";
 import {
-  cacheChapterText,
   getCachedChapterEntry,
   canUseCachedChapterText,
+  evictChapterText,
 } from "@/lib/chapterTextCache";
 import { getLocalBookProgress } from "@/lib/progressQueue";
 import { isNativePlatform } from "@/lib/capacitor";
@@ -26,6 +29,14 @@ import {
   cacheCover,
 } from "@/lib/bookCache";
 import type { Chapter } from "@/types";
+import { API_URL } from "@/lib/constants";
+import { reportClientBreadcrumb } from "@/lib/errorReporter";
+import {
+  classifyOfflineError,
+  getOfflineRepository,
+  utf8Bytes,
+  type OfflineBookState,
+} from "@/lib/offlineRepository";
 
 export default function BookDetailPage() {
   const params = useParams();
@@ -36,15 +47,11 @@ export default function BookDetailPage() {
   const [page, setPage] = useState(1);
   const [admin, setAdmin] = useState(false);
   const [coverSrc, setCoverSrc] = useState<string | undefined>(undefined);
-  const [dlProgress, setDlProgress] = useState<{
-    done: number;
-    total: number;
-  } | null>(null);
-  const [dlDone, setDlDone] = useState(false);
-  // Count of chapters actually (re)fetched in the most recent run — null
-  // before any run. Shown as a caption on re-checks so tapping the button
-  // again after an admin edit visibly confirms whether anything changed.
-  const [dlUpdatedCount, setDlUpdatedCount] = useState<number | null>(null);
+  const [usingCachedBook, setUsingCachedBook] = useState(false);
+  const [usingCachedChapters, setUsingCachedChapters] = useState(false);
+  const offlineRepository = useMemo(() => getOfflineRepository(), []);
+  const [offlineState, setOfflineState] = useState<OfflineBookState | null>(null);
+  const downloadRunRef = useRef(0);
   const [epubState, setEpubState] = useState<"idle" | "working" | "done">(
     "idle",
   );
@@ -52,6 +59,7 @@ export default function BookDetailPage() {
   // Shown when a guest taps a button whose endpoint now needs an approved
   // account — friendlier than letting the request come back 401.
   const [gateMsg, setGateMsg] = useState<string | null>(null);
+  const [chapterPickerOpen, setChapterPickerOpen] = useState(false);
 
   useEffect(() => {
     const sync = () => setAdmin(isAdmin());
@@ -69,16 +77,50 @@ export default function BookDetailPage() {
     }
   }, [bookId]);
 
-  const { data: book, isLoading: bookLoading } = useQuery({
+  useEffect(() => {
+    if (!bookId) return;
+    let cancelled = false;
+    void offlineRepository.getBookState(bookId).then((state) => {
+      if (!cancelled) setOfflineState(state);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [bookId, offlineRepository]);
+
+  useEffect(() => {
+    if (!bookId || offlineState?.status !== "downloading") return;
+    let cancelled = false;
+    const refresh = async () => {
+      const next = await offlineRepository.getBookState(bookId);
+      if (!cancelled && next) setOfflineState(next);
+    };
+    const timer = window.setInterval(() => void refresh(), 1_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [bookId, offlineRepository, offlineState?.status]);
+
+  const {
+    data: book,
+    isLoading: bookLoading,
+    error: bookError,
+    refetch: refetchBook,
+  } = useQuery({
     queryKey: ["book", bookId],
     queryFn: async () => {
       try {
         const data = await api.getBook(bookId);
+        setUsingCachedBook(false);
         cacheBook(data).catch(() => {});
         return data;
       } catch {
         const cached = await getCachedBook(bookId);
-        if (cached) return cached;
+        if (cached) {
+          setUsingCachedBook(true);
+          return cached;
+        }
         throw new Error("offline");
       }
     },
@@ -93,16 +135,24 @@ export default function BookDetailPage() {
 
   const isParsing = book?.status === "pending" || book?.status === "parsing";
 
-  const { data: chaptersData, isLoading: chaptersLoading } = useQuery({
+  const {
+    data: chaptersData,
+    isLoading: chaptersLoading,
+    refetch: refetchChapters,
+  } = useQuery({
     queryKey: ["chapters", bookId, page],
     queryFn: async () => {
       try {
         const data = await api.getBookChapters(bookId, page);
+        setUsingCachedChapters(false);
         cacheChapters(bookId, page, data).catch(() => {});
         return data;
       } catch {
         const cached = await getCachedChapters(bookId, page);
-        if (cached) return cached;
+        if (cached) {
+          setUsingCachedChapters(true);
+          return cached;
+        }
         throw new Error("offline");
       }
     },
@@ -182,22 +232,42 @@ export default function BookDetailPage() {
   }, [bookId]);
 
   async function handleDownloadBook() {
-    if (dlProgress) return;
+    if (offlineState?.status === "downloading") return;
     if (!isLoggedIn()) {
       setGateMsg("Cần đăng nhập để tải truyện về máy");
       return;
     }
-    // Re-triggerable: a chapter whose cached copy already matches the
-    // server's current version is skipped near-instantly (see
-    // canUseCachedChapterText below), so re-running this after the first
-    // download is a cheap "check for updates", not a full re-download.
-    setDlUpdatedCount(null);
+    const runId = ++downloadRunRef.current;
+    const startedAt = Date.now();
+    let state: OfflineBookState = {
+      book_id: bookId,
+      book_title: book?.title ?? "",
+      status: "downloading",
+      total_chapters: offlineState?.total_chapters ?? 0,
+      completed_chapters: offlineState?.completed_chapters ?? 0,
+      failed_chapters: 0,
+      stale_chapters: 0,
+      bytes_total: offlineState?.bytes_total ?? 0,
+      chapter_ids: offlineState?.chapter_ids ?? [],
+      failed_chapter_ids: [],
+      version: offlineState?.version ?? null,
+      last_successful_sync: offlineState?.last_successful_sync ?? null,
+      updated_at: startedAt,
+    };
+    const persist = async (next: OfflineBookState) => {
+      state = next;
+      setOfflineState(next);
+      await offlineRepository.saveBookState(next);
+    };
 
-    if (book) cacheBook(book).catch(() => {});
+    try {
+      await persist(state);
+      if (book) await cacheBook(book);
 
-    if (book?.cover_url) {
-      try {
+      if (book?.cover_url) {
+        try {
         const resp = await fetch(book.cover_url);
+        if (!resp.ok) throw new Error(`cover-${resp.status}`);
         const blob = await resp.blob();
         const dataUrl = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
@@ -207,59 +277,204 @@ export default function BookDetailPage() {
         });
         await cacheCover(bookId, dataUrl);
         setCoverSrc(dataUrl);
-      } catch {
-        // best-effort
-      }
-    }
-
-    const PAGE_SIZE = 1000;
-    const allChapters: Chapter[] = [];
-    let lastRes: Awaited<ReturnType<typeof api.getBookChapters>> | null = null;
-    let pg = 1;
-    while (true) {
-      const res = await api.getBookChapters(bookId, pg, PAGE_SIZE);
-      cacheChapters(bookId, pg, res).catch(() => {});
-      allChapters.push(...res.items);
-      lastRes = res;
-      if (pg >= res.total_pages) break;
-      pg++;
-    }
-    if (lastRes && allChapters.length > 0) {
-      cacheAllChapters(bookId, {
-        ...lastRes,
-        items: allChapters,
-        total: allChapters.length,
-        page: 1,
-        total_pages: 1,
-      }).catch(() => {});
-    }
-
-    if (allChapters.length === 0) return;
-    const total = allChapters.length;
-    setDlProgress({ done: 0, total });
-    let done = 0;
-    let updated = 0;
-    for (const ch of allChapters) {
-      try {
-        const cached = await getCachedChapterEntry(ch.id);
-        // Re-download when never cached OR the cached copy predates the
-        // chapter's current server version (an admin edit since the last
-        // "Tải truyện offline" run) — otherwise re-running this button would
-        // never pick up edits to already-downloaded chapters.
-        if (!cached || !canUseCachedChapterText(cached, ch.updated_at)) {
-          const result = await api.getChapterText(ch.id);
-          await cacheChapterText(ch.id, result.text_content, result.updated_at);
-          updated++;
+        } catch {
+          // The text download remains useful when a remote cover is unavailable.
         }
-      } catch {
-        // skip failed chapters
       }
-      done++;
-      setDlProgress({ done, total });
+
+      const PAGE_SIZE = 1000;
+      const allChapters: Chapter[] = [];
+      let lastRes: Awaited<ReturnType<typeof api.getBookChapters>> | null = null;
+      let pg = 1;
+      while (true) {
+        const res = await api.getBookChapters(bookId, pg, PAGE_SIZE);
+        await cacheChapters(bookId, pg, res);
+        allChapters.push(...res.items);
+        lastRes = res;
+        if (pg >= res.total_pages) break;
+        pg++;
+      }
+      if (lastRes && allChapters.length > 0) {
+        await cacheAllChapters(bookId, {
+          ...lastRes,
+          items: allChapters,
+          total: allChapters.length,
+          page: 1,
+          total_pages: 1,
+        });
+      }
+
+      const total = allChapters.length;
+      const chapterIds = new Set<string>();
+      const failedIds: string[] = [];
+      let completed = 0;
+      let stale = 0;
+      let bytes = 0;
+      const version =
+        allChapters.map((chapter) => chapter.updated_at).sort().at(-1) ?? null;
+      await persist({
+        ...state,
+        total_chapters: total,
+        completed_chapters: 0,
+        version,
+        updated_at: Date.now(),
+      });
+
+      if (offlineRepository.enqueueBookDownload) {
+        // Import only complete, current legacy IndexedDB entries. Deleting after
+        // the native write succeeds makes this migration recoverable.
+        let migrated = 0;
+        for (const chapter of allChapters) {
+          const legacy = await getCachedChapterEntry(chapter.id);
+          if (!legacy || !canUseCachedChapterText(legacy, chapter.updated_at)) {
+            continue;
+          }
+          const chapterBytes = utf8Bytes(legacy.text_content);
+          await offlineRepository.saveChapter({
+            id: chapter.id,
+            book_id: bookId,
+            text_content: legacy.text_content,
+            cached_at: legacy.cached_at,
+            server_updated_at: legacy.server_updated_at,
+            bytes: chapterBytes,
+          });
+          await evictChapterText(chapter.id);
+          migrated++;
+        }
+        await offlineRepository.enqueueBookDownload({
+          bookId,
+          bookTitle: book?.title ?? "",
+          chapters: allChapters.map(({ id, updated_at }) => ({
+            id,
+            updated_at,
+          })),
+          apiBase: API_URL,
+        });
+        reportClientBreadcrumb("download", "queued", "work-manager", {
+          book_id: bookId,
+          chapter_count: total,
+          migrated_chapters: migrated,
+        });
+        return;
+      }
+
+      for (const ch of allChapters) {
+        if (downloadRunRef.current !== runId) {
+          await persist({
+            ...state,
+            status: completed > 0 ? "partial" : "error",
+            completed_chapters: completed,
+            failed_chapters: failedIds.length,
+            stale_chapters: stale,
+            bytes_total: bytes,
+            chapter_ids: [...chapterIds],
+            failed_chapter_ids: failedIds,
+            updated_at: Date.now(),
+            error_code: "cancelled",
+            error_message: "Đã dừng tải. Bạn có thể tiếp tục bất cứ lúc nào.",
+          });
+          return;
+        }
+
+        const cached = await getCachedChapterEntry(ch.id);
+        const isFresh = !!cached && canUseCachedChapterText(cached, ch.updated_at);
+        try {
+          if (isFresh && cached) {
+            chapterIds.add(ch.id);
+            completed++;
+            bytes += utf8Bytes(cached.text_content);
+          } else {
+            const result = await api.getChapterText(ch.id);
+            const chapterBytes = utf8Bytes(result.text_content);
+            await offlineRepository.saveChapter({
+              id: ch.id,
+              book_id: bookId,
+              text_content: result.text_content,
+              cached_at: Date.now(),
+              server_updated_at: result.updated_at,
+              bytes: chapterBytes,
+            });
+            chapterIds.add(ch.id);
+            completed++;
+            bytes += chapterBytes;
+          }
+        } catch {
+          failedIds.push(ch.id);
+          if (cached && !isFresh) stale++;
+        }
+        await persist({
+          ...state,
+          status: "downloading",
+          completed_chapters: completed,
+          failed_chapters: failedIds.length,
+          stale_chapters: stale,
+          bytes_total: bytes,
+          chapter_ids: [...chapterIds],
+          failed_chapter_ids: [...failedIds],
+          updated_at: Date.now(),
+        });
+      }
+
+      await persist({
+        ...state,
+        status: failedIds.length > 0 ? "partial" : "ready",
+        completed_chapters: completed,
+        failed_chapters: failedIds.length,
+        stale_chapters: stale,
+        bytes_total: bytes,
+        chapter_ids: [...chapterIds],
+        failed_chapter_ids: failedIds,
+        last_successful_sync: failedIds.length === 0 ? Date.now() : state.last_successful_sync,
+        updated_at: Date.now(),
+        error_code: failedIds.length > 0 ? "network" : undefined,
+        error_message:
+          failedIds.length > 0
+            ? `${failedIds.length} chương chưa tải được. Nhấn để thử lại.`
+            : undefined,
+      });
+      reportClientBreadcrumb(
+        "download",
+        failedIds.length > 0 ? "partial" : "complete",
+        "web-adapter",
+        {
+          book_id: bookId,
+          completed_chapters: completed,
+          failed_chapters: failedIds.length,
+        },
+      );
+    } catch (error) {
+      const failure = classifyOfflineError(error);
+      await persist({
+        ...state,
+        status: state.completed_chapters > 0 ? "partial" : "error",
+        updated_at: Date.now(),
+        ...failure,
+      });
+      reportClientBreadcrumb("download", "failed", "repository", {
+        book_id: bookId,
+        error_code: failure.error_code,
+      });
     }
-    setDlDone(true);
-    setDlProgress(null);
-    setDlUpdatedCount(updated);
+  }
+
+  async function handleCancelDownload() {
+    downloadRunRef.current++;
+    await offlineRepository.cancelBookDownload?.(bookId);
+    const next = await offlineRepository.getBookState(bookId);
+    setOfflineState(next);
+    reportClientBreadcrumb("download", "cancelled", offlineRepository.platform, {
+      book_id: bookId,
+    });
+  }
+
+  async function handleRemoveOfflineBook() {
+    downloadRunRef.current++;
+    await offlineRepository.removeBook(bookId);
+    setOfflineState(null);
+    setCoverSrc(undefined);
+    reportClientBreadcrumb("download", "removed", offlineRepository.platform, {
+      book_id: bookId,
+    });
   }
 
   async function handleDownloadEpub() {
@@ -311,37 +526,17 @@ export default function BookDetailPage() {
   }
 
   if (bookLoading) {
-    return (
-      <div className="flex justify-center py-24">
-        <Spinner className="w-8 h-8 text-accent" />
-      </div>
-    );
+    return <AsyncState kind="loading" title="Đang tải truyện" />;
   }
 
   if (!book) {
     return (
-      <div className="text-center py-24">
-        <svg
-          className="w-16 h-16 mx-auto mb-4 text-text-faint"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={1.5}
-            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z"
-          />
-        </svg>
-        <p className="text-text-mute font-medium">Không tìm thấy truyện</p>
-        <Link
-          href="/"
-          className="text-sm text-accent hover:text-accent-dim mt-2 inline-block"
-        >
-          Quay lại thư viện
-        </Link>
-      </div>
+      <AsyncState
+        kind={bookError ? "error" : "empty"}
+        title={bookError ? "Không thể tải truyện" : "Không tìm thấy truyện"}
+        message={bookError ? "Hãy kiểm tra kết nối và thử lại." : undefined}
+        onAction={bookError ? () => void refetchBook() : undefined}
+      />
     );
   }
 
@@ -359,6 +554,9 @@ export default function BookDetailPage() {
 
   return (
     <div className="max-w-4xl mx-auto">
+      <div className="mb-4">
+        <ConnectivityStatus cached={usingCachedBook || usingCachedChapters} />
+      </div>
       {/* Breadcrumb */}
       <nav className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-2 font-mono text-[10px] tracking-widest uppercase text-text-mute min-w-0">
@@ -514,7 +712,7 @@ export default function BookDetailPage() {
                     ? `/listen?id=${bookId}&chapter=${listenResumeId}`
                     : "#"
                 }
-                className="flex items-center gap-3 px-4 py-3.5 rounded-md bg-accent hover:bg-accent-dim active:scale-[0.98] transition-all text-ink group shadow-[0_0_24px_var(--color-accent-glow)]"
+                className="min-h-11 flex items-center gap-3 px-4 py-3.5 rounded-md bg-accent hover:bg-accent-dim active:scale-[0.96] transition-[transform,background-color,box-shadow] text-ink group shadow-[0_0_24px_var(--color-accent-glow)]"
               >
                 <div className="w-10 h-10 rounded-full bg-ink/15 flex items-center justify-center shrink-0 group-hover:bg-ink/25 transition-colors">
                   <svg
@@ -540,7 +738,7 @@ export default function BookDetailPage() {
                     ? `/read?id=${bookId}&chapter=${readResumeId}`
                     : "#"
                 }
-                className="flex items-center gap-3 px-4 py-3.5 rounded-md bg-raised hover:bg-raised-hi active:scale-[0.98] transition-all text-text-dim group ring-1 ring-hairline"
+                className="min-h-11 flex items-center gap-3 px-4 py-3.5 rounded-md bg-raised hover:bg-raised-hi active:scale-[0.96] transition-[transform,background-color,box-shadow] text-text-dim group ring-1 ring-hairline"
               >
                 <div className="w-10 h-10 rounded-full bg-raised-hi flex items-center justify-center shrink-0 group-hover:bg-hairline transition-colors">
                   <svg
@@ -571,28 +769,30 @@ export default function BookDetailPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <button
                 onClick={handleDownloadBook}
-                disabled={!!dlProgress}
+                disabled={offlineState?.status === "downloading"}
                 title={
-                  dlDone
+                  offlineState?.status === "ready"
                     ? "Nhấn để kiểm tra chương mới/đã sửa"
                     : undefined
                 }
-                className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium border transition-colors ${
-                  dlDone
+                className={`flex min-h-11 items-center justify-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-medium transition-[color,background-color,border-color,opacity,transform] active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100 ${
+                  offlineState?.status === "ready"
                     ? "border-accent/40 text-accent bg-accent/10 hover:bg-accent/15"
-                    : dlProgress
+                    : offlineState?.status === "downloading"
                       ? "border-accent/40 text-accent bg-accent/10"
+                      : offlineState?.status === "partial" || offlineState?.status === "error"
+                        ? "border-gold/40 text-gold bg-gold/10 hover:bg-gold/15"
                       : "border-hairline text-text-mute hover:border-accent/40 hover:text-accent hover:bg-accent/10"
                 }`}
               >
-                {dlProgress ? (
+                {offlineState?.status === "downloading" ? (
                   <>
                     <Spinner className="w-4 h-4" />
                     <span>
-                      Đang đồng bộ... {dlProgress.done}/{dlProgress.total}
+                      Đang tải... {offlineState.completed_chapters + offlineState.failed_chapters}/{offlineState.total_chapters || "?"}
                     </span>
                   </>
-                ) : dlDone ? (
+                ) : offlineState?.status === "ready" ? (
                   <>
                     <svg
                       className="w-4 h-4"
@@ -607,7 +807,21 @@ export default function BookDetailPage() {
                         d="M5 13l4 4L19 7"
                       />
                     </svg>
-                    <span>Đã lưu offline</span>
+                    <span>Đã tải · Kiểm tra cập nhật</span>
+                  </>
+                ) : offlineState?.status === "partial" ? (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v6h6M20 20v-6h-6M5.5 15a7 7 0 0011.7 2.6M18.5 9A7 7 0 006.8 6.4" />
+                    </svg>
+                    <span>Thử lại {offlineState.failed_chapters} chương</span>
+                  </>
+                ) : offlineState?.status === "error" ? (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3m0 4h.01M10.3 4.5L3 17a2 2 0 001.7 3h14.6a2 2 0 001.7-3L13.7 4.5a2 2 0 00-3.4 0z" />
+                    </svg>
+                    <span>Thử tải lại</span>
                   </>
                 ) : (
                   <>
@@ -631,7 +845,7 @@ export default function BookDetailPage() {
               <button
                 onClick={handleDownloadEpub}
                 disabled={epubState === "working"}
-                className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium border transition-colors ${
+                className={`flex min-h-11 items-center justify-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-medium transition-[color,background-color,border-color,opacity,transform] active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100 ${
                   epubState === "idle"
                     ? "border-hairline text-text-mute hover:border-accent/40 hover:text-accent hover:bg-accent/10"
                     : "border-accent/40 text-accent bg-accent/10"
@@ -683,12 +897,41 @@ export default function BookDetailPage() {
                 )}
               </button>
             </div>
-            {dlDone && dlUpdatedCount !== null && (
-              <p className="text-xs text-text-faint text-center">
-                {dlUpdatedCount > 0
-                  ? `Đã cập nhật ${dlUpdatedCount} chương — nhấn lại để kiểm tra tiếp`
-                  : "Đã là bản mới nhất — nhấn lại để kiểm tra"}
-              </p>
+            {offlineState && (
+              <div
+                className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs ${
+                  offlineState.status === "ready"
+                    ? "border-accent/25 bg-accent/5 text-accent"
+                    : offlineState.status === "downloading"
+                      ? "border-hairline bg-raised text-text-mute"
+                      : "border-gold/30 bg-gold/10 text-gold"
+                }`}
+                role={offlineState.status === "error" ? "alert" : "status"}
+              >
+                <span className="min-w-0 flex-1">
+                  {offlineState.status === "ready"
+                    ? `${offlineState.completed_chapters} chương · ${(offlineState.bytes_total / 1_048_576).toFixed(1)} MB`
+                    : offlineState.error_message ??
+                      `${offlineState.completed_chapters}/${offlineState.total_chapters} chương đã lưu`}
+                </span>
+                {offlineState.status === "downloading" ? (
+                  <button
+                    type="button"
+                    onClick={handleCancelDownload}
+                    className="min-h-11 rounded-lg px-2 font-semibold underline underline-offset-2 active:scale-[0.96]"
+                  >
+                    Dừng
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleRemoveOfflineBook}
+                    className="min-h-11 rounded-lg px-2 font-semibold text-vermillion underline underline-offset-2 active:scale-[0.96]"
+                  >
+                    Xóa bản tải
+                  </button>
+                )}
+              </div>
             )}
             {epubError && (
               <p className="text-xs text-vermillion text-center">{epubError}</p>
@@ -709,16 +952,31 @@ export default function BookDetailPage() {
       <div>
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-display text-xl text-text">Danh sách chương</h2>
-          {chaptersData && (
-            <span className="font-mono text-[10px] tracking-widest uppercase text-text-mute bg-raised border border-hairline-soft px-2.5 py-1 rounded-sm">
-              {chaptersData.total} chương
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {chaptersData && (
+              <span className="rounded-sm border border-hairline-soft bg-raised px-2.5 py-1 font-mono text-[10px] uppercase tracking-widest text-text-mute">
+                {chaptersData.total} chương
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => setChapterPickerOpen(true)}
+              className="inline-flex min-h-11 items-center rounded-xl border border-hairline px-3 text-xs font-semibold text-accent transition-[border-color,background-color,transform] hover:border-accent/40 hover:bg-accent/10 active:scale-[0.96]"
+            >
+              Tìm chương
+            </button>
+          </div>
         </div>
         {chaptersLoading ? (
-          <div className="flex justify-center py-12">
-            <Spinner className="w-6 h-6 text-accent" />
-          </div>
+          <AsyncState compact kind="loading" title="Đang tải danh sách chương" />
+        ) : !chaptersData ? (
+          <AsyncState
+            compact
+            kind="error"
+            title="Không thể tải danh sách chương"
+            message="Dữ liệu đã lưu không có trang này."
+            onAction={() => void refetchChapters()}
+          />
         ) : (
           <ChapterList
             chapters={chapters}
@@ -730,6 +988,11 @@ export default function BookDetailPage() {
           />
         )}
       </div>
+      <ChapterPickerSheet
+        bookId={bookId}
+        open={chapterPickerOpen}
+        onClose={() => setChapterPickerOpen(false)}
+      />
     </div>
   );
 }

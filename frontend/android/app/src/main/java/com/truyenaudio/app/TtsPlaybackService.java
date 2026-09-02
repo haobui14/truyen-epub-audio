@@ -4,7 +4,6 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
-import android.app.Service;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -33,9 +32,12 @@ import android.support.v4.media.MediaMetadataCompat;
 import android.support.v4.media.session.MediaSessionCompat;
 import android.support.v4.media.session.PlaybackStateCompat;
 import androidx.annotation.Nullable;
+import androidx.annotation.OptIn;
 import androidx.core.app.NotificationCompat;
 import androidx.media.app.NotificationCompat.MediaStyle;
 import androidx.media.session.MediaButtonReceiver;
+import androidx.media3.common.util.UnstableApi;
+import androidx.media3.session.MediaSessionService;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
@@ -48,7 +50,6 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
@@ -131,7 +132,8 @@ import org.json.JSONObject;
  *   <li>{@link #dispatchChapterAdvance(String, String)} — emits the JS event.</li>
  * </ul>
  */
-public class TtsPlaybackService extends Service {
+@OptIn(markerClass = UnstableApi.class)
+public class TtsPlaybackService extends MediaSessionService {
 
     private static final String TAG = "TtsPlayback";
 
@@ -183,6 +185,25 @@ public class TtsPlaybackService extends Service {
         }
     }
 
+    static final class MediaChapterSnapshot {
+        final String chapterId;
+        final String title;
+        final String bookTitle;
+        final String coverUrl;
+        final long durationMs;
+        final boolean current;
+
+        MediaChapterSnapshot(String chapterId, String title, String bookTitle,
+                String coverUrl, long durationMs, boolean current) {
+            this.chapterId = chapterId;
+            this.title = title;
+            this.bookTitle = bookTitle;
+            this.coverUrl = coverUrl;
+            this.durationMs = durationMs;
+            this.current = current;
+        }
+    }
+
     /** Functional interface for dispatching JS to the WebView. */
     public interface JsEvaluator {
         void eval(String js);
@@ -208,6 +229,9 @@ public class TtsPlaybackService extends Service {
     private final IBinder binder      = new LocalBinder();
     private Handler       mainHandler;
     private MediaSessionCompat mediaSession;
+    private androidx.media3.session.MediaSession media3Session;
+    private TtsMedia3Player media3Player;
+    private NativeOfflineStore offlineStore;
 
     // Silent MediaPlayer — plays R.raw.silence at volume 0 before each TTS chunk.
     // Android's TTS engine has its own internal MediaSession that steals earbud/
@@ -285,9 +309,7 @@ public class TtsPlaybackService extends Service {
     // correctly at any rate. Estimation error only skews the time labels —
     // seeking stays exact because onSeekTo maps the scrubbed position back to
     // a chunk index through the same table.
-    private static final float CHARS_PER_SECOND = 15f;
-    private long[] chunkStartMs      = null; // estimated start of each chunk
-    private long   chapterDurationMs = 0;    // estimated total chapter duration
+    private ChapterTimeline chapterTimeline = ChapterTimeline.fromChunks(null);
 
     // Cover art for the media notification / lockscreen. Loaded async from the
     // book's cover_url (set via updateCover) and cached by URL.
@@ -514,13 +536,25 @@ public class TtsPlaybackService extends Service {
     public void onCreate() {
         super.onCreate();
         mainHandler   = new Handler(Looper.getMainLooper());
+        offlineStore  = new NativeOfflineStore(this);
         coverExecutor = Executors.newSingleThreadExecutor();
         audioManager  = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TruyenAudio::TtsPlayback");
         wakeLock.setReferenceCounted(false);
         createNotificationChannel();
+        // During parity rollout both notification implementations share one ID,
+        // preventing duplicate media cards while Media3 controllers are tested.
+        setMediaNotificationProvider(
+                new androidx.media3.session.DefaultMediaNotificationProvider.Builder(this)
+                        .setChannelId(CHANNEL_ID)
+                        .setNotificationId(NOTIFICATION_ID)
+                        .build());
         setupMediaSession();
+        media3Player = new TtsMedia3Player(this, Looper.getMainLooper());
+        media3Session = new androidx.media3.session.MediaSession.Builder(this, media3Player)
+                .setId("TruyenAudioTTS-Media3")
+                .build();
         initTts();
 
         // Restore the last session snapshot (as paused). This gives the bridge
@@ -548,6 +582,9 @@ public class TtsPlaybackService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        // Let MediaSessionService process controller and resumption intents
+        // before applying the legacy bridge actions kept during parity mode.
+        super.onStartCommand(intent, flags, startId);
         // Must call startForeground() promptly whenever startForegroundService()
         // was used. Do it unconditionally here so we never hit the 5-second ANR
         // window, even when the service is started before playback begins.
@@ -652,6 +689,14 @@ public class TtsPlaybackService extends Service {
             mediaSession.release();
             mediaSession = null;
         }
+        if (media3Session != null) {
+            media3Session.release();
+            media3Session = null;
+        }
+        if (media3Player != null) {
+            media3Player.release();
+            media3Player = null;
+        }
         stopForeground(true);
         super.onDestroy();
     }
@@ -659,7 +704,18 @@ public class TtsPlaybackService extends Service {
     @Nullable
     @Override
     public IBinder onBind(Intent intent) {
+        if (intent != null
+                && "androidx.media3.session.MediaSessionService".equals(intent.getAction())) {
+            return super.onBind(intent);
+        }
         return binder;
+    }
+
+    @Nullable
+    @Override
+    public androidx.media3.session.MediaSession onGetSession(
+            androidx.media3.session.MediaSession.ControllerInfo controllerInfo) {
+        return media3Session;
     }
 
     // ── TTS initialisation ────────────────────────────────────────────────────
@@ -1062,7 +1118,9 @@ public class TtsPlaybackService extends Service {
         // Cold resume after a process kill: the persisted session was restored
         // (chapter id + chunk index) but the chunk text died with the process.
         // Re-fetch the chapter text and continue from the saved chunk.
-        if (currentChunks == null && !currentChapterId.isEmpty() && !selfFetchBase.isEmpty()) {
+        if (currentChunks == null && !currentChapterId.isEmpty()
+                && (!selfFetchBase.isEmpty()
+                    || !offlineStore.getChapterText(currentBookId, currentChapterId).isEmpty())) {
             resumeFromRestoredSession();
             return;
         }
@@ -1236,11 +1294,13 @@ public class TtsPlaybackService extends Service {
     public void setRate(float rate) {
         currentRate = rate;
         if (tts != null) tts.setSpeechRate(rate);
+        syncMedia3();
     }
 
     public void setPitch(float pitch) {
         currentPitch = pitch;
         if (tts != null) tts.setPitch(pitch);
+        syncMedia3();
     }
 
     /**
@@ -1698,10 +1758,16 @@ public class TtsPlaybackService extends Service {
 
         ioExecutor.execute(() -> {
             try {
-                String url  = base + "/api/chapters/" + id + "/text";
-                String body = doHttpGet(url, tok, urgent);
-                JSONObject json = new JSONObject(body);
-                String text = json.optString("text_content", "");
+                // The UI downloader and TTS service share the same app-private
+                // repository. Network is only a fallback when this chapter is
+                // not available locally.
+                String text = offlineStore.getChapterText(currentBookId, id);
+                if (text.isEmpty()) {
+                    String url  = base + "/api/chapters/" + id + "/text";
+                    String body = doHttpGet(url, tok, urgent);
+                    JSONObject json = new JSONObject(body);
+                    text = json.optString("text_content", "");
+                }
                 List<String> chunks = splitChunksJava(text, 20, 4000);
 
                 mainHandler.post(() -> {
@@ -1828,35 +1894,14 @@ public class TtsPlaybackService extends Service {
      * the legacy {@code queueAllChapters} path).</p>
      */
     private ChapterItem pollNextChapter() {
-        if (!pendingPlaylist.isEmpty()
-                && currentChapterId != null && !currentChapterId.isEmpty()) {
-            int curPos = -1;
-            for (int i = 0; i < pendingPlaylist.size(); i++) {
-                if (currentChapterId.equals(pendingPlaylist.get(i).chapterId)) {
-                    curPos = i;
-                    break;
-                }
-            }
-            if (curPos >= 0) {
-                for (int i = curPos + 1; i < pendingPlaylist.size(); i++) {
-                    String nextId = pendingPlaylist.get(i).chapterId;
-                    if (nextId == null || nextId.isEmpty()) continue;
-                    if (emptyChapterIds.contains(nextId)) continue;
-                    for (Iterator<ChapterItem> it = chapterQueue.iterator(); it.hasNext(); ) {
-                        ChapterItem item = it.next();
-                        if (nextId.equals(item.chapterId)) {
-                            it.remove();
-                            return item;
-                        }
-                    }
-                    // Successor exists but isn't queued yet — deliver NOTHING
-                    // (never a later out-of-order item); prefetch fetches this id.
-                    return null;
-                }
-                return null; // nothing after current chapter — terminal handling stays with caller
-            }
-        }
-        return chapterQueue.poll();
+        List<String> playlist = new ArrayList<>(pendingPlaylist.size());
+        for (ChapterMeta meta : pendingPlaylist) playlist.add(meta.chapterId);
+        return ChapterQueueController.pollNext(
+                chapterQueue,
+                playlist,
+                currentChapterId,
+                emptyChapterIds,
+                item -> item.chapterId);
     }
 
     /**
@@ -2117,8 +2162,9 @@ public class TtsPlaybackService extends Service {
      */
     private void resumeFromRestoredSession() {
         if (restoringSession) return;
-        if (currentChapterId == null || currentChapterId.isEmpty()
-                || selfFetchBase.isEmpty()) return;
+        if (currentChapterId == null || currentChapterId.isEmpty()) return;
+        final String offlineText = offlineStore.getChapterText(currentBookId, currentChapterId);
+        if (offlineText.isEmpty() && selfFetchBase.isEmpty()) return;
         if (currentChunks != null) {
             resumePlayback();
             return;
@@ -2144,8 +2190,11 @@ public class TtsPlaybackService extends Service {
         ioExecutor.execute(() -> {
             List<String> chunks = null;
             try {
-                String body = doHttpGet(base + "/api/chapters/" + id + "/text", tok, true);
-                String text = new JSONObject(body).optString("text_content", "");
+                String text = offlineText;
+                if (text.isEmpty()) {
+                    String body = doHttpGet(base + "/api/chapters/" + id + "/text", tok, true);
+                    text = new JSONObject(body).optString("text_content", "");
+                }
                 chunks = splitChunksJava(text, 20, 4000);
             } catch (Exception e) {
                 Log.w(TAG, "resumeFromRestoredSession fetch failed", e);
@@ -2603,42 +2652,19 @@ public class TtsPlaybackService extends Service {
 
     // ── Estimated timeline helpers (lockscreen seek bar) ─────────────────────
 
-    /** Rebuild {@link #chunkStartMs}/{@link #chapterDurationMs} from currentChunks. */
+    /** Rebuild the immutable content-time mapping from currentChunks. */
     private void recomputeChunkTimings() {
-        List<String> chunks = currentChunks;
-        if (chunks == null || chunks.isEmpty()) {
-            chunkStartMs      = null;
-            chapterDurationMs = 0;
-            return;
-        }
-        long[] starts = new long[chunks.size()];
-        long acc = 0;
-        for (int i = 0; i < chunks.size(); i++) {
-            starts[i] = acc;
-            String c = chunks.get(i);
-            acc += (long) (c.length() / CHARS_PER_SECOND * 1000f);
-        }
-        chunkStartMs      = starts;
-        chapterDurationMs = acc;
+        chapterTimeline = ChapterTimeline.fromChunks(currentChunks);
     }
 
     /** Estimated content-time position (1.0× ms) of the current chunk start. */
     private long estimatedPositionMs() {
-        long[] starts = chunkStartMs;
-        int idx = currentChunkIdx;
-        if (starts == null || starts.length == 0 || idx < 0) return 0;
-        if (idx >= starts.length) return chapterDurationMs;
-        return starts[idx];
+        return chapterTimeline.positionForChunk(currentChunkIdx);
     }
 
     /** Map a scrubbed content-time position back to a chunk index. */
     private int chunkIndexForPositionMs(long posMs) {
-        long[] starts = chunkStartMs;
-        if (starts == null || starts.length == 0) return 0;
-        for (int i = starts.length - 1; i >= 0; i--) {
-            if (starts[i] <= posMs) return i;
-        }
-        return 0;
+        return chapterTimeline.chunkForPosition(posMs);
     }
 
     private void updatePlaybackState(boolean playing) {
@@ -2663,6 +2689,7 @@ public class TtsPlaybackService extends Service {
                 .setActions(actions)
                 .setState(state, estimatedPositionMs(), speed)
                 .build());
+        syncMedia3();
     }
 
     private void setMetadata(String title) {
@@ -2677,13 +2704,57 @@ public class TtsPlaybackService extends Service {
         // Estimated chapter duration → the OS renders a seek bar on the
         // lockscreen / media notification. Omitted (unknown) when no chapter
         // text is loaded, e.g. a restored-but-cold session.
-        if (chapterDurationMs > 0) {
-            b.putLong(MediaMetadataCompat.METADATA_KEY_DURATION, chapterDurationMs);
+        if (chapterTimeline.durationMs() > 0) {
+            b.putLong(MediaMetadataCompat.METADATA_KEY_DURATION, chapterTimeline.durationMs());
         }
         // Cover art for the lockscreen media card, Android Auto, and BT displays.
         if (currentCoverBitmap != null) {
             b.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, currentCoverBitmap);
         }
         mediaSession.setMetadata(b.build());
+        syncMedia3();
+    }
+
+    List<MediaChapterSnapshot> getMediaChapterSnapshots() {
+        List<MediaChapterSnapshot> result = new ArrayList<>();
+        boolean includedCurrent = false;
+        for (ChapterMeta meta : pendingPlaylist) {
+            if (meta.chapterId == null || meta.chapterId.isEmpty()) continue;
+            boolean current = meta.chapterId.equals(currentChapterId);
+            includedCurrent |= current;
+            result.add(new MediaChapterSnapshot(
+                    meta.chapterId,
+                    meta.title == null || meta.title.isEmpty() ? currentTitle : meta.title,
+                    currentBookTitle,
+                    currentCoverUrl,
+                    current ? chapterTimeline.durationMs() : 0,
+                    current));
+        }
+        if (!includedCurrent && currentChapterId != null && !currentChapterId.isEmpty()) {
+            result.add(0, new MediaChapterSnapshot(
+                    currentChapterId, currentTitle, currentBookTitle, currentCoverUrl,
+                    chapterTimeline.durationMs(), true));
+        }
+        return result;
+    }
+
+    long getEstimatedPositionMs() {
+        return estimatedPositionMs();
+    }
+
+    float getCurrentRate() {
+        return currentRate;
+    }
+
+    float getCurrentPitch() {
+        return currentPitch;
+    }
+
+    void seekToEstimatedPosition(long positionMs) {
+        seekToChunk(chunkIndexForPositionMs(positionMs));
+    }
+
+    private void syncMedia3() {
+        if (media3Player != null) media3Player.syncFromService();
     }
 }

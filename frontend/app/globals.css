@@ -39,15 +39,15 @@
 
   /* ─── Fonts ─────────────────────────────────────────────── */
   --font-display: "Cormorant Garamond", "Times New Roman", serif;
-  --font-sans: "Inter", "Segoe UI", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-sans: "Inter Variable", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
 }
 
 :root {
-  --sat: env(safe-area-inset-top, 0px);
-  --sab: env(safe-area-inset-bottom, 0px);
-  --sal: env(safe-area-inset-left, 0px);
-  --sar: env(safe-area-inset-right, 0px);
+  --sat: max(env(safe-area-inset-top, 0px), var(--sat-native, 0px));
+  --sab: max(env(safe-area-inset-bottom, 0px), var(--sab-native, 0px));
+  --sal: max(env(safe-area-inset-left, 0px), var(--sal-native, 0px));
+  --sar: max(env(safe-area-inset-right, 0px), var(--sar-native, 0px));
   background-color: var(--color-ink);
   color: var(--color-text);
   color-scheme: dark;
@@ -84,6 +84,25 @@ body {
 }
 .animate-slide-up {
   animation: slideUp 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-sheet-in {
+  animation: sheet-in 0.3s cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* A clean white inset reads consistently over the dark lacquered chrome. */
+.image-outline {
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 10%);
 }
 
 /* ─── Audio seek bar (jade) ──────────────────────────────── */
@@ -232,4 +251,19 @@ input[type="range"]::-moz-range-thumb {
   box-shadow:
     0 12px 28px -4px rgba(0, 0, 0, 0.4),
     0 4px 8px -2px rgba(0, 0, 0, 0.2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+
+  .card-hover:hover {
+    transform: none;
+  }
 }

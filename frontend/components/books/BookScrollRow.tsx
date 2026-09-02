@@ -54,7 +54,7 @@ export function BookScrollRow({ title, seeAllHref, colorDot, books }: Props) {
             href={`/book?id=${book.id}`}
             className="flex-none w-28 sm:w-33 group snap-start"
           >
-            <div className="aspect-2/3 rounded-md overflow-hidden bg-raised relative ring-1 ring-hairline-soft mb-2 shadow-[0_8px_22px_rgba(0,0,0,0.45)] group-hover:ring-accent/30 transition-all">
+            <div className="aspect-2/3 rounded-md overflow-hidden bg-raised relative ring-1 ring-hairline-soft mb-2 shadow-[0_8px_22px_rgba(0,0,0,0.45)] group-hover:ring-accent/30 transition-[box-shadow,transform]">
               {book.cover_url ? (
                 <Image
                   src={book.cover_url}

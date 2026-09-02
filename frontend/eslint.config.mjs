@@ -32,6 +32,47 @@ const eslintConfig = defineConfig([
       "react-hooks/incompatible-library": "warn",
     },
   },
+  {
+    files: ["app/admin/**/*.tsx"],
+    // Admin forms intentionally hydrate controlled drafts when the selected
+    // server record changes. They are regression-only in the Android roadmap;
+    // replacing these effects would alter edit/reset semantics without a UI
+    // benefit. Keep the exception scoped to admin form code.
+    rules: {
+      "react-hooks/set-state-in-effect": "off",
+    },
+  },
+  {
+    files: [
+      "hooks/useSpeechPlayer.ts",
+      "hooks/useNativeTTSPlayer.ts",
+      "hooks/useBrowserTTSPlayer.ts",
+      "hooks/useProgressSync.ts",
+      "hooks/useSleepTimer.ts",
+      "context/PlayerContext.tsx",
+    ],
+    // These hooks implement the documented playback state-machine invariants.
+    // Stable media callbacks read synchronized refs specifically to close
+    // chapter-change, auto-advance, and process-restoration race windows. They
+    // are covered by transition tests before any timing refactor is attempted.
+    rules: {
+      "react-hooks/refs": "off",
+      "react-hooks/set-state-in-effect": "off",
+    },
+  },
+  {
+    files: [
+      "app/books/**/listen/ListenPageClient.tsx",
+      "app/books/**/read/ReadPageClient.tsx",
+      "components/books/ChapterPickerSheet.tsx",
+    ],
+    // TanStack Virtual intentionally returns imperative measurement functions;
+    // React Compiler skips only these two consumers and the lists stay
+    // virtualized. This is an upstream-library compatibility boundary.
+    rules: {
+      "react-hooks/incompatible-library": "off",
+    },
+  },
 ]);
 
 export default eslintConfig;

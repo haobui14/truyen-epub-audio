@@ -1,6 +1,4 @@
-# Builds the Capacitor debug APK whenever frontend code lands on main and
-# pushes it to Google Drive, so a phone can always install the newest build
-# from one stable Drive file/link.
+# Tests and builds the signed private Capacitor release APK on main.
 #
 # One-time setup for the Drive upload (skipped gracefully until done):
 #   1. Locally: `rclone config` → new Google Drive remote named "gdrive"
@@ -9,7 +7,7 @@
 # Without the secret the build still runs and the APK is kept as a 7-day
 # workflow artifact on the run page.
 
-name: Android debug APK
+name: Android signed release APK
 
 on:
   push:
@@ -20,7 +18,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: android-debug-apk
+  group: android-release-apk
   cancel-in-progress: true
 
 permissions:
@@ -29,9 +27,13 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 55
     env:
       RCLONE_CONF_B64: ${{ secrets.RCLONE_CONF_B64 }}
+      ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
       # Baked into the APK at build time (lib/constants.ts falls back to
       # localhost:8000 without it). Public URL, so it can live here; set the
       # repo variable NEXT_PUBLIC_API_URL to override if the backend moves.
@@ -42,8 +44,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # pnpm version comes from package.json "packageManager"
+      # pnpm version comes from frontend/package.json "packageManager".
+      # Actions resolve paths from the repo root — the job's working-directory
+      # default only applies to `run` steps — so point at the file explicitly.
       - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
 
       - uses: actions/setup-node@v4
         with:
@@ -64,29 +70,87 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Frontend quality gates
+        run: |
+          pnpm lint
+          pnpm exec tsc --noEmit
+          pnpm test
+
       - name: Build web assets (Capacitor static export)
         run: pnpm build:cap
+
+      - name: Install Chromium for mobile viewport tests
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Mobile viewport tests
+        run: pnpm test:mobile
+
+      - name: Android unit tests and lint
+        working-directory: frontend/android
+        run: |
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest lintDebug --no-daemon
 
       # Regenerates capacitor.settings.gradle for this runner's pnpm layout
       # and copies out/ into android/app/src/main/assets/public
       - name: Sync web assets into the android project
         run: pnpm exec cap sync android
 
-      # Signed with the committed android/app/debug.keystore, so this APK
-      # installs over debug builds from any machine without uninstalling.
-      - name: Build debug APK
+      - name: Enable KVM for emulator smoke test
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Android emulator smoke test (API 35)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: cd frontend/android && ./gradlew connectedDebugAndroidTest --no-daemon
+
+      - name: Prepare private release signing
+        shell: bash
+        run: |
+          test -n "$ANDROID_KEYSTORE_B64" || { echo "::error::ANDROID_KEYSTORE_B64 is required"; exit 1; }
+          test -n "$ANDROID_KEYSTORE_PASSWORD" || { echo "::error::ANDROID_KEYSTORE_PASSWORD is required"; exit 1; }
+          test -n "$ANDROID_KEY_ALIAS" || { echo "::error::ANDROID_KEY_ALIAS is required"; exit 1; }
+          test -n "$ANDROID_KEY_PASSWORD" || { echo "::error::ANDROID_KEY_PASSWORD is required"; exit 1; }
+          KEYSTORE_PATH="$RUNNER_TEMP/truyenaudio-release.jks"
+          printf '%s' "$ANDROID_KEYSTORE_B64" | base64 --decode > "$KEYSTORE_PATH"
+          echo "ANDROID_KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+
+      - name: Build signed release APK
         working-directory: frontend/android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleRelease --no-daemon
 
-      - name: Stamp APK with version and commit
+      - name: Stamp and verify APK
         id: apk
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          NAME="TruyenAudio-debug-v${VERSION}-${GITHUB_SHA::7}.apk"
-          cp android/app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/$NAME"
+          NAME="TruyenAudio-v${VERSION}-${GITHUB_SHA::7}.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/$NAME"
+          SHA256=$(sha256sum "$RUNNER_TEMP/$NAME" | cut -d ' ' -f 1)
+          VERSION_CODE=$(node -e "const [a,b,c]=require('./package.json').version.split('.').map(Number); process.stdout.write(String(a*1000000+b*1000+c))")
+          BUILD_TOOLS_VERSION="$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner" verify --verbose --print-certs "$RUNNER_TEMP/$NAME"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          jq -n \
+            --arg version "$VERSION" \
+            --argjson version_code "$VERSION_CODE" \
+            --arg sha256 "$SHA256" \
+            --arg commit "$GITHUB_SHA" \
+            --arg notes "$(git log -1 --pretty=%s)" \
+            '{version_name:$version,version_code:$version_code,sha256:$sha256,commit:$commit,release_notes:$notes}' \
+            > "$RUNNER_TEMP/release.json"
 
       # Backup copy on the run page even when the Drive upload is unavailable
       - name: Keep APK as workflow artifact (7 days)
@@ -94,7 +158,14 @@ jobs:
         with:
           name: ${{ steps.apk.outputs.name }}
           path: ${{ runner.temp }}/${{ steps.apk.outputs.name }}
-          retention-days: 7
+          retention-days: 30
+
+      - name: Keep release metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.apk.outputs.name }}-metadata
+          path: ${{ runner.temp }}/release.json
+          retention-days: 30
 
       - name: Upload to Google Drive
         if: env.RCLONE_CONF_B64 != ''
@@ -103,11 +174,18 @@ jobs:
           sudo apt-get install -y -qq rclone
           CONF="$RUNNER_TEMP/rclone.conf"
           printf '%s' "$RCLONE_CONF_B64" | base64 -d > "$CONF"
-          # copyto updates the existing Drive file in place, so its file id —
-          # and any share link to it — keeps pointing at the newest build.
           rclone --config "$CONF" copyto \
             "$RUNNER_TEMP/${{ steps.apk.outputs.name }}" \
-            "gdrive:TruyenAudio-CI/app-debug.apk"
+            "gdrive:TruyenAudio-CI/releases/${{ steps.apk.outputs.name }}"
+          rclone --config "$CONF" copyto \
+            "$RUNNER_TEMP/${{ steps.apk.outputs.name }}" \
+            "gdrive:TruyenAudio-CI/TruyenAudio-latest.apk"
+          rclone --config "$CONF" copyto \
+            "$RUNNER_TEMP/release.json" \
+            "gdrive:TruyenAudio-CI/releases/${{ steps.apk.outputs.name }}.json"
+          rclone --config "$CONF" copyto \
+            "$RUNNER_TEMP/release.json" \
+            "gdrive:TruyenAudio-CI/latest.json"
           rm -f "$CONF"
 
       - name: Note when Drive upload is skipped

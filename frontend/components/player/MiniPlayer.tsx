@@ -5,10 +5,10 @@ import { usePathname } from "next/navigation";
 import { usePlayerContext } from "@/context/PlayerContext";
 import { isReaderRoute } from "@/lib/readerRoute";
 import { Spinner } from "@/components/ui/Spinner";
+import { IconButton } from "@/components/ui/Button";
 
 export function MiniPlayer() {
-  const { track, isPlaying, isBuffering, progress, toggle, nativeChapterOverride } =
-    usePlayerContext();
+  const { track, session, toggle } = usePlayerContext();
   const pathname = usePathname();
   // While reading, this bar is competing with the text: it drops the heavy
   // drop-shadow and the glowing progress line, gets shorter, and sits above
@@ -20,23 +20,16 @@ export function MiniPlayer() {
   // cold start lands on the home page with audio possibly still playing (or a
   // restored session sitting paused); without this there would be zero UI for
   // it. Requires the override's bookId so the link can navigate somewhere.
-  if (!track && !nativeChapterOverride?.bookId) return null;
+  if (!session.active) return null;
 
-  // While native auto-advances in the background, the track (set by the listen
-  // page) goes stale — prefer the live native session info when it differs.
-  const bookTitle = nativeChapterOverride?.bookTitle || track?.book.title || "";
-  const coverUrl = nativeChapterOverride?.coverUrl || track?.book.cover_url || null;
-  const displayTitle = nativeChapterOverride?.title || track?.chapter.title || "";
-  const bookId = nativeChapterOverride?.bookId || track?.bookId || "";
-  const displayChapterId =
-    nativeChapterOverride?.chapterId ?? track?.chapterId ?? "";
-  const displayProgress =
-    nativeChapterOverride && nativeChapterOverride.totalChunks > 0
-      ? nativeChapterOverride.chunkIndex / nativeChapterOverride.totalChunks
-      : progress;
-  const displayPlaying = nativeChapterOverride
-    ? nativeChapterOverride.playing
-    : isPlaying;
+  const bookTitle = session.bookTitle;
+  const coverUrl = session.coverUrl;
+  const displayTitle = session.chapterTitle;
+  const bookId = session.bookId;
+  const displayChapterId = session.chapterId;
+  const displayProgress = session.progress;
+  const displayPlaying = session.isPlaying;
+  const isBuffering = session.isBuffering;
   const progressPct = Math.round(
     Math.max(0, Math.min(1, displayProgress)) * 100,
   );
@@ -55,7 +48,7 @@ export function MiniPlayer() {
     >
       <div className="h-[2px] bg-hairline-soft">
         <div
-          className={`h-full bg-accent transition-all duration-300 ${
+          className={`h-full bg-accent transition-[width] duration-300 ${
             reading ? "" : "shadow-[0_0_10px_var(--color-accent-glow)]"
           }`}
           style={{ width: `${progressPct}%` }}
@@ -68,13 +61,13 @@ export function MiniPlayer() {
         }`}
       >
         <Link href={listenUrl} className="shrink-0">
-          <div className="w-10 h-10 rounded-md overflow-hidden bg-raised-hi ring-1 ring-hairline">
+          <div className="image-outline relative size-11 overflow-hidden rounded-lg bg-raised-hi">
             {coverUrl ? (
               <Image
                 src={coverUrl}
                 alt={bookTitle}
-                width={40}
-                height={40}
+                width={44}
+                height={44}
                 className="object-cover w-full h-full"
               />
             ) : (
@@ -112,50 +105,55 @@ export function MiniPlayer() {
           )}
         </Link>
 
-        <button
+        <IconButton
           onClick={track?.onPrev ?? undefined}
           disabled={!track?.onPrev}
-          className="p-2 rounded-full text-text-faint hover:text-text disabled:opacity-25 transition-colors"
-          title="Chương trước"
+          label="Chương trước"
+          className="text-text-faint disabled:opacity-25"
         >
           <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
             <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" />
           </svg>
-        </button>
+        </IconButton>
 
-        <button
+        <IconButton
           onClick={toggle}
-          className="w-10 h-10 bg-accent text-ink rounded-full flex items-center justify-center hover:bg-accent-dim active:scale-95 transition-all shadow-[0_0_18px_var(--color-accent-glow)]"
-          title={displayPlaying ? "Tạm dừng" : "Phát"}
+          label={displayPlaying ? "Tạm dừng" : "Phát"}
+          className="relative bg-accent text-ink hover:bg-accent-dim shadow-[0_0_18px_var(--color-accent-glow)]"
         >
           {isBuffering ? (
             <Spinner className="w-4 h-4" />
-          ) : displayPlaying ? (
-            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 14 14">
-              <rect x="2" y="1" width="3.5" height="12" rx="0.5" />
-              <rect x="8.5" y="1" width="3.5" height="12" rx="0.5" />
-            </svg>
           ) : (
-            <svg
-              className="w-4 h-4 ml-0.5"
-              fill="currentColor"
-              viewBox="0 0 14 14"
-            >
-              <path d="M3 1l10 6-10 6V1z" />
-            </svg>
+            <span className="relative block size-4" aria-hidden="true">
+              <svg
+                className={`absolute inset-0 size-4 transition-[opacity,transform,filter] duration-300 ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none ${displayPlaying ? "scale-100 opacity-100 blur-0" : "scale-[0.25] opacity-0 blur-[4px]"}`}
+                fill="currentColor"
+                viewBox="0 0 14 14"
+              >
+                <rect x="2" y="1" width="3.5" height="12" rx="0.5" />
+                <rect x="8.5" y="1" width="3.5" height="12" rx="0.5" />
+              </svg>
+              <svg
+                className={`absolute inset-0 size-4 pl-0.5 transition-[opacity,transform,filter] duration-300 ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none ${displayPlaying ? "scale-[0.25] opacity-0 blur-[4px]" : "scale-100 opacity-100 blur-0"}`}
+                fill="currentColor"
+                viewBox="0 0 14 14"
+              >
+                <path d="M3 1l10 6-10 6V1z" />
+              </svg>
+            </span>
           )}
-        </button>
+        </IconButton>
 
-        <button
+        <IconButton
           onClick={track?.onNext ?? undefined}
           disabled={!track?.onNext}
-          className="p-2 rounded-full text-text-faint hover:text-text disabled:opacity-25 transition-colors"
-          title="Chương tiếp"
+          label="Chương tiếp"
+          className="text-text-faint disabled:opacity-25"
         >
           <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
             <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
           </svg>
-        </button>
+        </IconButton>
       </div>
     </div>
   );

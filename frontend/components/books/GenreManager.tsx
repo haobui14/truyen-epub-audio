@@ -352,7 +352,7 @@ export function GenreManager({ bookId }: GenreManagerProps) {
                       !isManaging &&
                       (isAssigned ? handleRemove(g.id) : handleAssign(g.id))
                     }
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-all ${
+                    className={`inline-flex min-h-11 items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium border transition-[background-color,border-color,color,transform] active:scale-[0.96] ${
                       isManaging ? "cursor-default" : "cursor-pointer"
                     } ${
                       isAssigned

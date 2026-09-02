@@ -63,9 +63,11 @@ CHAPTER_NUM_RE = re.compile(r"/chuong-(\d+)-")
 
 # Site boilerplate injected between story lines. Conservative on purpose —
 # anything that survives is caught later by the upload sanitizer
-# (app/services/text_cleanup.py).
+# (app/services/text_cleanup.py). The Galaxy Play promo block appeared in 435
+# chapters of one book (two uniform lines, spliced mid-scene).
 JUNK_LINE_RE = re.compile(
-    r"wikidich|đọc\s+truyện\s+tại|nguồn\s*:\s*http|https?://\S+$",
+    r"wikidich|đọc\s+truyện\s+tại|nguồn\s*:\s*http|https?://\S+$"
+    r"|tặng\s*bạn\s*gói\s*xem\s*phim|galaxy\s*play|^nhận\s*quà\s*ngay\s*!?$",
     re.IGNORECASE,
 )
 
@@ -138,6 +140,14 @@ def extract_chapter(html: str) -> tuple[str, list[str], str | None]:
         line = line.strip()
         if line and not JUNK_LINE_RE.search(line):
             paragraphs.append(line)
+    # Many chapters repeat their own heading as the first body line (404 of
+    # 1365 in one book). The heading is already the file's first line — keep
+    # the copy and it renders twice everywhere downstream.
+    if paragraphs and heading:
+        hm = re.match(r"Chương\s+0*(\d+)\s*[:.]", heading, re.IGNORECASE)
+        pm = re.match(r"Chương\s+0*(\d+)\s*[:.]", paragraphs[0], re.IGNORECASE)
+        if hm and pm and hm.group(1).lstrip("0") == pm.group(1).lstrip("0"):
+            paragraphs.pop(0)
     return heading, paragraphs, next_url
 
 

@@ -9,6 +9,7 @@ import {
 } from "@/hooks/useNativeTTSPlayer";
 import { useBrowserTTSVoices } from "@/hooks/useBrowserTTSPlayer";
 import { getTtsBridge } from "@/lib/backgroundLock";
+import { Sheet } from "@/components/ui/Sheet";
 
 const SLEEP_PRESETS = [15, 30, 45, 60] as const;
 const SPEED_PRESETS = [0.8, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0] as const;
@@ -71,6 +72,8 @@ export function SpeechPlayer() {
     null | "speed" | "voice" | "sleep"
   >(null);
   const [customMinutes, setCustomMinutes] = useState("");
+  const [showNotificationPermission, setShowNotificationPermission] =
+    useState(false);
 
   // One-time battery-optimization hint: without the Doze exemption,
   // aggressive OEMs (Samsung/Xiaomi/...) kill the TTS foreground service
@@ -149,6 +152,20 @@ export function SpeechPlayer() {
     if (!isNaN(mins) && mins > 0) handleSetTimer(mins);
   }
 
+  function handleTransportToggle() {
+    const bridge = getTtsBridge();
+    if (
+      isNative &&
+      !isPlaying &&
+      bridge?.getNotificationPermissionStatus?.() === "denied" &&
+      localStorage.getItem("notification-permission-context-shown") !== "1"
+    ) {
+      setShowNotificationPermission(true);
+      return;
+    }
+    toggle();
+  }
+
   const voiceLabel = VOICE_LABELS[voice] ?? voice.replace(/^native:/, "");
   const nativeVoiceOpt = nativeVoices.find((v) => v.value === voice);
   const browserVoiceOpt = browserVoices.find((v) => v.value === voice);
@@ -181,7 +198,7 @@ export function SpeechPlayer() {
               width: "min(180px, 32vh)",
             }}
           >
-            <div className="w-full h-full rounded-lg overflow-hidden bg-raised ring-1 ring-hairline shadow-[0_30px_60px_rgba(0,0,0,0.55)]">
+            <div className="image-outline h-full w-full overflow-hidden rounded-lg bg-raised shadow-[0_30px_60px_rgba(0,0,0,0.55)]">
               {book.cover_url ? (
                 <Image
                   src={book.cover_url}
@@ -239,7 +256,7 @@ export function SpeechPlayer() {
       </div>
 
       {nativeTtsError && (
-        <div className="flex items-start gap-2 px-3 py-2.5 mb-3 rounded-md bg-vermillion/10 border border-vermillion/30">
+        <div className="flex items-start gap-2 px-3 py-2.5 mb-3 rounded-md bg-vermillion/10 border border-vermillion/30" role="alert" aria-live="assertive">
           <svg
             className="w-4 h-4 text-vermillion shrink-0 mt-0.5"
             fill="currentColor"
@@ -264,7 +281,7 @@ export function SpeechPlayer() {
                     (window as unknown as { TtsBridge: { openTtsSettings: () => void } })
                       .TtsBridge.openTtsSettings()
                   }
-                  className="text-xs font-medium text-vermillion underline underline-offset-2 active:opacity-60"
+                  className="min-h-11 text-xs font-medium text-vermillion underline underline-offset-2 active:opacity-60"
                 >
                   Mở cài đặt giọng đọc
                 </button>
@@ -278,7 +295,7 @@ export function SpeechPlayer() {
                     (window as unknown as { TtsBridge: { retryTts: () => void } })
                       .TtsBridge.retryTts();
                   }}
-                  className="text-xs font-medium text-vermillion underline underline-offset-2 active:opacity-60"
+                  className="min-h-11 text-xs font-medium text-vermillion underline underline-offset-2 active:opacity-60"
                 >
                   Thử lại
                 </button>
@@ -312,7 +329,7 @@ export function SpeechPlayer() {
                     /* ignore */
                   }
                 }}
-                className="text-xs font-medium text-gold underline underline-offset-2 active:opacity-60"
+                className="min-h-11 text-xs font-medium text-gold underline underline-offset-2 active:opacity-60"
               >
                 Cho phép
               </button>
@@ -322,7 +339,7 @@ export function SpeechPlayer() {
                   localStorage.setItem(BATTERY_HINT_DISMISSED_KEY, "1");
                   setShowBatteryHint(false);
                 }}
-                className="text-xs font-medium text-text-mute underline underline-offset-2 active:opacity-60"
+                className="min-h-11 text-xs font-medium text-text-mute underline underline-offset-2 active:opacity-60"
               >
                 Ẩn
               </button>
@@ -332,27 +349,33 @@ export function SpeechPlayer() {
       )}
 
       {/* 20-segment chunk-dot progress */}
-      <div className="pt-0.5 pb-1">
-        <button
-          type="button"
-          onClick={(e) => {
-            if (!ready) return;
-            const rect = e.currentTarget.getBoundingClientRect();
-            const fraction = Math.max(
-              0,
-              Math.min(1, (e.clientX - rect.left) / rect.width),
-            );
-            if (mode === "full") {
-              seekChunk((fraction - progress) * 20);
-            } else if (totalChunks > 0) {
-              seekChunk(Math.round(fraction * totalChunks) - chunkIndex);
+      <div className="pb-1 pt-0.5">
+        <div className="relative flex h-11 items-center">
+          <input
+            type="range"
+            min={0}
+            max={Math.max(1, totalChunks - (mode === "full" ? 0 : 1))}
+            step={mode === "full" ? Math.max(1, totalChunks / 20) : 1}
+            value={Math.min(chunkIndex, Math.max(1, totalChunks))}
+            onChange={(event) => {
+              const target = Number(event.target.value);
+              if (mode === "full") {
+                const targetProgress = totalChunks > 0 ? target / totalChunks : 0;
+                seekChunk((targetProgress - progress) * 20);
+              } else {
+                seekChunk(target - chunkIndex);
+              }
+            }}
+            disabled={!ready || totalChunks <= 0}
+            aria-label="Vị trí phát"
+            aria-valuetext={
+              mode === "full"
+                ? `${fmtTime(chunkIndex)} đã phát, còn ${fmtTime(Math.max(0, totalChunks - chunkIndex))}`
+                : `Đoạn ${Math.min(chunkIndex + 1, totalChunks)} trên ${totalChunks}, còn ${Math.max(0, totalChunks - chunkIndex - 1)} đoạn`
             }
-          }}
-          className="w-full block cursor-pointer disabled:cursor-default py-2 -my-1.5"
-          disabled={!ready}
-          aria-label="Seek"
-        >
-          <span className="flex gap-[3px] h-1">
+            className="absolute inset-0 z-10 h-11 w-full cursor-pointer opacity-0 disabled:cursor-default"
+          />
+          <span className="pointer-events-none flex h-1 w-full gap-[3px]" aria-hidden="true">
             {Array.from({ length: chunkDotCount }).map((_, i) => {
               const filled = i < filledDots;
               const current = i === filledDots;
@@ -370,7 +393,7 @@ export function SpeechPlayer() {
               );
             })}
           </span>
-        </button>
+        </div>
         <div className="flex justify-between items-center mt-1.5 font-mono text-[10px] tracking-widest tabular-nums text-text-faint">
           {totalChunks > 0 ? (
             mode === "full" ? (
@@ -401,7 +424,12 @@ export function SpeechPlayer() {
       </div>
 
       {/* Status line — only takes up space when there's something to say */}
-      <div className="flex items-center justify-center font-mono text-[10px] tracking-widest uppercase empty:hidden">
+      <div
+        className="flex items-center justify-center font-mono text-[10px] uppercase tracking-widest empty:hidden"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
         {isBuffering ? (
           isOffline ? (
             <span className="flex items-center gap-1.5">
@@ -427,7 +455,7 @@ export function SpeechPlayer() {
         <button
           onClick={onPrev ?? undefined}
           disabled={!onPrev}
-          className="min-w-[48px] min-h-[48px] p-3 flex items-center justify-center text-text hover:text-accent active:scale-95 disabled:text-text-faint disabled:opacity-40 disabled:active:scale-100 transition-all"
+          className="flex min-h-12 min-w-12 items-center justify-center p-3 text-text transition-[color,opacity,transform] hover:text-accent active:scale-[0.96] disabled:text-text-faint disabled:opacity-40 disabled:active:scale-100 motion-reduce:transition-none"
           title="Chương trước"
         >
           <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
@@ -437,7 +465,7 @@ export function SpeechPlayer() {
         <button
           onClick={() => seekChunk(-1)}
           disabled={!ready || totalChunks === 0}
-          className="min-w-[48px] min-h-[48px] p-3 flex items-center justify-center text-text-mute hover:text-accent active:scale-95 disabled:text-text-faint disabled:opacity-40 disabled:active:scale-100 transition-all"
+          className="flex min-h-12 min-w-12 items-center justify-center p-3 text-text-mute transition-[color,opacity,transform] hover:text-accent active:scale-[0.96] disabled:text-text-faint disabled:opacity-40 disabled:active:scale-100 motion-reduce:transition-none"
           title="Lùi đoạn"
         >
           <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
@@ -445,36 +473,38 @@ export function SpeechPlayer() {
           </svg>
         </button>
         <button
-          onClick={toggle}
+          onClick={handleTransportToggle}
           disabled={!ready || Boolean(nativeTtsError)}
-          className="w-[76px] h-[76px] bg-accent text-ink rounded-full flex items-center justify-center hover:bg-accent-dim active:scale-95 disabled:opacity-40 disabled:active:scale-100 transition-all shadow-[0_0_0_6px_oklch(0.74_0.11_165/0.12),0_0_40px_var(--color-accent-glow)]"
+          className="relative flex size-[76px] items-center justify-center rounded-full bg-accent text-ink shadow-[0_0_0_6px_oklch(0.74_0.11_165/0.12),0_0_40px_var(--color-accent-glow)] transition-[background-color,opacity,transform] duration-200 ease-[cubic-bezier(0.2,0,0,1)] hover:bg-accent-dim active:scale-[0.96] disabled:opacity-40 disabled:active:scale-100 motion-reduce:transition-none"
+          aria-label={isPlaying ? "Tạm dừng" : "Phát"}
           title={isPlaying ? "Tạm dừng" : "Phát"}
         >
           {isLoadingText || isBuffering ? (
             <Spinner className="w-7 h-7" />
-          ) : isPlaying ? (
-            <svg
-              className="w-[26px] h-[26px]"
-              fill="currentColor"
-              viewBox="0 0 14 14"
-            >
-              <rect x="2" y="1" width="3.5" height="12" rx="0.5" />
-              <rect x="8.5" y="1" width="3.5" height="12" rx="0.5" />
-            </svg>
           ) : (
-            <svg
-              className="w-[26px] h-[26px] ml-0.5"
-              fill="currentColor"
-              viewBox="0 0 14 14"
-            >
-              <path d="M3 1l10 6-10 6V1z" />
-            </svg>
+            <span className="relative block size-[26px]" aria-hidden="true">
+              <svg
+                className={`absolute inset-0 size-[26px] transition-[opacity,transform,filter] duration-300 ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none ${isPlaying ? "scale-100 opacity-100 blur-0" : "scale-[0.25] opacity-0 blur-[4px]"}`}
+                fill="currentColor"
+                viewBox="0 0 14 14"
+              >
+                <rect x="2" y="1" width="3.5" height="12" rx="0.5" />
+                <rect x="8.5" y="1" width="3.5" height="12" rx="0.5" />
+              </svg>
+              <svg
+                className={`absolute inset-0 size-[26px] pl-0.5 transition-[opacity,transform,filter] duration-300 ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none ${isPlaying ? "scale-[0.25] opacity-0 blur-[4px]" : "scale-100 opacity-100 blur-0"}`}
+                fill="currentColor"
+                viewBox="0 0 14 14"
+              >
+                <path d="M3 1l10 6-10 6V1z" />
+              </svg>
+            </span>
           )}
         </button>
         <button
           onClick={() => seekChunk(1)}
           disabled={!ready || totalChunks === 0}
-          className="min-w-[48px] min-h-[48px] p-3 flex items-center justify-center text-text-mute hover:text-accent active:scale-95 disabled:text-text-faint disabled:opacity-40 disabled:active:scale-100 transition-all"
+          className="flex min-h-12 min-w-12 items-center justify-center p-3 text-text-mute transition-[color,opacity,transform] hover:text-accent active:scale-[0.96] disabled:text-text-faint disabled:opacity-40 disabled:active:scale-100 motion-reduce:transition-none"
           title="Tiến đoạn"
         >
           <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
@@ -484,7 +514,7 @@ export function SpeechPlayer() {
         <button
           onClick={onNext ?? undefined}
           disabled={!onNext}
-          className="min-w-[48px] min-h-[48px] p-3 flex items-center justify-center text-text hover:text-accent active:scale-95 disabled:text-text-faint disabled:opacity-40 disabled:active:scale-100 transition-all"
+          className="flex min-h-12 min-w-12 items-center justify-center p-3 text-text transition-[color,opacity,transform] hover:text-accent active:scale-[0.96] disabled:text-text-faint disabled:opacity-40 disabled:active:scale-100 motion-reduce:transition-none"
           title="Chương tiếp"
         >
           <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
@@ -542,7 +572,7 @@ export function SpeechPlayer() {
 
       {/* Chip panels */}
       {openPanel === "speed" && (
-        <div className="mt-2 p-3 bg-raised rounded-md ring-1 ring-hairline-soft">
+        <Sheet open title="Tốc độ và tông" onClose={() => setOpenPanel(null)}>
           <p className="font-mono text-[10px] tracking-widest uppercase text-text-faint mb-2">
             Tốc độ phát ·{" "}
             <span className="text-accent">
@@ -557,7 +587,7 @@ export function SpeechPlayer() {
                   changeRate(s);
                   setOpenPanel(null);
                 }}
-                className={`min-h-[44px] flex items-center justify-center rounded-sm text-xs font-medium border transition-all active:scale-95 touch-manipulation ${
+                className={`flex min-h-11 items-center justify-center rounded-lg border text-xs font-medium transition-[color,background-color,border-color,transform] active:scale-[0.96] touch-manipulation ${
                   Math.abs(rate - s) < 0.001
                     ? "bg-accent border-accent text-ink"
                     : "border-hairline text-text-mute hover:border-accent/40 hover:text-accent"
@@ -582,7 +612,7 @@ export function SpeechPlayer() {
                 step={0.05}
                 value={pitch}
                 onChange={(e) => changePitch(parseFloat(e.target.value))}
-                className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
+                className="h-11 w-full cursor-pointer appearance-none rounded-full"
                 style={{
                   background: `linear-gradient(to right, var(--color-accent) ${
                     ((pitch - 0.5) / 1.5) * 100
@@ -591,11 +621,11 @@ export function SpeechPlayer() {
               />
             </div>
           )}
-        </div>
+        </Sheet>
       )}
 
       {openPanel === "voice" && (
-        <div className="mt-2 p-3 bg-raised rounded-md ring-1 ring-hairline-soft">
+        <Sheet open title="Giọng đọc" onClose={() => setOpenPanel(null)}>
           <p className="font-mono text-[10px] tracking-widest uppercase text-text-faint mb-2">
             Giọng đọc
           </p>
@@ -605,7 +635,7 @@ export function SpeechPlayer() {
                 <button
                   key={opt.value}
                   onClick={() => handleVoiceChange(opt.value)}
-                  className={`px-3 py-1.5 rounded-sm text-xs font-medium border transition-colors ${
+                  className={`min-h-11 rounded-lg border px-3 py-1.5 text-xs font-medium transition-[color,background-color,border-color,transform] active:scale-[0.96] ${
                     voice === opt.value
                       ? "bg-accent border-accent text-ink"
                       : "border-hairline text-text-mute hover:border-accent/40 hover:text-accent"
@@ -619,7 +649,7 @@ export function SpeechPlayer() {
                 <button
                   key={opt.value}
                   onClick={() => handleVoiceChange(opt.value)}
-                  className={`px-3 py-1.5 min-h-[44px] rounded-sm text-xs font-medium border transition-colors touch-manipulation ${
+                  className={`min-h-11 rounded-lg border px-3 py-1.5 text-xs font-medium transition-[color,background-color,border-color,transform] active:scale-[0.96] touch-manipulation ${
                     voice === opt.value ||
                     (opt.value === "native:vi-VN-default" &&
                       voice.startsWith("native:") &&
@@ -642,7 +672,7 @@ export function SpeechPlayer() {
                   <button
                     key={opt.value}
                     onClick={() => handleVoiceChange(opt.value)}
-                    className={`px-3 py-1.5 rounded-sm text-xs font-medium border transition-colors ${
+                    className={`min-h-11 rounded-lg border px-3 py-1.5 text-xs font-medium transition-[color,background-color,border-color,transform] active:scale-[0.96] ${
                       voice === opt.value
                         ? "bg-accent border-accent text-ink"
                         : "border-hairline text-text-mute hover:border-accent/40 hover:text-accent"
@@ -654,11 +684,11 @@ export function SpeechPlayer() {
               </div>
             </>
           )}
-        </div>
+        </Sheet>
       )}
 
       {openPanel === "sleep" && (
-        <div className="mt-2 p-3 bg-raised rounded-md ring-1 ring-hairline-soft">
+        <Sheet open title="Hẹn giờ tắt" onClose={() => setOpenPanel(null)}>
           <p className="font-mono text-[10px] tracking-widest uppercase text-text-faint mb-2">
             Hẹn giờ tắt
           </p>
@@ -669,7 +699,7 @@ export function SpeechPlayer() {
                 setOpenPanel(null);
                 setCustomMinutes("");
               }}
-              className="w-full mb-2 py-2 min-h-[44px] rounded-sm text-xs font-medium border border-hairline text-text-mute hover:border-accent/40 hover:text-accent transition-colors touch-manipulation"
+              className="mb-2 min-h-11 w-full rounded-lg border border-hairline py-2 text-xs font-medium text-text-mute transition-[color,border-color,transform] hover:border-accent/40 hover:text-accent active:scale-[0.96] touch-manipulation"
             >
               Khi hết chương này
             </button>
@@ -679,7 +709,7 @@ export function SpeechPlayer() {
               <button
                 key={mins}
                 onClick={() => handleSetTimer(mins)}
-                className="py-1.5 rounded-sm text-xs font-medium border border-hairline text-text-mute hover:border-accent/40 hover:text-accent transition-colors"
+                className="min-h-11 rounded-lg border border-hairline py-1.5 text-xs font-medium text-text-mute transition-[color,border-color,transform] hover:border-accent/40 hover:text-accent active:scale-[0.96]"
               >
                 {mins < 60 ? `${mins}p` : "1g"}
               </button>
@@ -694,7 +724,7 @@ export function SpeechPlayer() {
               value={customMinutes}
               onChange={(e) => setCustomMinutes(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleCustomTimer()}
-              className="flex-1 px-2.5 py-1.5 rounded-sm text-xs border border-hairline bg-surface text-text placeholder-text-faint focus:outline-none focus:border-accent"
+              className="min-h-11 flex-1 rounded-lg border border-hairline bg-surface px-2.5 py-1.5 text-xs text-text placeholder-text-faint focus:border-accent focus:outline-none"
             />
             <button
               onClick={handleCustomTimer}
@@ -703,13 +733,49 @@ export function SpeechPlayer() {
                 isNaN(parseFloat(customMinutes)) ||
                 parseFloat(customMinutes) <= 0
               }
-              className="px-3 py-1.5 rounded-sm text-xs font-medium bg-accent text-ink hover:bg-accent-dim disabled:opacity-40 transition-colors"
+              className="min-h-11 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-ink transition-[background-color,opacity,transform] hover:bg-accent-dim active:scale-[0.96] disabled:opacity-40"
             >
               Đặt
             </button>
           </div>
-        </div>
+        </Sheet>
       )}
+
+      <Sheet
+        open={showNotificationPermission}
+        onClose={() => setShowNotificationPermission(false)}
+        title="Điều khiển khi khóa màn hình"
+        description="Thông báo phát nhạc là tùy chọn"
+        footer={
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setShowNotificationPermission(false)}
+              className="min-h-11 flex-1 rounded-xl border border-hairline px-4 text-sm font-semibold text-text-mute transition-[background-color,transform] hover:bg-raised active:scale-[0.96]"
+            >
+              Để sau
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                localStorage.setItem("notification-permission-context-shown", "1");
+                getTtsBridge()?.requestNotificationPermission?.();
+                setShowNotificationPermission(false);
+                toggle();
+              }}
+              className="min-h-11 flex-1 rounded-xl bg-accent px-4 text-sm font-semibold text-ink transition-[background-color,transform] hover:bg-accent-dim active:scale-[0.96]"
+            >
+              Tiếp tục
+            </button>
+          </div>
+        }
+      >
+        <p className="text-sm leading-relaxed text-text-mute">
+          Cho phép thông báo để tạm dừng, chuyển chương và xem trạng thái nghe
+          từ màn hình khóa. Nếu từ chối, bạn vẫn có thể đọc và nghe khi ứng dụng
+          đang mở.
+        </p>
+      </Sheet>
     </div>
   );
 }
@@ -726,7 +792,7 @@ function Chip({ label, sub, mono, active, onClick }: ChipProps) {
   return (
     <button
       onClick={onClick}
-      className={`flex-1 py-2 px-1 rounded-md flex flex-col items-center gap-0.5 border transition-colors cursor-pointer ${
+      className={`flex min-h-11 flex-1 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-lg border px-1 py-2 transition-[color,background-color,border-color,transform] active:scale-[0.96] ${
         active
           ? "bg-accent/15 border-accent/40"
           : "bg-raised border-hairline hover:border-accent/30"

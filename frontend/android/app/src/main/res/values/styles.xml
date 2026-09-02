@@ -15,8 +15,9 @@
         <item name="android:background">@null</item>
         <!-- Dark base so there's no white flash before the WebView paints. -->
         <item name="android:windowBackground">@color/ink</item>
-        <item name="android:windowTranslucentStatus">true</item>
-        <item name="android:windowTranslucentNavigation">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
     </style>
 
 

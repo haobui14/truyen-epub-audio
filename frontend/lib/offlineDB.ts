@@ -4,8 +4,9 @@
  */
 
 const DB_NAME = "truyen-audio-offline";
-// v5: added "book-covers" for offline cover image cache
-const DB_VERSION = 5;
+// v6: durable per-book manifests. A manifest is the source of truth for
+// complete/partial/stale/error UI; chapter cache presence alone is ambiguous.
+const DB_VERSION = 6;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -47,6 +48,9 @@ export function openOfflineDB(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains("book-covers")) {
         db.createObjectStore("book-covers"); // key = bookId, value = data URL
+      }
+      if (!db.objectStoreNames.contains("offline-book-state")) {
+        db.createObjectStore("offline-book-state", { keyPath: "book_id" });
       }
     };
     req.onsuccess = () => resolve(req.result);

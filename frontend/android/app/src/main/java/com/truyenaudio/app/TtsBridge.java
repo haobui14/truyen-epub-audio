@@ -1,9 +1,12 @@
 package com.truyenaudio.app;
 
 import android.app.DownloadManager;
+import android.app.Activity;
+import android.Manifest;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.ServiceConnection;
 import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
@@ -16,6 +19,9 @@ import android.os.Looper;
 import android.os.PowerManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
+
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -33,8 +39,13 @@ import java.util.List;
 public class TtsBridge {
 
     private final Context    context;
+    private final Activity   activity;
     private final WebView    webView;
     private final Handler    mainHandler;
+    private final SecureAuthStore secureAuthStore;
+
+    private static final int BRIDGE_CAPABILITY_VERSION = 3;
+    private static final int REQ_POST_NOTIFICATIONS = 1001;
 
     private TtsPlaybackService service;
     private boolean            bound = false;
@@ -121,17 +132,20 @@ public class TtsBridge {
 
     // ── Constructor ───────────────────────────────────────────────────────────
 
-    public TtsBridge(Context context, WebView webView) {
+    public TtsBridge(Activity context, WebView webView) {
+        this.activity    = context;
         this.context     = context.getApplicationContext();
         this.webView     = webView;
         this.mainHandler = new Handler(Looper.getMainLooper());
+        this.secureAuthStore = new SecureAuthStore(this.context);
 
         // Install the JS evaluator once; the service uses it even before binding
         TtsPlaybackService.setJsEvaluator(js ->
                 webView.post(() -> webView.evaluateJavascript(js, null)));
 
-        // Start and bind the service immediately so it survives screen-off
-        doStartService();
+        // Binding restores a paused session for the mini-player without
+        // creating a foreground notification. The service is promoted only
+        // when the user starts/resumes playback.
         doBindService();
     }
 
@@ -158,6 +172,89 @@ public class TtsBridge {
     }
 
     // ── @JavascriptInterface methods ──────────────────────────────────────────
+
+    @JavascriptInterface
+    public int getCapabilityVersion() {
+        return BRIDGE_CAPABILITY_VERSION;
+    }
+
+    @JavascriptInterface
+    public String getNativeVersionName() {
+        return BuildConfig.VERSION_NAME;
+    }
+
+    @JavascriptInterface
+    public String getRuntimeInfo() {
+        try {
+            JSONObject info = new JSONObject();
+            info.put("app_version", BuildConfig.VERSION_NAME);
+            info.put("version_code", BuildConfig.VERSION_CODE);
+            info.put("sdk", Build.VERSION.SDK_INT);
+            info.put("device", Build.MANUFACTURER + " " + Build.MODEL);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                android.content.pm.PackageInfo webView = WebView.getCurrentWebViewPackage();
+                if (webView != null) {
+                    info.put("webview_package", webView.packageName);
+                    info.put("webview_version", webView.versionName);
+                }
+            }
+            return info.toString();
+        } catch (Exception ignored) {
+            return "{}";
+        }
+    }
+
+    @JavascriptInterface
+    public String consumeRecoveredCrash() {
+        return NativeCrashStore.consume(context);
+    }
+
+    @JavascriptInterface
+    public String getNotificationPermissionStatus() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return "not-required";
+        }
+        return ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+                == PackageManager.PERMISSION_GRANTED ? "granted" : "denied";
+    }
+
+    @JavascriptInterface
+    public boolean shouldShowNotificationPermissionRationale() {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && ActivityCompat.shouldShowRequestPermissionRationale(
+                        activity, Manifest.permission.POST_NOTIFICATIONS);
+    }
+
+    @JavascriptInterface
+    public void requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return;
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+                == PackageManager.PERMISSION_GRANTED) return;
+        mainHandler.post(() -> ActivityCompat.requestPermissions(
+                activity,
+                new String[]{Manifest.permission.POST_NOTIFICATIONS},
+                REQ_POST_NOTIFICATIONS));
+    }
+
+    @JavascriptInterface
+    public boolean saveSecureAuth(String json) {
+        return secureAuthStore.save(json);
+    }
+
+    @JavascriptInterface
+    public String loadSecureAuth() {
+        return secureAuthStore.load();
+    }
+
+    @JavascriptInterface
+    public void clearSecureAuth() {
+        secureAuthStore.clear();
+    }
+
+    @JavascriptInterface
+    public String migrateLegacyAuth() {
+        return secureAuthStore.migrateLegacyPreferences();
+    }
 
     @JavascriptInterface
     public void startService() {

@@ -11,11 +11,13 @@ import { useProgressSync } from "@/hooks/useProgressSync";
 import { Spinner } from "@/components/ui/Spinner";
 import { getLocalProgress, saveLocalBookProgress } from "@/lib/progressQueue";
 import {
-  getCachedChapterEntry,
-  cacheChapterText,
-  getAllCachedChapterIds,
   canUseCachedChapterText,
 } from "@/lib/chapterTextCache";
+import {
+  getOfflineChapter,
+  getOfflineChapterIds,
+  saveOfflineChapterText,
+} from "@/lib/offlineRepository";
 import {
   getCachedBook,
   cacheBook,
@@ -24,6 +26,16 @@ import {
 } from "@/lib/bookCache";
 import { acquireScreenWake, releaseScreenWake } from "@/lib/backgroundLock";
 import type { Chapter } from "@/types";
+import { Sheet } from "@/components/ui/Sheet";
+import { IconButton } from "@/components/ui/Button";
+import {
+  DEFAULT_READER_PREFERENCES,
+  contrastRatio,
+  loadReaderPreferences,
+  saveReaderPreferences,
+  type ReaderPreferences,
+  type ReaderTheme,
+} from "@/lib/readerPreferences";
 
 /**
  * Track actual reading engagement and award XP when the user has spent
@@ -108,17 +120,6 @@ function useReadingXp(
 }
 
 const FONT_SIZES = [14, 16, 18, 20, 22, 24] as const;
-const FONT_KEY = "reader-font-size";
-const FONT_FAMILY_KEY = "reader-font-family";
-const THEME_KEY = "reader-theme";
-
-interface ReaderTheme {
-  name: string;
-  bg: string;
-  text: string;
-  label: string;
-}
-
 const READER_THEMES: ReaderTheme[] = [
   { name: "auto", bg: "#ffffff", text: "#1f2937", label: "Tự động" },
   { name: "light", bg: "#ffffff", text: "#1f2937", label: "Sáng" },
@@ -147,7 +148,8 @@ const AUTO_LIGHT: Pick<ReaderTheme, "bg" | "text"> = {
 const CHAPTER_TEXT_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 
 /**
- * Offline-first chapter text fetch: try IndexedDB, fall through to API.
+ * Offline-first chapter text fetch through the shared repository. Android
+ * reads app-private native files; web uses IndexedDB.
  *
  * `knownServerUpdatedAt`, when available (from the already-loaded chapters
  * list), lets a cached entry be invalidated the moment it's known stale —
@@ -157,10 +159,11 @@ const CHAPTER_TEXT_TTL_MS = 24 * 60 * 60 * 1000; // 24h
  * the fallback.
  */
 async function fetchChapterTextOfflineFirst(
+  bookId: string,
   chapterId: string,
   knownServerUpdatedAt?: string,
 ) {
-  const cached = await getCachedChapterEntry(chapterId);
+  const cached = await getOfflineChapter(bookId, chapterId);
   if (cached && !canUseCachedChapterText(cached, knownServerUpdatedAt)) {
     // Online and (known-stale or version-unknown) — try to get the current
     // text now rather than waiting on the TTL. Any failure (offline, flaky
@@ -168,7 +171,12 @@ async function fetchChapterTextOfflineFirst(
     try {
       const res = await api.getChapterText(chapterId);
       if (res?.text_content) {
-        void cacheChapterText(chapterId, res.text_content, res.updated_at);
+        void saveOfflineChapterText(
+          bookId,
+          chapterId,
+          res.text_content,
+          res.updated_at,
+        ).catch(() => {});
       }
       return res;
     } catch {
@@ -183,7 +191,12 @@ async function fetchChapterTextOfflineFirst(
         .getChapterText(chapterId)
         .then((res) => {
           if (res?.text_content && res.text_content !== cached.text_content) {
-            void cacheChapterText(chapterId, res.text_content, res.updated_at);
+            void saveOfflineChapterText(
+              bookId,
+              chapterId,
+              res.text_content,
+              res.updated_at,
+            ).catch(() => {});
           }
         })
         .catch(() => {});
@@ -192,7 +205,12 @@ async function fetchChapterTextOfflineFirst(
   }
   const res = await api.getChapterText(chapterId);
   if (res?.text_content) {
-    void cacheChapterText(chapterId, res.text_content, res.updated_at);
+    void saveOfflineChapterText(
+      bookId,
+      chapterId,
+      res.text_content,
+      res.updated_at,
+    ).catch(() => {});
   }
   return res;
 }
@@ -216,29 +234,18 @@ export default function ReadPage() {
   const router = useRouter();
   const contentRef = useRef<HTMLDivElement>(null);
 
-  const [fontSize, setFontSize] = useState<number>(() => {
-    if (typeof window === "undefined") return 18;
-    const saved = localStorage.getItem(FONT_KEY);
-    return saved ? parseInt(saved, 10) : 18;
-  });
-  const [fontFamily, setFontFamily] = useState<string>(() => {
-    if (typeof window === "undefined") return "serif";
-    return localStorage.getItem(FONT_FAMILY_KEY) || "serif";
-  });
-  const [theme, setTheme] = useState<ReaderTheme>(() => {
-    if (typeof window === "undefined") return READER_THEMES[0];
-    const saved = localStorage.getItem(THEME_KEY);
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch {
-        /* ignore */
-      }
-    }
-    return READER_THEMES[0];
-  });
-  const [customText, setCustomText] = useState(theme.text);
-  const [customBg, setCustomBg] = useState(theme.bg);
+  const [preferences, setPreferences] = useState<ReaderPreferences>(
+    loadReaderPreferences,
+  );
+  const {
+    fontSize,
+    fontFamily,
+    theme,
+    customText,
+    customBg,
+    lineHeight,
+    contentWidth,
+  } = preferences;
   const [showSettings, setShowSettings] = useState(false);
   const [showToc, setShowToc] = useState(false);
   const [tocSearch, setTocSearch] = useState("");
@@ -299,6 +306,7 @@ export default function ReadPage() {
     queryKey: ["chapterText", chapterId],
     queryFn: () =>
       fetchChapterTextOfflineFirst(
+        bookId,
         chapterId!,
         chaptersData?.items.find((c) => c.id === chapterId)?.updated_at,
       ),
@@ -400,10 +408,11 @@ export default function ReadPage() {
       if (!ch) continue;
       void queryClient.prefetchQuery({
         queryKey: ["chapterText", ch.id],
-        queryFn: () => fetchChapterTextOfflineFirst(ch.id, ch.updated_at),
+        queryFn: () =>
+          fetchChapterTextOfflineFirst(bookId, ch.id, ch.updated_at),
       });
     }
-  }, [chapterText, allChapters, currentIndex, queryClient]);
+  }, [bookId, chapterText, allChapters, currentIndex, queryClient]);
 
   // Keep the screen awake while the reader is mounted and visible.
   // Native-only; no-op on web. Releases on unmount or when the app is hidden.
@@ -493,46 +502,85 @@ export default function ReadPage() {
   }, [chapterId, chapterText, reportProgress]);
 
   function handleFontSize(size: number) {
-    setFontSize(size);
-    localStorage.setItem(FONT_KEY, String(size));
+    setPreferences((current) => {
+      const next = { ...current, fontSize: size };
+      saveReaderPreferences(next);
+      return next;
+    });
   }
 
   function handleFontFamily(ff: string) {
-    setFontFamily(ff);
-    localStorage.setItem(FONT_FAMILY_KEY, ff);
+    setPreferences((current) => {
+      const next = { ...current, fontFamily: ff };
+      saveReaderPreferences(next);
+      return next;
+    });
   }
 
   function handleTheme(t: ReaderTheme) {
-    setTheme(t);
-    setCustomText(t.text);
-    setCustomBg(t.bg);
-    localStorage.setItem(THEME_KEY, JSON.stringify(t));
+    setPreferences((current) => {
+      const next = {
+        ...current,
+        theme: t,
+        customText: t.text,
+        customBg: t.bg,
+      };
+      saveReaderPreferences(next);
+      return next;
+    });
   }
 
   function handleCustomColor(type: "text" | "bg", color: string) {
+    const candidateText = type === "text" ? color : customText;
+    const candidateBg = type === "bg" ? color : customBg;
     const updated = {
       ...theme,
       name: "custom",
       label: "Tùy chọn",
-      ...(type === "text" ? { text: color } : { bg: color }),
+      text: candidateText,
+      bg: candidateBg,
     };
-    if (type === "text") setCustomText(color);
-    else setCustomBg(color);
-    setTheme(updated);
-    localStorage.setItem(THEME_KEY, JSON.stringify(updated));
+    setPreferences((current) => {
+      const next = {
+        ...current,
+        customText: candidateText,
+        customBg: candidateBg,
+        // Keep the currently readable palette active until the candidate
+        // reaches WCAG AA contrast.
+        theme:
+          contrastRatio(candidateText, candidateBg) >= 4.5
+            ? updated
+            : current.theme,
+      };
+      saveReaderPreferences(next);
+      return next;
+    });
   }
+
+  function updateReaderLayout(
+    field: "lineHeight" | "contentWidth",
+    value: number,
+  ) {
+    setPreferences((current) => {
+      const next = { ...current, [field]: value };
+      saveReaderPreferences(next);
+      return next;
+    });
+  }
+
+  const customContrast = contrastRatio(customText, customBg);
 
   // Refresh cached-chapter IDs when the TOC drawer opens.
   useEffect(() => {
     if (!showToc) return;
     let alive = true;
-    void getAllCachedChapterIds().then((ids) => {
+    void getOfflineChapterIds(bookId).then((ids) => {
       if (alive) setCachedIds(new Set(ids));
     });
     return () => {
       alive = false;
     };
-  }, [showToc]);
+  }, [bookId, showToc]);
 
   // Chapter navigation is buttons only -- see the bottom bar. Swipe and
   // edge-tap used to live here and both fired during ordinary scrolling: a
@@ -624,11 +672,15 @@ export default function ReadPage() {
         overscrollBehaviorY: "contain",
       }}
     >
-      <div className="max-w-3xl mx-auto">
+      <div className="mx-auto" style={{ maxWidth: `${contentWidth}rem` }}>
       {/* Reading progress bar (sits below the system status bar) */}
       <div
         className="sticky top-0 z-20 h-0.5 bg-transparent"
-        aria-hidden="true"
+        role="progressbar"
+        aria-label={`Tiến độ đọc: ${Math.round(scrollPct)} phần trăm`}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(scrollPct)}
       >
         <div
           className="h-full bg-accent transition-[width] duration-150"
@@ -640,7 +692,8 @@ export default function ReadPage() {
       <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2 mb-4">
         <Link
           href={`/book?id=${bookId}`}
-          className="-ml-2 p-2 text-text hover:text-accent transition-colors"
+          className="-ml-2 inline-flex size-11 items-center justify-center rounded-full transition-[color,background-color,transform] hover:bg-current/5 hover:text-accent active:scale-[0.96]"
+          style={{ color: effectiveTheme.text }}
           title={book.title}
           aria-label="Quay lại"
         >
@@ -658,16 +711,18 @@ export default function ReadPage() {
             />
           </svg>
         </Link>
-        <p className="text-center font-mono text-[10px] tracking-[0.18em] uppercase text-text-mute truncate">
+        <p
+          className="truncate text-center font-mono text-[10px] uppercase tracking-[0.18em]"
+          style={{ color: effectiveTheme.text, opacity: 0.7 }}
+        >
           Chương {currentChapter.chapter_index + 1} ·{" "}
           <span className="text-accent">{Math.round(scrollPct)}%</span>
         </p>
-        <button
+        <IconButton
           onClick={() => setShowSettings(!showSettings)}
-          className={`-mr-2 p-2 transition-colors ${
-            showSettings ? "text-accent" : "text-text hover:text-accent"
-          }`}
-          title="Cài đặt đọc"
+          label="Cài đặt đọc"
+          className={`-mr-2 ${showSettings ? "text-accent" : "hover:text-accent"}`}
+          style={{ color: showSettings ? undefined : effectiveTheme.text }}
         >
           <svg
             className="w-5 h-5"
@@ -682,133 +737,167 @@ export default function ReadPage() {
               d="M4 6h16M4 12h16M4 18h16"
             />
           </svg>
-        </button>
+        </IconButton>
       </div>
 
-      {/* Settings panel */}
-      {showSettings && (
-        <div className="mb-4 p-4 bg-surface dark:bg-raised rounded-xl border border-hairline-soft dark:border-hairline shadow-sm animate-in space-y-4">
-          {/* Font size */}
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-text-dim dark:text-text-faint">
-              Cỡ chữ
-            </span>
-            <div className="flex items-center gap-1.5">
+      <Sheet
+        open={showSettings}
+        onClose={() => setShowSettings(false)}
+        title="Cài đặt đọc"
+        description="Chữ, màu và chiều rộng nội dung"
+      >
+        <div className="space-y-5">
+          <fieldset>
+            <legend className="mb-2 text-sm font-semibold text-text-dim">Cỡ chữ</legend>
+            <div className="grid grid-cols-6 gap-1.5">
               {FONT_SIZES.map((size) => (
                 <button
+                  type="button"
                   key={size}
                   onClick={() => handleFontSize(size)}
-                  className={`w-8 h-8 rounded-lg text-xs font-medium transition-colors ${
+                  className={`min-h-11 rounded-lg text-xs font-medium transition-[color,background-color,transform] active:scale-[0.96] ${
                     fontSize === size
-                      ? "bg-accent text-white"
-                      : "bg-raised dark:bg-raised-hi text-text-dim dark:text-text-faint hover:bg-raised-hi dark:hover:bg-hairline"
+                      ? "bg-accent text-ink"
+                      : "bg-raised text-text-dim hover:bg-raised-hi"
                   }`}
+                  aria-pressed={fontSize === size}
                 >
                   {size}
                 </button>
               ))}
             </div>
-          </div>
+          </fieldset>
 
-          {/* Font family */}
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-text-dim dark:text-text-faint">
-              Phông chữ
-            </span>
-            <div className="flex items-center gap-1.5 flex-wrap justify-end">
+          <fieldset>
+            <legend className="mb-2 text-sm font-semibold text-text-dim">Phông chữ</legend>
+            <div className="flex flex-wrap gap-1.5">
               {FONT_FAMILIES.map((ff) => (
                 <button
+                  type="button"
                   key={ff.value}
                   onClick={() => handleFontFamily(ff.value)}
-                  className={`px-2.5 h-8 rounded-lg text-xs font-medium transition-colors ${
+                  className={`min-h-11 rounded-lg px-3 text-xs font-medium transition-[color,background-color,transform] active:scale-[0.96] ${
                     fontFamily === ff.value
-                      ? "bg-accent text-white"
-                      : "bg-raised dark:bg-raised-hi text-text-dim dark:text-text-faint hover:bg-raised-hi dark:hover:bg-hairline"
+                      ? "bg-accent text-ink"
+                      : "bg-raised text-text-dim hover:bg-raised-hi"
                   }`}
                   style={{ fontFamily: ff.value }}
+                  aria-pressed={fontFamily === ff.value}
                 >
                   {ff.label}
                 </button>
               ))}
             </div>
+          </fieldset>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block text-sm font-semibold text-text-dim">
+              Giãn dòng <span className="font-mono text-xs text-text-faint">{lineHeight.toFixed(1)}</span>
+              <input
+                type="range"
+                min="1.4"
+                max="2.2"
+                step="0.1"
+                value={lineHeight}
+                onChange={(event) => updateReaderLayout("lineHeight", Number(event.target.value))}
+                className="mt-2 h-11 w-full"
+              />
+            </label>
+            <label className="block text-sm font-semibold text-text-dim">
+              Chiều rộng <span className="font-mono text-xs text-text-faint">{contentWidth} rem</span>
+              <input
+                type="range"
+                min="32"
+                max="64"
+                step="2"
+                value={contentWidth}
+                onChange={(event) => updateReaderLayout("contentWidth", Number(event.target.value))}
+                className="mt-2 h-11 w-full"
+              />
+            </label>
           </div>
 
-          {/* Theme presets */}
-          <div>
-            <span className="text-sm font-medium text-text-dim dark:text-text-faint mb-2 block">
-              Giao diện đọc
-            </span>
-            <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
-              {READER_THEMES.map((t) => {
+          <fieldset>
+            <legend className="mb-2 text-sm font-semibold text-text-dim">Giao diện đọc</legend>
+            <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
+              {READER_THEMES.map((preset) => {
                 const swatch =
-                  t.name === "auto"
+                  preset.name === "auto"
                     ? systemDark
-                      ? { bg: AUTO_DARK.bg, text: AUTO_DARK.text }
-                      : { bg: AUTO_LIGHT.bg, text: AUTO_LIGHT.text }
-                    : { bg: t.bg, text: t.text };
+                      ? AUTO_DARK
+                      : AUTO_LIGHT
+                    : preset;
                 return (
                   <button
-                    key={t.name}
-                    onClick={() => handleTheme(t)}
-                    className={`flex flex-col items-center gap-1.5 p-2 rounded-xl border-2 transition-all ${
-                      theme.name === t.name
-                        ? "border-accent shadow-sm"
-                        : "border-transparent hover:border-hairline dark:hover:border-hairline"
+                    type="button"
+                    key={preset.name}
+                    onClick={() => handleTheme(preset)}
+                    className={`flex min-h-16 flex-col items-center justify-center gap-1 rounded-xl border p-2 transition-[border-color,background-color,transform] active:scale-[0.96] ${
+                      theme.name === preset.name
+                        ? "border-accent bg-accent/10"
+                        : "border-hairline-soft hover:border-hairline"
                     }`}
+                    aria-pressed={theme.name === preset.name}
                   >
-                    <div
-                      className="w-full aspect-square rounded-lg flex items-center justify-center text-xs font-bold shadow-inner"
+                    <span
+                      className="flex size-8 items-center justify-center rounded-lg text-xs font-bold shadow-inner"
                       style={{ backgroundColor: swatch.bg, color: swatch.text }}
                     >
                       Aa
-                    </div>
-                    <span className="text-[10px] font-medium text-text-mute dark:text-text-mute">
-                      {t.label}
                     </span>
+                    <span className="text-[10px] font-medium text-text-mute">{preset.label}</span>
                   </button>
                 );
               })}
             </div>
-          </div>
+          </fieldset>
 
-          {/* Custom color pickers */}
-          <div className="flex items-center gap-4 pt-2 border-t border-hairline-soft dark:border-hairline">
-            <div className="flex items-center gap-2">
-              <label className="text-xs font-medium text-text-mute dark:text-text-mute">
+          <fieldset className="border-t border-hairline-soft pt-4">
+            <legend className="px-1 text-sm font-semibold text-text-dim">Màu tùy chọn</legend>
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <label className="flex min-h-11 items-center gap-2 text-xs font-medium text-text-mute">
                 Màu chữ
+                <input
+                  type="color"
+                  value={customText}
+                  onChange={(event) => handleCustomColor("text", event.target.value)}
+                  className="size-11 cursor-pointer rounded-lg border border-hairline bg-transparent"
+                />
               </label>
-              <input
-                type="color"
-                value={customText}
-                onChange={(e) => handleCustomColor("text", e.target.value)}
-                className="w-8 h-8 rounded-lg border border-hairline-soft dark:border-hairline cursor-pointer bg-transparent"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="text-xs font-medium text-text-mute dark:text-text-mute">
+              <label className="flex min-h-11 items-center gap-2 text-xs font-medium text-text-mute">
                 Màu nền
+                <input
+                  type="color"
+                  value={customBg}
+                  onChange={(event) => handleCustomColor("bg", event.target.value)}
+                  className="size-11 cursor-pointer rounded-lg border border-hairline bg-transparent"
+                />
               </label>
-              <input
-                type="color"
-                value={customBg}
-                onChange={(e) => handleCustomColor("bg", e.target.value)}
-                className="w-8 h-8 rounded-lg border border-hairline-soft dark:border-hairline cursor-pointer bg-transparent"
-              />
-            </div>
-            <div
-              className="ml-auto flex items-center gap-2 px-3 py-1.5 rounded-lg border border-hairline-soft dark:border-hairline"
-              style={{ backgroundColor: effectiveTheme.bg }}
-            >
-              <span
-                className="text-xs font-medium"
-                style={{ color: effectiveTheme.text }}
+              <div
+                className="ml-auto flex min-h-11 items-center rounded-lg border border-hairline px-4"
+                style={{ backgroundColor: customBg, color: customText }}
               >
-                Xem trước
-              </span>
+                <span className="text-xs font-semibold">Xem trước · {customContrast.toFixed(1)}:1</span>
+              </div>
             </div>
-          </div>
+            {customContrast < 4.5 && (
+              <div className="mt-3 flex items-center gap-3 rounded-xl border border-gold/30 bg-gold/10 p-3 text-xs text-gold" role="alert">
+                <span className="flex-1">Độ tương phản chưa đủ 4.5:1 nên màu này chưa được áp dụng.</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPreferences(DEFAULT_READER_PREFERENCES);
+                    saveReaderPreferences(DEFAULT_READER_PREFERENCES);
+                  }}
+                  className="min-h-11 rounded-lg px-2 font-semibold underline underline-offset-2"
+                >
+                  Đặt lại
+                </button>
+              </div>
+            )}
+          </fieldset>
         </div>
-      )}
+      </Sheet>
 
       {/* Chapter title — deliberately plain. The eyebrow, ❖ ornament and word
           count that used to sit here were decoration competing with the text,
@@ -866,7 +955,7 @@ export default function ReadPage() {
                     key={i}
                     className="mb-4 last:mb-0 text-pretty"
                     style={{
-                      lineHeight: 1.8,
+                      lineHeight,
                       color: effectiveTheme.text,
                       textIndent: "1.5em",
                     }}
@@ -1029,42 +1118,13 @@ export default function ReadPage() {
 
       {/* TOC drawer */}
       {showToc && (
-        <div
-          className={`fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 ${
-            isNativePlatform() ? "" : "backdrop-blur-sm"
-          }`}
-          onClick={() => setShowToc(false)}
+        <Sheet
+          open
+          onClose={() => setShowToc(false)}
+          title="Mục lục"
+          description={`${allChapters.length} chương`}
         >
-          <div
-            className="bg-surface dark:bg-surface w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl shadow-xl flex flex-col max-h-[80vh] sm:max-h-[70vh]"
-            style={{ paddingBottom: "var(--sab)" }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-4 pt-4 pb-2">
-              <h2 className="text-base font-semibold text-text dark:text-text">
-                Mục lục
-              </h2>
-              <button
-                onClick={() => setShowToc(false)}
-                className="p-1.5 rounded-lg text-text-mute hover:bg-raised dark:hover:bg-raised"
-                aria-label="Đóng"
-              >
-                <svg
-                  className="w-5 h-5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M6 18L18 6M6 6l12 12"
-                  />
-                </svg>
-              </button>
-            </div>
-            <div className="px-4 pb-2">
+            <div className="pb-2">
               <input
                 type="text"
                 inputMode="search"
@@ -1072,10 +1132,10 @@ export default function ReadPage() {
                 value={tocSearch}
                 onChange={(e) => setTocSearch(e.target.value)}
                 placeholder="Tìm chương theo số hoặc tiêu đề..."
-                className="w-full text-base bg-ink dark:bg-raised border border-hairline-soft dark:border-hairline rounded-lg px-3 py-2 text-text-dim dark:text-text-dim focus:ring-2 focus:ring-accent focus:border-accent outline-none"
+                className="min-h-11 w-full rounded-lg border border-hairline bg-ink px-3 py-2 text-base text-text-dim outline-none focus:border-accent focus:ring-2 focus:ring-accent"
               />
             </div>
-            <div ref={tocScrollRef} className="flex-1 overflow-y-auto px-2 pb-2">
+            <div ref={tocScrollRef} className="h-[min(56dvh,32rem)] overflow-y-auto px-2 pb-2">
               {filteredChapters.length === 0 ? (
                 <p className="text-center text-sm text-text-mute py-8">
                   Không tìm thấy chương nào.
@@ -1103,7 +1163,7 @@ export default function ReadPage() {
                           height: vi.size,
                           transform: `translateY(${vi.start}px)`,
                         }}
-                        className={`absolute left-0 top-0 w-full flex items-center gap-3 px-3 text-left rounded-lg select-none transition-colors ${
+                        className={`absolute left-0 top-0 flex min-h-11 w-full select-none items-center gap-3 rounded-lg px-3 text-left transition-colors ${
                           isCurrent
                             ? "bg-accent/15 dark:bg-accent/40 text-accent-dim dark:text-accent"
                             : "text-text-dim dark:text-text-faint hover:bg-ink dark:hover:bg-raised"
@@ -1143,8 +1203,7 @@ export default function ReadPage() {
                 </div>
               )}
             </div>
-          </div>
-        </div>
+        </Sheet>
       )}
       </div>
     </div>

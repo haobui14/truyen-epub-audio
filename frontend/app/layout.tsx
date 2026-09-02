@@ -1,32 +1,16 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Cormorant_Garamond, JetBrains_Mono } from "next/font/google";
+import "@fontsource-variable/inter";
+import "@fontsource/cormorant-garamond/400.css";
+import "@fontsource/cormorant-garamond/500.css";
+import "@fontsource/cormorant-garamond/600.css";
+import "@fontsource/cormorant-garamond/400-italic.css";
+import "@fontsource-variable/jetbrains-mono";
 import "./globals.css";
 import { Providers } from "./providers";
 import { BottomNav } from "@/components/ui/BottomNav";
 import { MiniPlayer } from "@/components/player/MiniPlayer";
 import { PlayerPadding } from "@/components/player/PlayerPadding";
 import { AppHeader, AppMain, AppFooter } from "@/components/ui/AppChrome";
-
-const inter = Inter({
-  subsets: ["latin", "vietnamese"],
-  variable: "--font-sans",
-  display: "swap",
-});
-
-const cormorant = Cormorant_Garamond({
-  subsets: ["latin", "vietnamese"],
-  weight: ["400", "500", "600"],
-  style: ["normal", "italic"],
-  variable: "--font-display",
-  display: "swap",
-});
-
-const jetbrains = JetBrains_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500"],
-  variable: "--font-mono",
-  display: "swap",
-});
 
 export const metadata: Metadata = {
   title: "Truyện Audio Việt Nam",
@@ -58,10 +42,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html
-      lang="vi"
-      className={`dark ${inter.variable} ${cormorant.variable} ${jetbrains.variable}`}
-    >
+    <html lang="vi" className="dark">
       <body className="font-sans antialiased bg-ink text-text min-h-screen flex flex-col">
         <Providers>
           <div

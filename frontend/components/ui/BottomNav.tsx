@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { isReaderRoute } from "@/lib/readerRoute";
 import { getUser, clearAuth, isAdmin as checkAdmin } from "@/lib/auth";
 import type { AuthUser } from "@/lib/auth";
+import { Sheet } from "./Sheet";
 
 /** Indicator pill that highlights the active tab */
 function Pill({
@@ -48,17 +49,6 @@ export function BottomNav() {
     window.addEventListener("auth-change", sync);
     return () => window.removeEventListener("auth-change", sync);
   }, []);
-
-  // Lock body scroll while the profile sheet is open so dragging the backdrop
-  // doesn't scroll the library page behind it.
-  useEffect(() => {
-    if (!sheetOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [sheetOpen]);
 
   const at = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);
@@ -187,20 +177,14 @@ export function BottomNav() {
       </nav>
 
       {/* Profile bottom sheet */}
-      {sheetOpen && user && (
-        <>
-          <div
-            className="fixed inset-0 z-40 bg-black/60"
-            style={{ touchAction: "none" }}
-            onClick={closeSheet}
-          />
-          <div
-            className="fixed left-0 right-0 z-50 bg-surface border-t border-hairline rounded-t-2xl shadow-[0_-20px_60px_rgba(0,0,0,0.5)] animate-slide-up"
-            style={{ bottom: "calc(3.5rem + var(--sab))" }}
-          >
-            <div className="flex justify-center pt-3 pb-1">
-              <div className="w-9 h-1 bg-hairline rounded-full" />
-            </div>
+      {user && (
+        <Sheet
+          open={sheetOpen}
+          onClose={closeSheet}
+          title="Hồ sơ"
+          description={user.email}
+          bottomOffset="calc(3.5rem + var(--sab))"
+        >
 
             {/* User info header */}
             <div className="px-5 py-3 flex items-center gap-3 border-b border-hairline-soft">
@@ -370,8 +354,7 @@ export function BottomNav() {
                 </span>
               </button>
             </div>
-          </div>
-        </>
+        </Sheet>
       )}
     </>
   );

@@ -1,5 +1,7 @@
 "use client";
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
+import { useOverlayManager } from "@/context/OverlayContext";
+import { ActionButton } from "./Button";
 
 export function ConfirmDialog({
   open,
@@ -21,6 +23,8 @@ export function ConfirmDialog({
   variant?: "danger" | "default";
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const id = `confirm-${useId()}`;
+  const { register } = useOverlayManager();
 
   useEffect(() => {
     const el = dialogRef.current;
@@ -29,12 +33,26 @@ export function ConfirmDialog({
     else if (!open && el.open) el.close();
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    return register({ id, dismiss: onCancel });
+  }, [id, onCancel, open, register]);
+
   if (!open) return null;
 
   return (
     <dialog
       ref={dialogRef}
       onClose={onCancel}
+      onCancel={(event) => {
+        event.preventDefault();
+        onCancel();
+      }}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onCancel();
+      }}
+      aria-labelledby={`${id}-title`}
+      aria-describedby={`${id}-message`}
       className="fixed inset-0 z-50 bg-transparent backdrop:bg-black/50 backdrop:backdrop-blur-sm"
     >
       <div className="fixed inset-0 flex items-center justify-center p-4">
@@ -62,32 +80,30 @@ export function ConfirmDialog({
                 </div>
               )}
               <div className="flex-1 min-w-0">
-                <h3 className="text-base font-semibold text-text dark:text-text">
+                <h3 id={`${id}-title`} className="text-base font-semibold text-text dark:text-text">
                   {title}
                 </h3>
-                <p className="text-sm text-text-mute dark:text-text-mute mt-1">
+                <p id={`${id}-message`} className="text-sm text-text-mute dark:text-text-mute mt-1">
                   {message}
                 </p>
               </div>
             </div>
           </div>
           <div className="flex gap-2 px-5 pb-5">
-            <button
+            <ActionButton
               onClick={onCancel}
-              className="flex-1 px-4 py-2.5 text-sm font-medium rounded-xl bg-raised dark:bg-raised-hi text-text-dim dark:text-text-faint hover:bg-raised-hi dark:hover:bg-hairline transition-colors"
+              variant="secondary"
+              className="flex-1"
             >
               {cancelLabel}
-            </button>
-            <button
+            </ActionButton>
+            <ActionButton
               onClick={onConfirm}
-              className={`flex-1 px-4 py-2.5 text-sm font-semibold rounded-xl transition-colors ${
-                variant === "danger"
-                  ? "bg-vermillion hover:bg-vermillion-dim text-white"
-                  : "bg-accent hover:bg-accent-dim text-white"
-              }`}
+              variant={variant === "danger" ? "danger" : "primary"}
+              className="flex-1"
             >
               {confirmLabel}
-            </button>
+            </ActionButton>
           </div>
         </div>
       </div>

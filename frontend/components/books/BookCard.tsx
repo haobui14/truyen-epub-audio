@@ -120,7 +120,7 @@ export function BookCard({ book, priority }: { book: Book; priority?: boolean })
               e.stopPropagation();
               setShowConfirm(true);
             }}
-            className="absolute top-2 left-2 p-1.5 rounded-lg bg-black/50 text-white/80 hover:bg-vermillion hover:text-white opacity-0 group-hover:opacity-100 transition-all duration-200 backdrop-blur-sm z-10"
+            className="absolute top-2 left-2 min-h-11 min-w-11 rounded-lg bg-black/50 text-white/80 hover:bg-vermillion hover:text-white opacity-0 group-hover:opacity-100 transition-[opacity,background-color,color,transform] duration-200 active:scale-[0.96] backdrop-blur-sm z-10"
             title="Xóa truyện"
           >
             <svg

@@ -5,8 +5,9 @@ import Image from "next/image";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { isLoggedIn } from "@/lib/auth";
-import { Spinner } from "@/components/ui/Spinner";
 import { getCachedMyBooks, setCachedMyBooks } from "@/lib/progressQueue";
+import { AsyncState } from "@/components/ui/AsyncState";
+import { ConnectivityStatus } from "@/components/ui/ConnectivityStatus";
 
 type MyBookEntry = {
   book: {
@@ -39,7 +40,7 @@ function ProgressBar({ value, total }: { value: number; total?: number }) {
   return (
     <div className="h-1 w-full bg-raised dark:bg-raised-hi rounded-full overflow-hidden">
       <div
-        className="h-full bg-accent rounded-full transition-all"
+        className="h-full bg-accent rounded-full transition-[width] duration-300"
         style={{ width: `${pct}%` }}
       />
     </div>
@@ -56,10 +57,10 @@ function BookRow({ entry }: { entry: MyBookEntry }) {
       : null;
 
   return (
-    <div className="relative flex gap-3 p-3 bg-surface dark:bg-raised rounded-xl border border-hairline-soft dark:border-hairline/80 hover:shadow-md hover:border-accent/40 dark:hover:border-accent/40 transition-all group">
+    <div className="group relative flex gap-3 rounded-xl border border-hairline-soft bg-surface p-3 transition-[border-color,box-shadow] hover:border-accent/40 hover:shadow-md">
       <Link href={href} className="flex gap-3 flex-1 min-w-0">
       {/* Cover */}
-      <div className="w-14 h-[4.67rem] shrink-0 rounded-lg overflow-hidden bg-linear-to-br from-raised to-raised-hi dark:from-raised dark:to-raised-hi relative">
+      <div className="image-outline relative h-[4.67rem] w-14 shrink-0 overflow-hidden rounded-lg bg-linear-to-br from-raised to-raised-hi">
         {book.cover_url ? (
           <Image
             src={book.cover_url}
@@ -127,7 +128,7 @@ function BookRow({ entry }: { entry: MyBookEntry }) {
           href={readHref}
           aria-label="Đọc tiếp"
           title="Đọc tiếp"
-          className="flex items-center justify-center w-9 h-9 rounded-lg text-text-mute hover:text-accent hover:bg-accent/10 dark:hover:bg-accent/20 transition-colors"
+          className="flex size-11 items-center justify-center rounded-lg text-text-mute transition-[color,background-color,transform] hover:bg-accent/10 hover:text-accent active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
         >
           <svg
             className="w-[18px] h-[18px]"
@@ -147,7 +148,7 @@ function BookRow({ entry }: { entry: MyBookEntry }) {
           href={href}
           aria-label="Nghe tiếp"
           title="Nghe tiếp"
-          className="flex items-center justify-center w-9 h-9 rounded-lg text-text-mute hover:text-accent hover:bg-accent/10 dark:hover:bg-accent/20 transition-colors"
+          className="flex size-11 items-center justify-center rounded-lg text-text-mute transition-[color,background-color,transform] hover:bg-accent/10 hover:text-accent active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
         >
           <svg
             className="w-[18px] h-[18px]"
@@ -171,16 +172,19 @@ export default function MyBooksPage() {
     return () => window.removeEventListener("auth-change", h);
   }, []);
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["my-books"],
     queryFn: async () => {
       try {
         const result = await api.getMyBooks();
         await setCachedMyBooks(result);
-        return result as MyBookEntry[];
+        return { entries: result as MyBookEntry[], cached: false };
       } catch {
         const cached = await getCachedMyBooks();
-        return (cached as MyBookEntry[] | null) ?? [];
+        if (cached) {
+          return { entries: cached as MyBookEntry[], cached: true };
+        }
+        throw new Error("Không có dữ liệu đã lưu");
       }
     },
     enabled: loggedIn,
@@ -208,7 +212,7 @@ export default function MyBooksPage() {
         </p>
         <Link
           href="/login"
-          className="px-5 py-2.5 bg-accent text-white text-sm font-medium rounded-xl hover:bg-accent-dim transition-colors"
+          className="inline-flex min-h-11 items-center rounded-xl bg-accent px-5 py-2.5 text-sm font-medium text-ink transition-[background-color,transform] hover:bg-accent-dim active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
         >
           Đăng nhập
         </Link>
@@ -216,12 +220,13 @@ export default function MyBooksPage() {
     );
   }
 
-  const entries = data ?? [];
+  const entries = data?.entries ?? [];
 
   return (
     <div className="max-w-2xl mx-auto">
       {/* Header */}
-      <div className="flex items-center justify-between mb-5">
+      <ConnectivityStatus cached={data?.cached ?? false} />
+      <div className="mt-5 flex items-center justify-between mb-5">
         <div>
           <h1 className="text-2xl font-bold text-text dark:text-text">
             Truyện của tôi
@@ -230,53 +235,40 @@ export default function MyBooksPage() {
             Tiếp tục đọc hoặc nghe từ nơi bạn dừng lại
           </p>
         </div>
-        {entries.length > 0 && (
-          <span className="text-xs font-medium text-text-mute bg-raised dark:bg-raised px-3 py-1.5 rounded-full">
-            {entries.length} truyện
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          <Link
+            href="/my-books/downloads"
+            className="inline-flex min-h-11 items-center rounded-xl border border-hairline px-3 text-xs font-semibold text-text-mute transition-[color,border-color,transform] hover:border-accent/40 hover:text-accent active:scale-[0.96]"
+          >
+            Tải xuống
+          </Link>
+          {entries.length > 0 && (
+            <span className="rounded-full bg-raised px-3 py-1.5 text-xs font-medium text-text-mute">
+              {entries.length} truyện
+            </span>
+          )}
+        </div>
       </div>
 
-      {isLoading && (
-        <div className="flex flex-col items-center gap-3 py-24">
-          <Spinner className="w-8 h-8 text-accent" />
-          <p className="text-sm text-text-mute">Đang tải...</p>
-        </div>
+      {isLoading && entries.length === 0 && (
+        <AsyncState kind="loading" title="Đang tải truyện của bạn" />
       )}
 
       {error && entries.length === 0 && (
-        <div className="text-center py-16">
-          <p className="text-vermillion text-sm">
-            Không thể tải danh sách. Vui lòng thử lại.
-          </p>
-        </div>
+        <AsyncState
+          kind="error"
+          title="Không thể tải danh sách"
+          message="Chưa có bản đã lưu trên thiết bị này."
+          onAction={() => void refetch()}
+        />
       )}
 
       {!isLoading && entries.length === 0 && !error && (
-        <div className="flex flex-col items-center justify-center py-24 text-center">
-          <svg
-            className="w-14 h-14 text-text-dim dark:text-text mb-4"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={1.5}
-              d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
-            />
-          </svg>
-          <p className="text-text-mute dark:text-text-mute mb-2">
-            Bạn chưa đọc hoặc nghe truyện nào
-          </p>
-          <Link
-            href="/"
-            className="text-sm text-accent dark:text-accent hover:underline"
-          >
-            Khám phá thư viện →
-          </Link>
-        </div>
+        <AsyncState
+          kind="empty"
+          title="Chưa có truyện đang đọc"
+          message="Truyện bạn đọc hoặc nghe sẽ xuất hiện tại đây."
+        />
       )}
 
       <div className="space-y-2.5">

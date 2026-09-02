@@ -159,6 +159,11 @@ def app_version():
     its baked NEXT_PUBLIC_APP_VERSION and shows an update notice when behind.
     Bump ANDROID_LATEST_VERSION on Railway after sharing a new APK."""
     return {
+        # `latest` remains during the current bridge-compatibility window.
         "latest": settings.android_latest_version,
+        "version_name": settings.android_latest_version,
+        "version_code": settings.android_version_code,
         "download_url": settings.android_download_url,
+        "sha256": settings.android_apk_sha256,
+        "minimum_supported_version": settings.android_min_supported_version,
     }

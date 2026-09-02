@@ -1,7 +1,23 @@
 "use client";
 import { isNativePlatform } from "@/lib/capacitor";
 
+export const NATIVE_BRIDGE_CAPABILITY_VERSION = 3;
+
 interface TtsBridgeNative {
+  getCapabilityVersion?(): number;
+  getNativeVersionName?(): string;
+  getRuntimeInfo?(): string;
+  consumeRecoveredCrash?(): string;
+  getNotificationPermissionStatus?():
+    | "not-required"
+    | "granted"
+    | "denied";
+  shouldShowNotificationPermissionRationale?(): boolean;
+  requestNotificationPermission?(): void;
+  saveSecureAuth?(json: string): boolean;
+  loadSecureAuth?(): string;
+  clearSecureAuth?(): void;
+  migrateLegacyAuth?(): string;
   startService(): void;
   stopService(): void;
   playChunks(
@@ -144,11 +160,30 @@ export function getTtsBridge(): TtsBridgeNative | undefined {
   return (window as unknown as { TtsBridge?: TtsBridgeNative }).TtsBridge;
 }
 
+export function getNativeBridgeCapabilityVersion(): number {
+  if (!isNativePlatform()) return NATIVE_BRIDGE_CAPABILITY_VERSION;
+  try {
+    return getTtsBridge()?.getCapabilityVersion?.() ?? 1;
+  } catch {
+    return 0;
+  }
+}
+
 /** Start the Android foreground service + KeepAwake so TTS continues in bg */
 export async function acquireBackgroundLock() {
   if (!isNativePlatform()) return;
   try {
-    getTtsBridge()?.startService();
+    const bridge = getTtsBridge();
+    // Permission is requested only after the in-app feature explanation has
+    // been acknowledged. A denial does not prevent the foreground service or
+    // on-screen listening; it only hides the notification on Android 13+.
+    if (
+      bridge?.getNotificationPermissionStatus?.() === "denied" &&
+      localStorage.getItem("notification-permission-context-shown") === "1"
+    ) {
+      bridge.requestNotificationPermission?.();
+    }
+    bridge?.startService();
   } catch {
     /* best-effort */
   }

@@ -11,6 +11,7 @@ import { getToken } from "./auth";
 import { isNativePlatform } from "./capacitor";
 
 const MAX_REPORTS_PER_SESSION = 10;
+const MAX_BREADCRUMBS_PER_SESSION = 30;
 
 // Known-benign noise that would burn the session budget for nothing.
 const IGNORED = [
@@ -19,8 +20,28 @@ const IGNORED = [
 ];
 
 let sent = 0;
+let breadcrumbsSent = 0;
 const seen = new Set<string>();
 let installed = false;
+let runtime = "";
+
+function redactSensitive(value: string): string {
+  return value
+    .replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, "Bearer [redacted]")
+    .replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, "[jwt]")
+    .replace(/([?&](?:access_?token|refresh_?token|token)=)[^&#\s]+/gi, "$1[redacted]");
+}
+
+function runtimeContext(): string {
+  if (runtime || !isNativePlatform()) return runtime;
+  try {
+    const raw = (
+      window as Window & { TtsBridge?: { getRuntimeInfo?(): string } }
+    ).TtsBridge?.getRuntimeInfo?.();
+    if (raw) runtime = redactSensitive(raw).slice(0, 800);
+  } catch {}
+  return runtime;
+}
 
 function platform(): string {
   if (isNativePlatform()) return "android";
@@ -34,7 +55,9 @@ function platform(): string {
 
 export function reportClientError(message: string, stack?: string): void {
   try {
-    const msg = (message || "").trim().slice(0, 2000);
+    const base = redactSensitive((message || "").trim());
+    const context = runtimeContext();
+    const msg = `${base}${context ? ` | runtime=${context}` : ""}`.slice(0, 2000);
     if (!msg) return;
     if (IGNORED.some((p) => msg.includes(p))) return;
     // One report per distinct message per session — a render-loop error would
@@ -52,7 +75,7 @@ export function reportClientError(message: string, stack?: string): void {
       },
       body: JSON.stringify({
         message: msg,
-        stack: stack?.slice(0, 4000),
+        stack: stack ? redactSensitive(stack).slice(0, 4000) : undefined,
         url: window.location.pathname + window.location.search,
         platform: platform(),
         app_version: process.env.NEXT_PUBLIC_APP_VERSION,
@@ -65,10 +88,46 @@ export function reportClientError(message: string, stack?: string): void {
   }
 }
 
+/** Privacy-safe, content-free trail for playback/download failure diagnosis. */
+export function reportClientBreadcrumb(
+  category: "playback" | "download" | "lifecycle",
+  event: string,
+  stage: string,
+  details: Record<string, string | number | boolean | null | undefined> = {},
+): void {
+  if (breadcrumbsSent >= MAX_BREADCRUMBS_PER_SESSION) return;
+  const safeDetails = Object.fromEntries(
+    Object.entries(details)
+      .filter(([key]) => !/(token|text|content|chapter_title|book_title)/i.test(key))
+      .map(([key, value]) => [key.slice(0, 40), value]),
+  );
+  breadcrumbsSent += 1;
+  reportClientError(
+    `breadcrumb category=${category} event=${event.slice(0, 80)} stage=${stage.slice(0, 80)} details=${JSON.stringify(safeDetails)}`,
+  );
+}
+
 /** Install window-level handlers. Idempotent; call once from Providers. */
 export function initErrorReporter(): void {
   if (installed || typeof window === "undefined") return;
   installed = true;
+
+  if (isNativePlatform()) {
+    runtimeContext();
+    try {
+      const crash = (
+        window as Window & {
+          TtsBridge?: { consumeRecoveredCrash?(): string };
+        }
+      ).TtsBridge?.consumeRecoveredCrash?.();
+      if (crash) {
+        reportClientError(
+          "native crash recovered on next launch; stage=previous-process",
+          crash,
+        );
+      }
+    } catch {}
+  }
 
   window.addEventListener("error", (event) => {
     reportClientError(

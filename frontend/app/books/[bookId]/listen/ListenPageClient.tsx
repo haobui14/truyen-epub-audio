@@ -50,13 +50,14 @@ import { Spinner } from "@/components/ui/Spinner";
 import { usePlayerContext } from "@/context/PlayerContext";
 import { splitIntoChunks } from "@/lib/textChunks";
 import {
-  cacheChapterText,
-  isChapterTextCached,
-  getCachedChapterText,
-  getCachedChapterEntry,
-  getAllCachedChapterIds,
   canUseCachedChapterText,
 } from "@/lib/chapterTextCache";
+import {
+  classifyOfflineError,
+  getOfflineChapter,
+  getOfflineChapterIds,
+  saveOfflineChapterText,
+} from "@/lib/offlineRepository";
 import { isNativePlatform } from "@/lib/capacitor";
 import {
   getLocalProgress,
@@ -155,12 +156,8 @@ export default function ListenPage() {
     gcTime: 30 * 60_000,
   });
 
-  // Fetch text for the current chapter — on native checks IndexedDB first
-  // (but only when it's still the current server version; see
-  // canUseCachedChapterText), then falls back to IndexedDB again if the API
-  // call fails. Auto-caches to IndexedDB on native so Java's
-  // mergeQueuedChapters can populate the screen-off queue without any
-  // network fetches.
+  // Fetch text for the current chapter through the shared offline repository.
+  // Android reads app-private native files; web uses IndexedDB.
   const { data: chapterText, isLoading: isLoadingText } = useQuery({
     queryKey: ["chapterText", chapterId],
     queryFn: async (): Promise<{
@@ -171,7 +168,7 @@ export default function ListenPage() {
       native_chunks?: string[];
     }> => {
       if (isNativePlatform()) {
-        const cached = await getCachedChapterEntry(chapterId!);
+        const cached = await getOfflineChapter(bookId, chapterId!);
         const serverUpdatedAt = chaptersData?.items.find(
           (c) => c.id === chapterId,
         )?.updated_at;
@@ -181,16 +178,23 @@ export default function ListenPage() {
       }
       try {
         const data = await api.getChapterText(chapterId!);
-        // Persist to IndexedDB so Java can find it in mergeQueuedChapters
-        // even after the app is restarted or React Query cache is cold.
+        // Persist to the native repository so both Java playback and the UI
+        // can find it after a restart or a cold React Query cache.
         if (isNativePlatform()) {
-          cacheChapterText(chapterId!, data.text_content, data.updated_at).catch(() => {});
+          saveOfflineChapterText(
+            bookId,
+            chapterId!,
+            data.text_content,
+            data.updated_at,
+          ).catch(() => {});
         }
         return data;
       } catch {
         // Offline or API error — try local cache
-        const cached = await getCachedChapterText(chapterId!);
-        if (cached) return { id: chapterId!, text_content: cached };
+        const cached = await getOfflineChapter(bookId, chapterId!);
+        if (cached) {
+          return { id: chapterId!, text_content: cached.text_content };
+        }
         // Last resort: native is (or was) playing THIS chapter and still holds
         // its chunks — a chapter Java self-fetched during a screen-off
         // auto-advance exists nowhere on the JS side, so an offline app-reopen
@@ -213,7 +217,7 @@ export default function ListenPage() {
               nativeChunks.every((c) => typeof c === "string")
             ) {
               const text = (nativeChunks as string[]).join("\n\n");
-              cacheChapterText(chapterId!, text).catch(() => {});
+              saveOfflineChapterText(bookId, chapterId!, text).catch(() => {});
               return {
                 id: chapterId!,
                 text_content: text,
@@ -285,9 +289,8 @@ export default function ListenPage() {
   const nextChapter = chapterByIndex.get(currentIndex + 1) ?? null;
 
   // Preload adjacent + upcoming chapter texts.
-  // On native, each successful API fetch is persisted to IndexedDB so Java's
-  // mergeQueuedChapters has real data to queue — enabling seamless screen-off
-  // playback without any network dependency inside the Java service.
+  // On native, each successful API fetch is persisted to app-private storage
+  // so Java and the WebView share the same screen-off playback source.
   const prevChapterId = prevChapter?.id ?? null;
   const nextChapterId = nextChapter?.id ?? null;
   const next2Chapter = chapterByIndex.get(currentIndex + 2) ?? null;
@@ -301,13 +304,14 @@ export default function ListenPage() {
   const next5ChapterId = next5Chapter?.id ?? null;
   const next6ChapterId = next6Chapter?.id ?? null;
 
-  // Helper: fetch from API, auto-cache on native, fall back to IndexedDB.
+  // Helper: fetch from API, auto-cache on native, fall back to the shared
+  // offline repository.
   // Only trusts the cache when it's still the current server version (or
   // we're offline) — see canUseCachedChapterText.
   const fetchAndCacheText = useCallback(
     async (id: string) => {
       if (isNativePlatform()) {
-        const cached = await getCachedChapterEntry(id);
+        const cached = await getOfflineChapter(bookId, id);
         const serverUpdatedAt = chaptersData?.items.find(
           (c) => c.id === id,
         )?.updated_at;
@@ -318,16 +322,21 @@ export default function ListenPage() {
       try {
         const data = await api.getChapterText(id);
         if (isNativePlatform()) {
-          cacheChapterText(id, data.text_content, data.updated_at).catch(() => {});
+          saveOfflineChapterText(
+            bookId,
+            id,
+            data.text_content,
+            data.updated_at,
+          ).catch(() => {});
         }
         return data;
       } catch {
-        const cached = await getCachedChapterText(id);
-        if (cached) return { id, text_content: cached };
+        const cached = await getOfflineChapter(bookId, id);
+        if (cached) return { id, text_content: cached.text_content };
         throw new Error("offline");
       }
     },
-    [chaptersData],
+    [bookId, chaptersData],
   );
 
   useQuery({
@@ -576,6 +585,7 @@ export default function ListenPage() {
 
   const [isCached, setIsCached] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [offlineSaveError, setOfflineSaveError] = useState<string | null>(null);
   const [cachedIds, setCachedIds] = useState<Set<string>>(new Set());
   const [showText, setShowText] = useState(false);
   const [chapterSearch, setChapterSearch] = useState("");
@@ -584,7 +594,7 @@ export default function ListenPage() {
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const isAdmin = getUser()?.role === "admin";
-  const activeChunkRef = useRef<HTMLDivElement>(null);
+  const highlightedTextRef = useRef<HTMLDivElement>(null);
   const chapterListRef = useRef<HTMLDivElement>(null);
   const chapterListScrolledRef = useRef(false);
 
@@ -644,18 +654,26 @@ export default function ListenPage() {
       (chapterTextContent ? splitIntoChunks(chapterTextContent) : []),
     [nativeChunks, chapterTextContent],
   );
+  const highlightedTextVirtualizer = useVirtualizer({
+    count: chunks.length,
+    getScrollElement: () => highlightedTextRef.current,
+    estimateSize: () => 56,
+    overscan: 6,
+  });
 
   // Check if already cached
   useEffect(() => {
     if (!chapterId) return;
-    isChapterTextCached(chapterId).then(setIsCached);
-  }, [chapterId]);
+    getOfflineChapter(bookId, chapterId).then((chapter) =>
+      setIsCached(chapter !== null),
+    );
+  }, [bookId, chapterId]);
 
   // Load all cached chapter IDs for per-chapter offline badges (native only)
   useEffect(() => {
     if (!isNativePlatform()) return;
-    getAllCachedChapterIds().then((ids) => setCachedIds(new Set(ids)));
-  }, []);
+    getOfflineChapterIds(bookId).then((ids) => setCachedIds(new Set(ids)));
+  }, [bookId]);
 
   // ── Shared native-sync helper ────────────────────────────────────────────
   // If native is playing a chapter different from JS's current chapterId,
@@ -892,7 +910,7 @@ export default function ListenPage() {
 
     // Scan up to 50 chapters ahead (matches Java's chapterQueue cap of 50).
     // No status filter: native device TTS only needs text content, not server audio.
-    // Chapters with status "converting" or "error" may still have text in IndexedDB.
+    // Chapters with status "converting" or "error" may still have offline text.
     const remainingChapters = allChapters
       .filter((c) => c.chapter_index > currentIndex)
       .sort((a, b) => a.chapter_index - b.chapter_index)
@@ -921,8 +939,8 @@ export default function ListenPage() {
       const cachedItems: QueueItem[] = [];
 
       for (const ch of remainingChapters) {
-        // Bail out inside the loop — each getCachedChapterText is an IndexedDB
-        // await that yields to the event loop. A new dep change can set cancelled
+        // Bail out inside the loop — each repository read yields to the event
+        // loop. A new dep change can set cancelled
         // while we're mid-loop; checking here prevents a stale mergeQueuedChapters.
         if (cancelled) return;
 
@@ -935,9 +953,9 @@ export default function ListenPage() {
         if (qcData?.text_content) {
           text = qcData.text_content;
         } else {
-          // 2. IndexedDB (async)
+          // 2. Shared offline repository (async)
           try {
-            text = await getCachedChapterText(ch.id);
+            text = (await getOfflineChapter(bookId, ch.id))?.text_content ?? null;
           } catch {
             /* not cached */
           }
@@ -973,9 +991,8 @@ export default function ListenPage() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    chapterId, voice, rate, pitch, allChapters, currentIndex, queryClient,
+    bookId, chapterId, voice, rate, pitch, allChapters, currentIndex, queryClient,
     // Re-run as each preload text arrives so the queue is topped up incrementally.
     nextChapterTextData?.text_content,
     next2ChapterTextData?.text_content,
@@ -999,15 +1016,14 @@ export default function ListenPage() {
     prefetchNextChapterAudio(nextChapterId, nextChapterText, voice);
   }, [chunkIndex, totalChunks, nextChapterId, nextChapterText, voice]);
 
-  // Auto-scroll active chunk into view
+  // Keep the active virtualized chunk centered without mounting the whole book.
   useEffect(() => {
-    if (showText && activeChunkRef.current) {
-      activeChunkRef.current.scrollIntoView({
-        behavior: "smooth",
-        block: "center",
-      });
-    }
-  }, [chunkIndex, showText]);
+    if (!showText || chunks.length === 0) return;
+    const raf = requestAnimationFrame(() => {
+      highlightedTextVirtualizer.scrollToIndex(chunkIndex, { align: "center" });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [chunkIndex, chunks.length, highlightedTextVirtualizer, showText]);
 
   // On open, scroll the chapter list so the currently-playing chapter is
   // centered — scoped to the list's own scroll container (the virtualizer only
@@ -1042,14 +1058,21 @@ export default function ListenPage() {
   async function handleSaveOffline() {
     if (!chapterId || !chapterTextContent) return;
     setIsSaving(true);
-    await cacheChapterText(
-      chapterId,
-      chapterTextContent,
-      chaptersData?.items.find((c) => c.id === chapterId)?.updated_at,
-    );
-    setIsCached(true);
-    setCachedIds((prev) => new Set([...prev, chapterId!]));
-    setIsSaving(false);
+    setOfflineSaveError(null);
+    try {
+      await saveOfflineChapterText(
+        bookId,
+        chapterId,
+        chapterTextContent,
+        chaptersData?.items.find((c) => c.id === chapterId)?.updated_at,
+      );
+      setIsCached(true);
+      setCachedIds((prev) => new Set([...prev, chapterId]));
+    } catch (error) {
+      setOfflineSaveError(classifyOfflineError(error).error_message ?? null);
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   function handleOpenEdit() {
@@ -1064,11 +1087,16 @@ export default function ListenPage() {
     setEditError(null);
     try {
       const res = await api.updateChapterText(chapterId, editText);
-      // Write the edit through to IndexedDB with the NEW server version.
+      // Write the edit through to the shared repository with the NEW server version.
       // Without this the offline entry keeps the pre-edit text and the next
       // refetch (e.g. the app-foreground invalidation in providers.tsx)
       // trusts it via canUseCachedChapterText — the saved edit snaps back.
-      await cacheChapterText(chapterId, editText, res.updated_at ?? undefined);
+      await saveOfflineChapterText(
+        bookId,
+        chapterId,
+        editText,
+        res.updated_at ?? undefined,
+      );
       // Update React Query cache so player uses new text immediately
       queryClient.setQueryData(["chapterText", chapterId], {
         id: chapterId,
@@ -1354,7 +1382,7 @@ export default function ListenPage() {
         <div className="flex items-center justify-between mt-4 mb-1">
           <button
             onClick={() => setShowText((v) => !v)}
-            className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ${
+            className={`flex min-h-11 items-center gap-1.5 text-xs font-medium px-3 rounded-lg border transition-colors ${
               showText
                 ? "bg-accent/15 dark:bg-accent/15 border-accent/40 dark:border-accent/40 text-accent dark:text-accent"
                 : "border-hairline-soft dark:border-hairline text-text-mute dark:text-text-mute hover:border-accent/40 hover:text-accent dark:hover:text-accent"
@@ -1379,7 +1407,7 @@ export default function ListenPage() {
           <button
             onClick={handleSaveOffline}
             disabled={isCached || isSaving || !chapterTextContent}
-            className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ${
+            className={`flex min-h-11 items-center gap-1.5 text-xs font-medium px-3 rounded-lg border transition-colors ${
               isCached
                 ? "border-accent/40 dark:border-accent/40 text-accent dark:text-accent bg-accent/10 dark:bg-accent/30"
                 : "border-hairline-soft dark:border-hairline text-text-mute dark:text-text-mute hover:border-accent/40 hover:text-accent dark:hover:text-accent disabled:opacity-40"
@@ -1422,7 +1450,7 @@ export default function ListenPage() {
           {isAdmin && (
             <button
               onClick={handleOpenEdit}
-              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-hairline-soft dark:border-hairline text-text-mute dark:text-text-mute hover:border-amber-400 hover:text-gold dark:hover:text-gold transition-colors"
+              className="flex min-h-11 items-center gap-1.5 text-xs font-medium px-3 rounded-lg border border-hairline-soft dark:border-hairline text-text-mute dark:text-text-mute hover:border-amber-400 hover:text-gold dark:hover:text-gold transition-colors"
             >
               <svg
                 className="w-3.5 h-3.5"
@@ -1443,24 +1471,47 @@ export default function ListenPage() {
         </div>
       )}
 
+      {offlineSaveError && (
+        <p role="status" aria-live="polite" className="mt-2 text-xs text-vermillion">
+          {offlineSaveError}
+        </p>
+      )}
+
       {/* Highlighted text view */}
       {showText && chunks.length > 0 && (
-        <div className="mt-1 mb-4 max-h-72 overflow-y-auto rounded-xl border border-hairline-soft dark:border-hairline-soft bg-surface dark:bg-surface px-4 py-3 space-y-1.5 text-sm leading-relaxed">
-          {chunks.map((chunk, i) => (
-            <div
-              key={i}
-              ref={i === chunkIndex ? activeChunkRef : null}
-              className={`rounded-lg px-2 py-1 transition-colors duration-300 ${
-                i === chunkIndex
-                  ? "bg-accent/15 dark:bg-accent/60 text-accent-dim dark:text-accent font-medium"
-                  : i < chunkIndex
-                    ? "text-text-mute dark:text-text-dim"
-                    : "text-text-dim dark:text-text-mute"
-              }`}
-            >
-              {chunk}
-            </div>
-          ))}
+        <div
+          ref={highlightedTextRef}
+          className="mb-4 mt-1 max-h-72 overflow-y-auto rounded-xl border border-hairline-soft bg-surface px-3 py-2 text-sm leading-relaxed"
+        >
+          <div
+            className="relative w-full"
+            style={{ height: `${highlightedTextVirtualizer.getTotalSize()}px` }}
+          >
+            {highlightedTextVirtualizer.getVirtualItems().map((item) => {
+              const chunk = chunks[item.index];
+              return (
+                <div
+                  key={item.key}
+                  ref={highlightedTextVirtualizer.measureElement}
+                  data-index={item.index}
+                  className="absolute left-0 top-0 w-full pb-1.5"
+                  style={{ transform: `translateY(${item.start}px)` }}
+                >
+                  <div
+                    className={`rounded-lg px-2 py-1 transition-colors duration-300 ${
+                      item.index === chunkIndex
+                        ? "bg-accent/15 font-medium text-accent"
+                        : item.index < chunkIndex
+                          ? "text-text-mute"
+                          : "text-text-dim"
+                    }`}
+                  >
+                    {chunk}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

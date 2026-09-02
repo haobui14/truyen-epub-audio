@@ -3,10 +3,11 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { getCachedBooks } from "@/lib/bookCache";
+import { cacheBooks, getCachedBooks } from "@/lib/bookCache";
 import { isNativePlatform } from "@/lib/capacitor";
 import { BookListRow } from "@/components/books/BookListRow";
-import { Spinner } from "@/components/ui/Spinner";
+import { AsyncState } from "@/components/ui/AsyncState";
+import { ConnectivityStatus } from "@/components/ui/ConnectivityStatus";
 import type { Genre } from "@/types";
 
 type StoryFilter = "all" | "completed" | "ongoing";
@@ -21,6 +22,7 @@ export default function SearchClient() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
+  const [usingCachedBooks, setUsingCachedBooks] = useState(false);
 
   // Initialise from URL params so the page is bookmarkable / shareable
   const [query, setQuery] = useState(searchParams.get("q") ?? "");
@@ -52,14 +54,21 @@ export default function SearchClient() {
     data: books,
     isLoading,
     error,
+    refetch,
   } = useQuery({
     queryKey: ["books"],
     queryFn: async () => {
       try {
-        return await api.listBooks();
+        const result = await api.listBooks();
+        setUsingCachedBooks(false);
+        await cacheBooks(result);
+        return result;
       } catch {
         const cached = await getCachedBooks();
-        if (cached) return cached;
+        if (cached) {
+          setUsingCachedBooks(true);
+          return cached;
+        }
         throw new Error("offline");
       }
     },
@@ -115,6 +124,7 @@ export default function SearchClient() {
 
   return (
     <div className="max-w-2xl mx-auto">
+      <ConnectivityStatus cached={usingCachedBooks} />
       {/* Page title */}
       <div className="mb-5">
         <h1 className="text-2xl font-bold text-text dark:text-text leading-tight">
@@ -146,12 +156,13 @@ export default function SearchClient() {
           placeholder="Tên truyện hoặc tác giả…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          className="w-full pl-10 pr-10 py-3 text-sm rounded-2xl border border-hairline-soft dark:border-hairline bg-surface dark:bg-raised text-text dark:text-text placeholder-text-faint dark:placeholder-text-faint focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent shadow-sm transition"
+          className="min-h-11 w-full rounded-2xl border border-hairline bg-surface py-3 pl-10 pr-12 text-sm text-text shadow-sm outline-none transition-[border-color,box-shadow] placeholder:text-text-faint focus:border-accent focus:ring-2 focus:ring-accent/40"
         />
         {query && (
           <button
             onClick={() => setQuery("")}
-            className="absolute right-3.5 top-1/2 -translate-y-1/2 text-text-mute hover:text-text-dim dark:hover:text-text-dim transition-colors"
+            aria-label="Xóa từ khóa"
+            className="absolute right-0 top-1/2 flex size-11 -translate-y-1/2 items-center justify-center rounded-full text-text-mute transition-[color,transform] hover:text-text active:scale-[0.96]"
           >
             <svg
               className="w-4 h-4"
@@ -182,7 +193,7 @@ export default function SearchClient() {
               <button
                 key={opt.value}
                 onClick={() => setStoryFilter(opt.value)}
-                className={`flex-none px-3.5 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap ${
+                className={`min-h-11 flex-none whitespace-nowrap rounded-full px-3.5 py-1.5 text-xs font-medium transition-[color,background-color,transform] active:scale-[0.96] ${
                   storyFilter === opt.value
                     ? "bg-accent text-white shadow-sm"
                     : "bg-raised dark:bg-raised text-text-dim dark:text-text-mute hover:bg-raised-hi dark:hover:bg-raised-hi"
@@ -203,7 +214,7 @@ export default function SearchClient() {
             <div className="flex gap-2 overflow-x-auto pb-0.5 scrollbar-none -mx-4 sm:mx-0 px-4 sm:px-0">
               <button
                 onClick={() => setGenreFilter(null)}
-                className={`flex-none px-3.5 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap ${
+                className={`min-h-11 flex-none whitespace-nowrap rounded-full px-3.5 py-1.5 text-xs font-medium transition-[color,background-color,transform] active:scale-[0.96] ${
                   genreFilter === null
                     ? "bg-accent text-white shadow-sm"
                     : "bg-raised dark:bg-raised text-text-dim dark:text-text-mute hover:bg-raised-hi dark:hover:bg-raised-hi"
@@ -217,7 +228,7 @@ export default function SearchClient() {
                   onClick={() =>
                     setGenreFilter(genreFilter === g.id ? null : g.id)
                   }
-                  className={`flex-none px-3.5 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap ${
+                  className={`min-h-11 flex-none whitespace-nowrap rounded-full px-3.5 py-1.5 text-xs font-medium transition-[color,background-color,transform] active:scale-[0.96] ${
                     genreFilter === g.id
                       ? "bg-accent text-white shadow-sm"
                       : "bg-raised dark:bg-raised text-text-dim dark:text-text-mute hover:bg-raised-hi dark:hover:bg-raised-hi"
@@ -242,7 +253,7 @@ export default function SearchClient() {
           {hasActiveFilters && (
             <button
               onClick={clearAll}
-              className="text-xs text-accent dark:text-accent hover:underline"
+              className="min-h-11 rounded-lg px-2 text-xs text-accent hover:underline"
             >
               Xóa bộ lọc
             </button>
@@ -252,21 +263,16 @@ export default function SearchClient() {
 
       {/* States */}
       {isLoading && (
-        <div className="flex flex-col items-center gap-3 py-20">
-          <Spinner className="w-8 h-8 text-accent" />
-          <p className="text-sm text-text-mute">Đang tải...</p>
-        </div>
+        <AsyncState kind="loading" title="Đang tải thư viện" />
       )}
 
       {error && (
-        <div className="text-center py-20">
-          <p className="text-vermillion font-medium">
-            Không thể tải danh sách truyện
-          </p>
-          <p className="text-sm text-text-mute mt-1">
-            Vui lòng kiểm tra kết nối và thử lại.
-          </p>
-        </div>
+        <AsyncState
+          kind="error"
+          title="Không thể tải danh sách truyện"
+          message="Chưa có bản đã lưu. Hãy kiểm tra kết nối và thử lại."
+          onAction={() => void refetch()}
+        />
       )}
 
       {!isLoading && !error && results.length === 0 && (
@@ -292,7 +298,7 @@ export default function SearchClient() {
           {hasActiveFilters && (
             <button
               onClick={clearAll}
-              className="mt-3 text-sm text-accent dark:text-accent hover:underline"
+              className="mt-3 min-h-11 rounded-lg px-3 text-sm text-accent hover:underline"
             >
               Xóa bộ lọc
             </button>

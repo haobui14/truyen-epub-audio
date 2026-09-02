@@ -127,6 +127,15 @@ WATERMARK_RULES: tuple[tuple[str, str, bool], ...] = (
         r"|thủ\s*phát",
         True,
     ),
+    # Galaxy Play streaming promo injected between paragraphs by wikidich-family
+    # mirrors: a two-line block ("Truyện chữ tặng bạn gói xem phim Galaxy Play
+    # Mobile …" + "Nhận quà ngay!"). Validated against 870 occurrences across
+    # 435 chapters of one scraped book — uniform wording, no MT variants.
+    (
+        "galaxyplay",
+        r"tặng\s*bạn\s*gói\s*xem\s*phim|galaxy\s*play\s*mobile|^\s*nhận\s*quà\s*ngay\s*!?\s*$",
+        True,
+    ),
     # Spliced into real sentences — phrase-exact, bounded middles.
     ("truyenfull-inline", r"\s*Đọc\s*Full\s*Tại\s*Truyenfull\.vn", False),
     (

@@ -19,7 +19,9 @@
         android:maxSdkVersion="28" />
 
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
         android:icon="@mipmap/ic_launcher"
         android:label="TruyệnAudio"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -32,7 +34,6 @@
             android:name=".MainActivity"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
             android:exported="true"
-            android:label="TruyệnAudio"
             android:launchMode="singleTask"
             android:alwaysRetainTaskState="true"
             android:windowSoftInputMode="adjustResize"
@@ -58,6 +59,7 @@
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
+                <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
         </service>
 

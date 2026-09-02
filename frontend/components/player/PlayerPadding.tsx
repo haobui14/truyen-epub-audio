@@ -9,7 +9,7 @@ import { isReaderRoute } from "@/lib/readerRoute";
  * the fixed bottom navigation bar.
  */
 export function PlayerPadding() {
-  const { track } = usePlayerContext();
+  const { session } = usePlayerContext();
   const pathname = usePathname();
 
   // The reader hides the tab bar and sets its own bottom padding, so this
@@ -19,6 +19,6 @@ export function PlayerPadding() {
   // Nav bar (3.5rem) + safe-area-inset-bottom is always present.
   // Add MiniPlayer height (~4.25rem) on top when the player is active.
   const navH = "calc(3.5rem + var(--sab))";
-  if (!track) return <div style={{ height: navH }} />;
+  if (!session.active) return <div style={{ height: navH }} />;
   return <div style={{ height: "calc(7.75rem + var(--sab))" }} />;
 }

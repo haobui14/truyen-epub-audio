@@ -35,7 +35,7 @@ export function UploadZone({ onFile, disabled }: UploadZoneProps) {
         if (file) handleFile(file);
       }}
       onClick={() => !disabled && inputRef.current?.click()}
-      className={`relative border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-all duration-200 ${
+      className={`relative border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-[border-color,background-color,transform] duration-200 ${
         isDragging
           ? "border-accent bg-accent/80 dark:bg-accent/50 scale-[1.01]"
           : "border-hairline dark:border-hairline hover:border-accent/40 hover:bg-ink dark:hover:bg-raised/50"

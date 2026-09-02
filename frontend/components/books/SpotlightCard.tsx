@@ -8,7 +8,7 @@ export function SpotlightCard({ book }: { book: Book }) {
   return (
     <Link
       href={`/book?id=${book.id}`}
-      className="group relative flex overflow-hidden rounded-lg bg-surface ring-1 ring-hairline shadow-[0_20px_50px_rgba(0,0,0,0.5)] hover:ring-accent/30 transition-all duration-300"
+      className="group relative flex overflow-hidden rounded-lg bg-surface ring-1 ring-hairline shadow-[0_20px_50px_rgba(0,0,0,0.5)] hover:ring-accent/30 transition-[box-shadow,transform] duration-300 active:scale-[0.96]"
     >
       {book.cover_url && (
         <div className="absolute inset-0 overflow-hidden" aria-hidden="true">

@@ -1,4 +1,5 @@
 import { isNativePlatform } from "@/lib/capacitor";
+import { getTtsBridge } from "@/lib/backgroundLock";
 
 const TOKEN_KEY = "auth_token";
 const USER_KEY = "auth_user";
@@ -9,6 +10,9 @@ const REFRESH_TOKEN_KEY = "auth_refresh_token";
 // queued visibilitychange firing hydrate in the middle of a token rotation
 // would otherwise clobber the just-set fresh tokens with the old ones.
 let _setAuthInFlight = false;
+let _nativeToken: string | null = null;
+let _nativeRefreshToken: string | null = null;
+let _nativeUser: AuthUser | null = null;
 
 export interface AuthUser {
   user_id: string;
@@ -20,16 +24,19 @@ export interface AuthUser {
 
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
+  if (isNativePlatform()) return _nativeToken;
   return localStorage.getItem(TOKEN_KEY);
 }
 
 export function getRefreshToken(): string | null {
   if (typeof window === "undefined") return null;
+  if (isNativePlatform()) return _nativeRefreshToken;
   return localStorage.getItem(REFRESH_TOKEN_KEY);
 }
 
 export function getUser(): AuthUser | null {
   if (typeof window === "undefined") return null;
+  if (isNativePlatform()) return _nativeUser;
   const raw = localStorage.getItem(USER_KEY);
   if (!raw) return null;
   try {
@@ -46,18 +53,29 @@ export async function setAuth(
 ): Promise<void> {
   _setAuthInFlight = true;
   try {
-    // Persist to native SharedPreferences FIRST, then localStorage. On Android,
-    // SharedPreferences is the durable copy that survives a process kill — the
-    // killed WebView's localStorage is gone on next launch. If we wrote
-    // localStorage first and the OS killed the process mid-write, the next cold
-    // start would hydrate the OLD refresh token from SharedPreferences. (The
+    const effectiveRefreshToken = refreshToken ?? getRefreshToken() ?? undefined;
+    // Persist to the Keystore-backed native blob first. On Android it is the
+    // durable copy that survives a process kill; decrypted values stay only in
+    // module memory. If the OS killed the process mid-write, the next cold
+    // start must never hydrate the old refresh token. (The
     // backend now keeps rotated tokens valid until expiry rather than revoking
     // on use, so such a replay no longer logs the user out — but keeping the
     // durable copy authoritative-and-current is the right invariant regardless.)
-    await persistAuthToNative(token, user, refreshToken);
-    localStorage.setItem(TOKEN_KEY, token);
-    localStorage.setItem(USER_KEY, JSON.stringify(user));
-    if (refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+    await persistAuthToNative(token, user, effectiveRefreshToken);
+    if (isNativePlatform() && getTtsBridge()?.saveSecureAuth) {
+      _nativeToken = token;
+      _nativeUser = user;
+      if (effectiveRefreshToken) _nativeRefreshToken = effectiveRefreshToken;
+      // Tokens must never remain in the WebView's durable storage.
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(USER_KEY);
+      localStorage.removeItem(REFRESH_TOKEN_KEY);
+    } else {
+      localStorage.setItem(TOKEN_KEY, token);
+      localStorage.setItem(USER_KEY, JSON.stringify(user));
+      if (effectiveRefreshToken)
+        localStorage.setItem(REFRESH_TOKEN_KEY, effectiveRefreshToken);
+    }
     window.dispatchEvent(new Event("auth-change"));
   } finally {
     _setAuthInFlight = false;
@@ -65,6 +83,9 @@ export async function setAuth(
 }
 
 export function clearAuth() {
+  _nativeToken = null;
+  _nativeRefreshToken = null;
+  _nativeUser = null;
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
   localStorage.removeItem(REFRESH_TOKEN_KEY);
@@ -80,8 +101,7 @@ export function isAdmin(): boolean {
   return getUser()?.role === "admin";
 }
 
-// True on web (localStorage is populated immediately) and on native after
-// hydrateAuthFromNative() has copied SharedPreferences → localStorage.
+// True on web immediately and on native after the encrypted blob is hydrated.
 // Admin-guarded pages must wait for this before checking isAdmin() so they
 // don't redirect on Android due to empty localStorage before hydration.
 let _authReady: boolean = typeof window !== "undefined" && !isNativePlatform();
@@ -90,7 +110,7 @@ export function isAuthReady(): boolean {
   return _authReady;
 }
 
-// ── Native persistence (Android SharedPreferences via @capacitor/preferences) ──
+// ── Native persistence (Android Keystore; Preferences is migration-only) ──
 
 async function persistAuthToNative(
   token: string,
@@ -98,6 +118,14 @@ async function persistAuthToNative(
   refreshToken?: string,
 ): Promise<void> {
   if (!isNativePlatform()) return;
+  const bridge = getTtsBridge();
+  if (bridge?.saveSecureAuth) {
+    const saved = bridge.saveSecureAuth(
+      JSON.stringify({ token, user, refreshToken: refreshToken ?? "" }),
+    );
+    if (!saved) throw new Error("secure-auth-write-failed");
+    return;
+  }
   try {
     const { Preferences } = await import("@capacitor/preferences");
     await Preferences.set({ key: TOKEN_KEY, value: token });
@@ -109,6 +137,8 @@ async function persistAuthToNative(
 
 function clearNativeAuth() {
   if (!isNativePlatform()) return;
+  const bridge = getTtsBridge();
+  if (bridge?.clearSecureAuth) bridge.clearSecureAuth();
   import("@capacitor/preferences")
     .then(({ Preferences }) => {
       Preferences.remove({ key: TOKEN_KEY });
@@ -119,28 +149,75 @@ function clearNativeAuth() {
 }
 
 /**
- * On native platforms, restore auth from SharedPreferences into localStorage.
+ * On native platforms, decrypt auth into module memory and erase legacy copies.
  * Call once on app startup before rendering auth-dependent components.
  */
 export async function hydrateAuthFromNative(): Promise<void> {
   if (!isNativePlatform()) return;
   try {
+    const bridge = getTtsBridge();
+    if (bridge?.loadSecureAuth) {
+      let raw = bridge.loadSecureAuth();
+      if (!raw) raw = bridge.migrateLegacyAuth?.() ?? "";
+
+      // One-time localStorage migration for builds that predate the native
+      // encrypted store. Save first; delete only after the native commit.
+      if (!raw) {
+        const legacyToken = localStorage.getItem(TOKEN_KEY);
+        const legacyUser = localStorage.getItem(USER_KEY);
+        const legacyRefresh = localStorage.getItem(REFRESH_TOKEN_KEY) ?? "";
+        if (legacyToken && legacyUser) {
+          const candidate = JSON.stringify({
+            token: legacyToken,
+            user: JSON.parse(legacyUser),
+            refreshToken: legacyRefresh,
+          });
+          if (bridge.saveSecureAuth?.(candidate)) raw = candidate;
+        }
+      }
+
+      if (raw && !_setAuthInFlight) {
+        const parsed = JSON.parse(raw) as {
+          token?: string;
+          refreshToken?: string;
+          user?: AuthUser | string;
+        };
+        _nativeToken = parsed.token ?? null;
+        _nativeRefreshToken = parsed.refreshToken || null;
+        _nativeUser =
+          typeof parsed.user === "string"
+            ? JSON.parse(parsed.user)
+            : (parsed.user ?? null);
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(USER_KEY);
+        localStorage.removeItem(REFRESH_TOKEN_KEY);
+        const { Preferences } = await import("@capacitor/preferences");
+        await Promise.all([
+          Preferences.remove({ key: TOKEN_KEY }),
+          Preferences.remove({ key: USER_KEY }),
+          Preferences.remove({ key: REFRESH_TOKEN_KEY }),
+        ]);
+        return;
+      }
+    }
+
+    // Backward compatibility for an old APK bridge. This path disappears once
+    // every private device has received the release-signed migration build.
     const { Preferences } = await import("@capacitor/preferences");
     const { value: token } = await Preferences.get({ key: TOKEN_KEY });
     const { value: user } = await Preferences.get({ key: USER_KEY });
     const { value: refreshToken } = await Preferences.get({
       key: REFRESH_TOKEN_KEY,
     });
-    // Hydrate localStorage from native preferences ONLY when localStorage is
-    // empty (the cold-start case this exists for) and no setAuth() is mid-write.
-    // Overwriting unconditionally used to clobber a fresher in-flight rotation
+    // Hydrate memory from old native preferences only when no setAuth() is
+    // mid-write. Overwriting unconditionally used to clobber a fresher rotation
     // when a queued visibilitychange fired hydrate during setAuth(), replaying
     // the old refresh token. A surviving WebView keeps its localStorage, so a
     // present token there is never staler than SharedPreferences.
-    if (!_setAuthInFlight && !localStorage.getItem(TOKEN_KEY)) {
-      if (token) localStorage.setItem(TOKEN_KEY, token);
-      if (user) localStorage.setItem(USER_KEY, user);
-      if (refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+    if (!_setAuthInFlight) {
+      _nativeToken = token;
+      _nativeUser = user ? JSON.parse(user) : null;
+      _nativeRefreshToken = refreshToken;
     }
   } catch {
     // Plugin not available — ignore

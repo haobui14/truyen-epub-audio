@@ -19,7 +19,10 @@ class Settings(BaseSettings):
     # NEXT_PUBLIC_APP_VERSION show an update notice. Optional download link
     # shown with the notice (e.g. a shared-drive URL).
     android_latest_version: str = "1.1.0"
+    android_version_code: int = 1001000
     android_download_url: Optional[str] = None
+    android_apk_sha256: Optional[str] = None
+    android_min_supported_version: Optional[str] = None
 
     @property
     def cors_origins(self) -> list[str]:

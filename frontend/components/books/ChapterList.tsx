@@ -87,7 +87,7 @@ function ChapterRow({
             </Link>
             <Link
               href={`/listen?id=${bookId}&chapter=${chapter.id}`}
-              className="min-w-[44px] min-h-[44px] flex items-center justify-center bg-accent text-ink rounded-md hover:bg-accent-dim active:scale-95 transition-all shadow-[0_0_12px_var(--color-accent-glow)]"
+              className="flex min-h-11 min-w-11 items-center justify-center rounded-md bg-accent text-ink shadow-[0_0_12px_var(--color-accent-glow)] transition-[background-color,transform] hover:bg-accent-dim active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
               title="Nghe"
             >
               <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 14 14">
@@ -295,10 +295,6 @@ export function ChapterList({
     }
   }, [someCurrentSelected, allCurrentSelected]);
 
-  useEffect(() => {
-    setSelected(new Set());
-  }, [page]);
-
   function toggleSelect(id: string) {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -318,6 +314,11 @@ export function ChapterList({
       }
       return next;
     });
+  }
+
+  function handlePageChange(nextPage: number) {
+    setSelected(new Set());
+    onPageChange(nextPage);
   }
 
   async function handleBulkDelete() {
@@ -353,7 +354,7 @@ export function ChapterList({
   }
 
   return (
-    <div>
+    <div aria-label={`${total} chương`}>
       {admin && selected.size > 0 && (
         <div className="flex items-center justify-between mb-3 px-4 py-2.5 bg-vermillion/10 border border-vermillion/30 rounded-md">
           <span className="text-sm font-medium text-vermillion">
@@ -436,7 +437,7 @@ export function ChapterList({
       <Pagination
         page={page}
         totalPages={totalPages}
-        onPageChange={onPageChange}
+        onPageChange={handlePageChange}
       />
     </div>
   );
