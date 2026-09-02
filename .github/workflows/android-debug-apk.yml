@@ -95,7 +95,7 @@ jobs:
         working-directory: frontend/android
         run: |
           chmod +x gradlew
-          ./gradlew testDebugUnitTest lintDebug --no-daemon
+          ./gradlew :app:testDebugUnitTest :app:lintDebug --no-daemon
 
       - name: Enable KVM for emulator smoke test
         run: |
@@ -111,7 +111,7 @@ jobs:
           arch: x86_64
           profile: pixel_6
           disable-animations: true
-          script: cd frontend/android && ./gradlew connectedDebugAndroidTest --no-daemon
+          script: cd frontend/android && ./gradlew :app:connectedDebugAndroidTest --no-daemon
 
       - name: Prepare private release signing
         shell: bash
@@ -128,7 +128,7 @@ jobs:
         working-directory: frontend/android
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon
+          ./gradlew :app:assembleRelease --no-daemon
 
       - name: Stamp and verify APK
         id: apk
