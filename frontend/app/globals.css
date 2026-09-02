@@ -44,10 +44,20 @@
 }
 
 :root {
-  --sat: max(env(safe-area-inset-top, 0px), var(--sat-native, 0px));
-  --sab: max(env(safe-area-inset-bottom, 0px), var(--sab-native, 0px));
-  --sal: max(env(safe-area-inset-left, 0px), var(--sal-native, 0px));
-  --sar: max(env(safe-area-inset-right, 0px), var(--sar-native, 0px));
+  /* Safe-area inputs, in priority order:
+     1. env(safe-area-inset-*) — the web/PWA source, and the Android source once
+        Capacitor's SystemBars plugin passes real insets through (WebView >= 140
+        with viewport-fit=cover).
+     2. --safe-area-inset-* — injected on <html> by Capacitor 8's SystemBars
+        plugin. It reports 0 whenever it has instead inset the WebView natively
+        (parent padding on API >= 35, decor-fits-system-windows below that), so
+        0 there means "already handled, add nothing" — not "unknown".
+     Do NOT add a third native writer for these; two async writers racing over
+     the same custom properties is what made the bars intermittently overlap. */
+  --sat: max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px));
+  --sab: max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px));
+  --sal: max(env(safe-area-inset-left, 0px), var(--safe-area-inset-left, 0px));
+  --sar: max(env(safe-area-inset-right, 0px), var(--safe-area-inset-right, 0px));
   background-color: var(--color-ink);
   color: var(--color-text);
   color-scheme: dark;

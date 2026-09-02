@@ -9,8 +9,6 @@ import android.webkit.WebView;
 
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
-import androidx.core.view.ViewCompat;
-import androidx.core.view.WindowInsetsCompat;
 
 import com.getcapacitor.BridgeActivity;
 
@@ -20,11 +18,19 @@ public class MainActivity extends BridgeActivity {
         NativeCrashStore.install(this);
         super.onCreate(savedInstanceState);
 
-        // Target SDK 36 is edge-to-edge by definition. Opt in explicitly on
-        // older supported releases too, then forward measured insets to CSS so
-        // cutouts, gesture navigation, three-button nav, and landscape all use
-        // one native source of truth.
-        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        // NOTE: do NOT call WindowCompat.setDecorFitsSystemWindows(window, false)
+        // here. Capacitor 8's built-in SystemBars plugin owns window insets: it
+        // listens on the WebView's parent and, when it can't pass real insets
+        // through to CSS (WebView < 140, or before DOMContentLoaded sets
+        // hasViewportCover), it zeroes systemBars()/displayCutout() on the way
+        // down and only compensates with parent padding on API >= 35. Below
+        // API 35 it relies on the platform default of the decor view fitting
+        // system windows, so forcing that off left the WebView full-bleed with
+        // every inset reported as 0 — content ran under the status and nav bars
+        // (seen on Samsung). On API 35+ (targetSdk 36) edge-to-edge is the
+        // framework default anyway, so this call bought nothing and broke
+        // older releases. Safe-area values reach CSS via the plugin's
+        // --safe-area-inset-* custom properties; see globals.css.
 
         // The UI is dark, so force light (white) status-bar and nav-bar icons.
         // Without this some OEM/OS versions default to dark icons that vanish
@@ -39,26 +45,6 @@ public class MainActivity extends BridgeActivity {
         WebView webView = getBridge().getWebView();
         webView.addJavascriptInterface(new TtsBridge(this, webView), "TtsBridge");
         webView.addJavascriptInterface(new OfflineBridge(this), "OfflineBridge");
-        ViewCompat.setOnApplyWindowInsetsListener(webView, (view, windowInsets) -> {
-            androidx.core.graphics.Insets bars = windowInsets.getInsets(
-                    WindowInsetsCompat.Type.systemBars()
-                            | WindowInsetsCompat.Type.displayCutout());
-            float density = getResources().getDisplayMetrics().density;
-            final float top = bars.top / density;
-            final float right = bars.right / density;
-            final float bottom = bars.bottom / density;
-            final float left = bars.left / density;
-            webView.post(() -> webView.evaluateJavascript(
-                    "document.documentElement.style.setProperty('--sat-native','" + top + "px');"
-                            + "document.documentElement.style.setProperty('--sar-native','" + right + "px');"
-                            + "document.documentElement.style.setProperty('--sab-native','" + bottom + "px');"
-                            + "document.documentElement.style.setProperty('--sal-native','" + left + "px');"
-                            + "window.dispatchEvent(new CustomEvent('native-insets-change'));",
-                    null));
-            return windowInsets;
-        });
-        ViewCompat.requestApplyInsets(webView);
-
         // The WebView silently drops responses served with Content-Disposition:
         // attachment — the tap just does nothing. Route them to DownloadManager
         // so any download link works even outside the TtsBridge.downloadFile
