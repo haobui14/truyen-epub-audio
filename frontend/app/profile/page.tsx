@@ -296,6 +296,9 @@ export default function ProfilePage() {
     enabled: isLoggedIn(),
     staleTime: 30_000,
   });
+  // Guard Profile while upgrading from builds that could put an object under
+  // this array query key. A reload used to hide the issue by clearing memory.
+  const myBookEntries = Array.isArray(myBooks) ? myBooks : [];
 
   if (!user) return null;
 
@@ -309,13 +312,13 @@ export default function ProfilePage() {
     .slice(0, 2)
     .toUpperCase();
 
-  const booksInProgress = myBooks?.filter(
+  const booksInProgress = myBookEntries.filter(
     (b) => b.chapter.chapter_index + 1 < b.book.total_chapters,
-  ).length ?? 0;
+  ).length;
 
-  const booksCompleted = myBooks?.filter(
+  const booksCompleted = myBookEntries.filter(
     (b) => b.chapter.chapter_index + 1 >= b.book.total_chapters,
-  ).length ?? 0;
+  ).length;
 
   return (
     <div className="max-w-lg mx-auto pb-16">

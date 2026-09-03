@@ -59,6 +59,24 @@ export interface UserProgress {
   updated_at: string;
 }
 
+export interface MyBookProgressEntry {
+  book: {
+    id: string;
+    title: string;
+    author?: string;
+    cover_url?: string;
+    total_chapters: number;
+  };
+  chapter: {
+    id: string;
+    chapter_index: number;
+    title: string;
+  };
+  progress_value: number;
+  total_value?: number;
+  updated_at: string;
+}
+
 export interface UserStats {
   user_id: string;
   total_exp: number;

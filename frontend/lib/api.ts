@@ -4,10 +4,12 @@ import type {
   Book,
   Chapter,
   Genre,
+  MyBookProgressEntry,
   PaginatedChapters,
   UserProgress,
   UserStats,
 } from "@/types";
+import { parseMyBooksResponse } from "./myBooks";
 
 // Must match backend settings.max_upload_size_mb (config.py). Frontend uses
 // this for pre-flight size checks so users get an instant "too large" error
@@ -507,22 +509,8 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     }),
-  getMyBooks: () =>
-    request<
-      Array<{
-        book: {
-          id: string;
-          title: string;
-          author?: string;
-          cover_url?: string;
-          total_chapters: number;
-        };
-        chapter: { id: string; chapter_index: number; title: string };
-        progress_value: number;
-        total_value?: number;
-        updated_at: string;
-      }>
-    >("/api/progress/my-books"),
+  getMyBooks: async (): Promise<MyBookProgressEntry[]> =>
+    parseMyBooksResponse(await request<unknown>("/api/progress/my-books")),
   getBookProgress: (bookId: string) =>
     request<UserProgress | null>(`/api/progress/book/${bookId}`),
 

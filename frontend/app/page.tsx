@@ -189,6 +189,10 @@ export default function HomePage() {
     enabled: loggedIn,
     staleTime: 30_000,
   });
+  // Older app code briefly stored the offline-aware page's object under this
+  // array query key. Keep an in-memory value from that build from crashing
+  // Home during a hot asset/app update; the corrected query will replace it.
+  const myBookEntries = Array.isArray(myBooks) ? myBooks : [];
 
   const hasBooks = books && books.length > 0;
   const featuredBook = books?.find((b) => b.is_featured) ?? books?.[0] ?? null;
@@ -399,7 +403,7 @@ export default function HomePage() {
       {/* Sections */}
       {hasBooks && (
         <>
-          {loggedIn && myBooks && myBooks.length > 0 && (
+          {loggedIn && myBookEntries.length > 0 && (
             <section className="mb-8">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
@@ -427,7 +431,7 @@ export default function HomePage() {
                 </Link>
               </div>
               <div className="flex gap-3 overflow-x-auto snap-x snap-mandatory [scrollbar-width:none] [-ms-overflow-style:none] pb-1">
-                {myBooks.map((item) => (
+                {myBookEntries.map((item) => (
                   <RecentCard key={item.book.id} item={item} />
                 ))}
               </div>

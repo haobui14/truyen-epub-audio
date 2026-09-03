@@ -5,7 +5,9 @@
 
 import { api } from "./api";
 import { isLoggedIn } from "./auth";
+import { parseMyBooksResponse } from "./myBooks";
 import { openOfflineDB } from "./offlineDB";
+import type { MyBookProgressEntry } from "@/types";
 
 const STORE_NAME = "progress-queue";
 const LOCAL_STORE = "progress-store";
@@ -248,8 +250,9 @@ export async function isLatestChapterForBook(
 
 // ── My-books API response cache ───────────────────────────────────────────────
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function setCachedMyBooks(data: any[]): Promise<void> {
+export async function setCachedMyBooks(
+  data: MyBookProgressEntry[],
+): Promise<void> {
   try {
     const db = await openOfflineDB();
     const tx = db.transaction(MY_BOOKS_CACHE_STORE, "readwrite");
@@ -257,14 +260,19 @@ export async function setCachedMyBooks(data: any[]): Promise<void> {
   } catch {}
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function getCachedMyBooks(): Promise<any[] | null> {
+export async function getCachedMyBooks(): Promise<MyBookProgressEntry[] | null> {
   try {
     const db = await openOfflineDB();
     return new Promise((resolve) => {
       const tx = db.transaction(MY_BOOKS_CACHE_STORE, "readonly");
       const req = tx.objectStore(MY_BOOKS_CACHE_STORE).get(MY_BOOKS_CACHE_KEY);
-      req.onsuccess = () => resolve(req.result ?? null);
+      req.onsuccess = () => {
+        try {
+          resolve(parseMyBooksResponse(req.result));
+        } catch {
+          resolve(null);
+        }
+      };
       req.onerror = () => resolve(null);
     });
   } catch {

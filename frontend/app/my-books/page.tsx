@@ -8,20 +8,7 @@ import { isLoggedIn } from "@/lib/auth";
 import { getCachedMyBooks, setCachedMyBooks } from "@/lib/progressQueue";
 import { AsyncState } from "@/components/ui/AsyncState";
 import { ConnectivityStatus } from "@/components/ui/ConnectivityStatus";
-
-type MyBookEntry = {
-  book: {
-    id: string;
-    title: string;
-    author?: string;
-    cover_url?: string;
-    total_chapters: number;
-  };
-  chapter: { id: string; chapter_index: number; title: string };
-  progress_value: number;
-  total_value?: number;
-  updated_at: string;
-};
+import type { MyBookProgressEntry } from "@/types";
 
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -47,7 +34,7 @@ function ProgressBar({ value, total }: { value: number; total?: number }) {
   );
 }
 
-function BookRow({ entry }: { entry: MyBookEntry }) {
+function BookRow({ entry }: { entry: MyBookProgressEntry }) {
   const { book, chapter, progress_value, total_value, updated_at } = entry;
   const href = `/listen?id=${book.id}&chapter=${chapter.id}`;
   const readHref = `/read?id=${book.id}&chapter=${chapter.id}`;
@@ -173,16 +160,19 @@ export default function MyBooksPage() {
   }, []);
 
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ["my-books"],
+    // This query returns { entries, cached }, unlike the shared ["my-books"]
+    // query on Home/Profile, which returns an array. A distinct key prevents
+    // React Query from handing either screen the other screen's data shape.
+    queryKey: ["my-books", "offline-aware-page"],
     queryFn: async () => {
       try {
         const result = await api.getMyBooks();
         await setCachedMyBooks(result);
-        return { entries: result as MyBookEntry[], cached: false };
+        return { entries: result, cached: false };
       } catch {
         const cached = await getCachedMyBooks();
         if (cached) {
-          return { entries: cached as MyBookEntry[], cached: true };
+          return { entries: cached, cached: true };
         }
         throw new Error("Không có dữ liệu đã lưu");
       }
@@ -220,7 +210,7 @@ export default function MyBooksPage() {
     );
   }
 
-  const entries = data?.entries ?? [];
+  const entries = Array.isArray(data?.entries) ? data.entries : [];
 
   return (
     <div className="max-w-2xl mx-auto">
