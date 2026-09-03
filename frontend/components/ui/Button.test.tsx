@@ -23,5 +23,16 @@ describe("shared buttons", () => {
     expect(button).toBeDisabled();
     expect(button).toHaveAttribute("aria-busy", "true");
   });
-});
 
+  it("uses ink-colored icons on an accent icon button", () => {
+    render(
+      <IconButton label="Phát" tone="accent">
+        <span aria-hidden="true">▶</span>
+      </IconButton>,
+    );
+
+    const button = screen.getByRole("button", { name: "Phát" });
+    expect(button).toHaveClass("bg-accent", "text-ink", "hover:text-ink");
+    expect(button).not.toHaveClass("text-text-dim", "hover:text-text");
+  });
+});

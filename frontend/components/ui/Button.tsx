@@ -75,11 +75,20 @@ export interface IconButtonProps
   extends ButtonHTMLAttributes<HTMLButtonElement> {
   label: string;
   size?: "default" | "large";
+  tone?: "default" | "accent";
 }
 
 export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
   function IconButton(
-    { label, size = "default", className, children, type = "button", ...props },
+    {
+      label,
+      size = "default",
+      tone = "default",
+      className,
+      children,
+      type = "button",
+      ...props
+    },
     ref,
   ) {
     return (
@@ -90,11 +99,14 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
         aria-label={label}
         title={props.title ?? label}
         className={classes(
-          "inline-flex shrink-0 items-center justify-center rounded-full text-text-dim hover:bg-raised-hi hover:text-text",
+          "inline-flex shrink-0 items-center justify-center rounded-full",
           "transition-[color,background-color,opacity,transform] duration-200 ease-[cubic-bezier(0.2,0,0,1)]",
           "active:scale-[0.96] disabled:pointer-events-none disabled:opacity-45 motion-reduce:transition-none motion-reduce:active:scale-100",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-ink",
           size === "large" ? "size-12" : "size-11",
+          tone === "accent"
+            ? "bg-accent text-ink hover:bg-accent-dim hover:text-ink"
+            : "text-text-dim hover:bg-raised-hi hover:text-text",
           className,
         )}
       >
@@ -103,4 +115,3 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
     );
   },
 );
-

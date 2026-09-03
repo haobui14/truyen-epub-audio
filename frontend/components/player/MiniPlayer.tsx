@@ -119,7 +119,8 @@ export function MiniPlayer() {
         <IconButton
           onClick={toggle}
           label={displayPlaying ? "Tạm dừng" : "Phát"}
-          className="relative bg-accent text-ink hover:bg-accent-dim shadow-[0_0_18px_var(--color-accent-glow)]"
+          tone="accent"
+          className="relative shadow-[0_0_18px_var(--color-accent-glow)]"
         >
           {isBuffering ? (
             <Spinner className="w-4 h-4" />

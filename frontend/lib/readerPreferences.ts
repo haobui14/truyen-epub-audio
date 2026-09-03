@@ -34,30 +34,93 @@ export const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
 
 const STORAGE_KEY = "reader-preferences-v2";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isHexColor(value: unknown): value is string {
+  return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
+}
+
+function clampNumber(value: unknown, min: number, max: number, fallback: number) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric)
+    ? Math.min(max, Math.max(min, numeric))
+    : fallback;
+}
+
+function readTheme(value: unknown): ReaderTheme {
+  if (!isRecord(value)) return DEFAULT_READER_THEME;
+  const bg = isHexColor(value.bg) ? value.bg : DEFAULT_READER_THEME.bg;
+  const text = isHexColor(value.text) ? value.text : DEFAULT_READER_THEME.text;
+  const name = typeof value.name === "string" ? value.name : "auto";
+  const label = typeof value.label === "string" ? value.label : "Tự động";
+  if (contrastRatio(text, bg) < 4.5) return DEFAULT_READER_THEME;
+  return { name, label, bg, text };
+}
+
+export function normalizeReaderPreferences(value: unknown): ReaderPreferences {
+  if (!isRecord(value)) return { ...DEFAULT_READER_PREFERENCES };
+  const theme = readTheme(value.theme);
+  return {
+    theme,
+    customText: isHexColor(value.customText) ? value.customText : theme.text,
+    customBg: isHexColor(value.customBg) ? value.customBg : theme.bg,
+    fontFamily:
+      typeof value.fontFamily === "string" && value.fontFamily.length <= 80
+        ? value.fontFamily
+        : DEFAULT_READER_PREFERENCES.fontFamily,
+    fontSize: clampNumber(
+      value.fontSize,
+      14,
+      24,
+      DEFAULT_READER_PREFERENCES.fontSize,
+    ),
+    lineHeight: clampNumber(
+      value.lineHeight,
+      1.4,
+      2.2,
+      DEFAULT_READER_PREFERENCES.lineHeight,
+    ),
+    contentWidth: clampNumber(
+      value.contentWidth,
+      32,
+      72,
+      DEFAULT_READER_PREFERENCES.contentWidth,
+    ),
+  };
+}
+
 export function loadReaderPreferences(): ReaderPreferences {
   if (typeof window === "undefined") return DEFAULT_READER_PREFERENCES;
   try {
     const current = localStorage.getItem(STORAGE_KEY);
     if (current) {
-      return { ...DEFAULT_READER_PREFERENCES, ...JSON.parse(current) };
+      return normalizeReaderPreferences({
+        ...DEFAULT_READER_PREFERENCES,
+        ...JSON.parse(current),
+      });
     }
     const legacyTheme = localStorage.getItem("reader-theme");
     const theme = legacyTheme ? (JSON.parse(legacyTheme) as ReaderTheme) : DEFAULT_READER_THEME;
-    return {
+    return normalizeReaderPreferences({
       ...DEFAULT_READER_PREFERENCES,
       theme,
       customText: theme.text,
       customBg: theme.bg,
       fontFamily: localStorage.getItem("reader-font-family") || "serif",
       fontSize: Number(localStorage.getItem("reader-font-size")) || 18,
-    };
+    });
   } catch {
     return DEFAULT_READER_PREFERENCES;
   }
 }
 
 export function saveReaderPreferences(preferences: ReaderPreferences) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences));
+  localStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify(normalizeReaderPreferences(preferences)),
+  );
 }
 
 function luminance(hex: string) {
@@ -79,4 +142,3 @@ export function contrastRatio(foreground: string, background: string) {
   const darker = Math.min(a, b);
   return (lighter + 0.05) / (darker + 0.05);
 }
-

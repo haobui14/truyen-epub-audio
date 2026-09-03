@@ -1,5 +1,12 @@
 "use client";
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import {
+  memo,
+  useState,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+} from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams, useParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -27,7 +34,8 @@ import {
 import { acquireScreenWake, releaseScreenWake } from "@/lib/backgroundLock";
 import type { Chapter } from "@/types";
 import { Sheet } from "@/components/ui/Sheet";
-import { IconButton } from "@/components/ui/Button";
+import { ActionButton, IconButton } from "@/components/ui/Button";
+import { usePlayerContext } from "@/context/PlayerContext";
 import {
   DEFAULT_READER_PREFERENCES,
   contrastRatio,
@@ -224,6 +232,58 @@ const FONT_FAMILIES = [
   { value: "'Courier New', monospace", label: "Mono" },
 ];
 
+const ReaderArticle = memo(function ReaderArticle({
+  text,
+  fontSize,
+  fontFamily,
+  lineHeight,
+  textColor,
+}: {
+  text: string;
+  fontSize: number;
+  fontFamily: string;
+  lineHeight: number;
+  textColor: string;
+}) {
+  const paragraphs = useMemo(
+    () =>
+      text
+        .split(/\n+/)
+        .map((paragraph) => paragraph.trim())
+        .filter(Boolean),
+    [text],
+  );
+
+  return (
+    <article
+      className="reader-content pb-8"
+      style={{ fontSize: `${fontSize}px`, fontFamily }}
+      lang="vi"
+      aria-labelledby="reader-chapter-title"
+    >
+      {paragraphs.map((paragraph, index) => (
+        <p
+          key={index}
+          className="mb-4 last:mb-0"
+          style={{
+            lineHeight,
+            color: textColor,
+            textIndent: "1.5em",
+          }}
+        >
+          {paragraph}
+        </p>
+      ))}
+    </article>
+  );
+});
+
+function ReaderPlayerClearance() {
+  const { session } = usePlayerContext();
+  if (!session.active) return null;
+  return <div className="h-14" aria-hidden="true" />;
+}
+
 export default function ReadPage() {
   const params = useParams();
   const searchParams = useSearchParams();
@@ -261,6 +321,7 @@ export default function ReadPage() {
   const {
     data: book,
     isError: bookError,
+    refetch: refetchBook,
   } = useQuery({
     queryKey: ["book", bookId],
     queryFn: async () => {
@@ -281,6 +342,7 @@ export default function ReadPage() {
   const {
     data: chaptersData,
     isError: chaptersError,
+    refetch: refetchChapters,
   } = useQuery({
     queryKey: ["chapters", bookId, "all"],
     queryFn: async () => {
@@ -302,7 +364,13 @@ export default function ReadPage() {
     gcTime: 30 * 60_000,
   });
 
-  const { data: chapterText, isLoading: isLoadingText } = useQuery({
+  const {
+    data: chapterText,
+    isLoading: isLoadingText,
+    isError: chapterTextError,
+    isFetching: isFetchingText,
+    refetch: refetchChapterText,
+  } = useQuery({
     queryKey: ["chapterText", chapterId],
     queryFn: () =>
       fetchChapterTextOfflineFirst(
@@ -469,24 +537,35 @@ export default function ReadPage() {
     window.scrollTo({ top: 0 });
   }, [chapterId]);
 
-  // Restore saved scroll position after text loads
+  // Restore saved scroll position after text loads. This is deliberately an
+  // instant jump: animating through the already-read part is disorienting and
+  // fires intermediate scroll events that can save an older position.
   useEffect(() => {
-    if (restoredRef.current || !savedProgress?.progress_value || !chapterText)
-      return;
+    if (restoredRef.current || !chapterText) return;
     restoredRef.current = true;
-    // Wait for content to render
+    const savedValue = Math.min(
+      100,
+      Math.max(0, savedProgress?.progress_value ?? 0),
+    );
+    if (savedValue <= 0) return;
+    setScrollPct(Math.round(savedValue));
+    // Wait for the themed text and its final font metrics to render.
     requestAnimationFrame(() => {
       const scrollMax =
         document.documentElement.scrollHeight - window.innerHeight;
-      const target = (savedProgress.progress_value / 100) * scrollMax;
-      window.scrollTo({ top: target, behavior: "smooth" });
+      const target = (savedValue / 100) * Math.max(0, scrollMax);
+      window.scrollTo({ top: target, behavior: "auto" });
     });
   }, [savedProgress, chapterText]);
 
-  // Track scroll progress (also drives the top progress bar).
+  // Track scroll progress at most once per animation frame. Integer-only UI
+  // updates keep a long chapter from re-rendering on every scroll event.
   useEffect(() => {
     if (!chapterId || !chapterText) return;
-    const handleScroll = () => {
+    let frame: number | null = null;
+    let lastReported = -1;
+    const updateScrollProgress = () => {
+      frame = null;
       const scrollMax =
         document.documentElement.scrollHeight - window.innerHeight;
       if (scrollMax <= 0) return;
@@ -494,40 +573,69 @@ export default function ReadPage() {
         100,
         Math.max(0, Math.round((window.scrollY / scrollMax) * 100)),
       );
-      setScrollPct(pct);
-      reportProgress(pct, 100);
+      setScrollPct((current) => (current === pct ? current : pct));
+      if (lastReported !== pct) {
+        lastReported = pct;
+        reportProgress(pct, 100);
+      }
+    };
+    const handleScroll = () => {
+      if (frame === null) frame = requestAnimationFrame(updateScrollProgress);
     };
     window.addEventListener("scroll", handleScroll, { passive: true });
-    return () => window.removeEventListener("scroll", handleScroll);
+    return () => {
+      window.removeEventListener("scroll", handleScroll);
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
   }, [chapterId, chapterText, reportProgress]);
 
+  const updatePreferences = useCallback(
+    (
+      updater: (current: ReaderPreferences) => ReaderPreferences,
+      preservePosition = false,
+    ) => {
+      const oldScrollMax =
+        document.documentElement.scrollHeight - window.innerHeight;
+      const readingPosition =
+        oldScrollMax > 0 ? window.scrollY / oldScrollMax : 0;
+
+      setPreferences((current) => {
+        const next = updater(current);
+        saveReaderPreferences(next);
+        return next;
+      });
+
+      if (preservePosition && oldScrollMax > 0) {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            const newScrollMax =
+              document.documentElement.scrollHeight - window.innerHeight;
+            window.scrollTo({
+              top: Math.max(0, newScrollMax) * readingPosition,
+              behavior: "auto",
+            });
+          });
+        });
+      }
+    },
+    [],
+  );
+
   function handleFontSize(size: number) {
-    setPreferences((current) => {
-      const next = { ...current, fontSize: size };
-      saveReaderPreferences(next);
-      return next;
-    });
+    updatePreferences((current) => ({ ...current, fontSize: size }), true);
   }
 
   function handleFontFamily(ff: string) {
-    setPreferences((current) => {
-      const next = { ...current, fontFamily: ff };
-      saveReaderPreferences(next);
-      return next;
-    });
+    updatePreferences((current) => ({ ...current, fontFamily: ff }), true);
   }
 
   function handleTheme(t: ReaderTheme) {
-    setPreferences((current) => {
-      const next = {
+    updatePreferences((current) => ({
         ...current,
         theme: t,
         customText: t.text,
         customBg: t.bg,
-      };
-      saveReaderPreferences(next);
-      return next;
-    });
+    }));
   }
 
   function handleCustomColor(type: "text" | "bg", color: string) {
@@ -540,8 +648,7 @@ export default function ReadPage() {
       text: candidateText,
       bg: candidateBg,
     };
-    setPreferences((current) => {
-      const next = {
+    updatePreferences((current) => ({
         ...current,
         customText: candidateText,
         customBg: candidateBg,
@@ -551,21 +658,14 @@ export default function ReadPage() {
           contrastRatio(candidateText, candidateBg) >= 4.5
             ? updated
             : current.theme,
-      };
-      saveReaderPreferences(next);
-      return next;
-    });
+    }));
   }
 
   function updateReaderLayout(
     field: "lineHeight" | "contentWidth",
     value: number,
   ) {
-    setPreferences((current) => {
-      const next = { ...current, [field]: value };
-      saveReaderPreferences(next);
-      return next;
-    });
+    updatePreferences((current) => ({ ...current, [field]: value }), true);
   }
 
   const customContrast = contrastRatio(customText, customBg);
@@ -638,11 +738,28 @@ export default function ReadPage() {
   // spinning forever. Show a retryable message + a way back.
   if (bookError || chaptersError) {
     return (
-      <div className="text-center py-24 text-text-mute">
-        Không thể tải nội dung. Vui lòng kiểm tra kết nối mạng và thử lại.{" "}
-        <Link href={`/book?id=${bookId}`} className="text-accent underline">
-          Quay lại
-        </Link>
+      <div className="mx-auto flex max-w-md flex-col items-center py-24 text-center text-text-mute">
+        <h1 className="text-balance font-display text-xl font-semibold text-text">
+          Không thể mở trình đọc
+        </h1>
+        <p className="mt-2 text-pretty text-sm">
+          Vui lòng kiểm tra kết nối rồi thử lại. Nội dung đã tải vẫn có thể đọc
+          khi ngoại tuyến.
+        </p>
+        <div className="mt-5 flex gap-3">
+          <ActionButton
+            variant="secondary"
+            onClick={() => void Promise.all([refetchBook(), refetchChapters()])}
+          >
+            Thử lại
+          </ActionButton>
+          <Link
+            href={`/book?id=${bookId}`}
+            className="inline-flex min-h-11 items-center rounded-xl px-4 text-sm font-semibold text-accent transition-[background-color,transform] hover:bg-accent/10 active:scale-[0.96] motion-reduce:transition-none"
+          >
+            Quay lại
+          </Link>
+        </div>
       </div>
     );
   }
@@ -672,7 +789,7 @@ export default function ReadPage() {
         overscrollBehaviorY: "contain",
       }}
     >
-      <div className="mx-auto" style={{ maxWidth: `${contentWidth}rem` }}>
+      <div className="mx-auto max-w-3xl">
       {/* Reading progress bar (sits below the system status bar) */}
       <div
         className="sticky top-0 z-20 h-0.5 bg-transparent"
@@ -683,7 +800,7 @@ export default function ReadPage() {
         aria-valuenow={Math.round(scrollPct)}
       >
         <div
-          className="h-full bg-accent transition-[width] duration-150"
+          className="h-full bg-accent"
           style={{ width: `${scrollPct}%` }}
         />
       </div>
@@ -692,7 +809,7 @@ export default function ReadPage() {
       <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2 mb-4">
         <Link
           href={`/book?id=${bookId}`}
-          className="-ml-2 inline-flex size-11 items-center justify-center rounded-full transition-[color,background-color,transform] hover:bg-current/5 hover:text-accent active:scale-[0.96]"
+          className="-ml-2 inline-flex size-11 items-center justify-center rounded-full transition-[color,background-color,transform] hover:bg-current/5 hover:text-accent active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent motion-reduce:transition-none motion-reduce:active:scale-100"
           style={{ color: effectiveTheme.text }}
           title={book.title}
           aria-label="Quay lại"
@@ -747,6 +864,18 @@ export default function ReadPage() {
         description="Chữ, màu và chiều rộng nội dung"
       >
         <div className="space-y-5">
+          <div
+            className="rounded-2xl p-4 shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_8px_24px_-16px_rgba(0,0,0,0.7)]"
+            style={{ backgroundColor: effectiveTheme.bg, color: effectiveTheme.text }}
+          >
+            <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.16em] opacity-60">
+              Xem trước
+            </p>
+            <p style={{ fontFamily, fontSize, lineHeight }} lang="vi">
+              Mỗi trang sách nên êm mắt, rõ chữ và giữ đúng vị trí bạn đang đọc.
+            </p>
+          </div>
+
           <fieldset>
             <legend className="mb-2 text-sm font-semibold text-text-dim">Cỡ chữ</legend>
             <div className="grid grid-cols-6 gap-1.5">
@@ -761,6 +890,7 @@ export default function ReadPage() {
                       : "bg-raised text-text-dim hover:bg-raised-hi"
                   }`}
                   aria-pressed={fontSize === size}
+                  aria-label={`Cỡ chữ ${size} pixel`}
                 >
                   {size}
                 </button>
@@ -792,27 +922,29 @@ export default function ReadPage() {
 
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block text-sm font-semibold text-text-dim">
-              Giãn dòng <span className="font-mono text-xs text-text-faint">{lineHeight.toFixed(1)}</span>
+              Giãn dòng <span className="font-mono text-xs tabular-nums text-text-faint">{lineHeight.toFixed(1)}</span>
               <input
+                aria-label="Giãn dòng"
                 type="range"
                 min="1.4"
                 max="2.2"
                 step="0.1"
                 value={lineHeight}
                 onChange={(event) => updateReaderLayout("lineHeight", Number(event.target.value))}
-                className="mt-2 h-11 w-full"
+                className="mt-2 h-11 w-full accent-[var(--color-accent)]"
               />
             </label>
             <label className="block text-sm font-semibold text-text-dim">
-              Chiều rộng <span className="font-mono text-xs text-text-faint">{contentWidth} rem</span>
+              Độ dài dòng <span className="font-mono text-xs tabular-nums text-text-faint">{contentWidth} ký tự</span>
               <input
+                aria-label="Độ dài dòng"
                 type="range"
                 min="32"
-                max="64"
-                step="2"
+                max="72"
+                step="4"
                 value={contentWidth}
                 onChange={(event) => updateReaderLayout("contentWidth", Number(event.target.value))}
-                className="mt-2 h-11 w-full"
+                className="mt-2 h-11 w-full accent-[var(--color-accent)]"
               />
             </label>
           </div>
@@ -881,13 +1013,12 @@ export default function ReadPage() {
               </div>
             </div>
             {customContrast < 4.5 && (
-              <div className="mt-3 flex items-center gap-3 rounded-xl border border-gold/30 bg-gold/10 p-3 text-xs text-gold" role="alert">
+              <div className="mt-3 flex items-center gap-3 rounded-xl border border-gold/30 bg-gold/10 p-3 text-xs text-gold" role="status" aria-live="polite">
                 <span className="flex-1">Độ tương phản chưa đủ 4.5:1 nên màu này chưa được áp dụng.</span>
                 <button
                   type="button"
                   onClick={() => {
-                    setPreferences(DEFAULT_READER_PREFERENCES);
-                    saveReaderPreferences(DEFAULT_READER_PREFERENCES);
+                    updatePreferences(() => DEFAULT_READER_PREFERENCES, true);
                   }}
                   className="min-h-11 rounded-lg px-2 font-semibold underline underline-offset-2"
                 >
@@ -896,15 +1027,25 @@ export default function ReadPage() {
               </div>
             )}
           </fieldset>
+
+          <ActionButton
+            variant="secondary"
+            onClick={() => updatePreferences(() => DEFAULT_READER_PREFERENCES, true)}
+            className="w-full"
+          >
+            Khôi phục cài đặt mặc định
+          </ActionButton>
         </div>
       </Sheet>
 
+      <div className="mx-auto" style={{ maxWidth: `${contentWidth}ch` }}>
       {/* Chapter title — deliberately plain. The eyebrow, ❖ ornament and word
           count that used to sit here were decoration competing with the text,
           and the chapter number already shows in the top bar. Colour comes from
           the reader theme rather than the app palette so it doesn't clash on
           sepia / neon / warm. */}
       <h1
+        id="reader-chapter-title"
         className="mb-6 text-lg sm:text-xl font-semibold leading-snug text-balance"
         style={{ color: effectiveTheme.text }}
       >
@@ -919,8 +1060,9 @@ export default function ReadPage() {
       >
         {isLoadingText ? (
           <div
-            className="space-y-4 py-4 animate-pulse"
+            className="space-y-4 py-4 animate-pulse motion-reduce:animate-none"
             style={{ color: effectiveTheme.text }}
+            role="status"
             aria-label="Đang tải nội dung"
           >
             {Array.from({ length: 6 }).map((_, i) => (
@@ -936,36 +1078,44 @@ export default function ReadPage() {
               />
             ))}
           </div>
-        ) : text ? (
-          <article
-            className="reader-content pb-8"
-            style={{ fontSize: `${fontSize}px`, fontFamily: fontFamily }}
+        ) : chapterTextError ? (
+          <div
+            className="mx-auto flex max-w-sm flex-col items-center py-16 text-center"
+            style={{ color: effectiveTheme.text }}
+            role="alert"
           >
-            {(() => {
-              const paragraphs = text
-                .split(/\n+/)
-                .map((p) => p.trim())
-                .filter(Boolean);
-              // Every paragraph renders the same way. The first one used to get
-              // a large accent-coloured drop cap, which drew the eye away from
-              // the text instead of into it.
-              return paragraphs.map((para, i) => {
-                return (
-                  <p
-                    key={i}
-                    className="mb-4 last:mb-0 text-pretty"
-                    style={{
-                      lineHeight,
-                      color: effectiveTheme.text,
-                      textIndent: "1.5em",
-                    }}
-                  >
-                    {para}
-                  </p>
-                );
-              });
-            })()}
-          </article>
+            <svg
+              className="size-10 opacity-50"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v4m0 4h.01M10.3 3.7 2.6 17A2 2 0 0 0 4.3 20h15.4a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0Z" />
+            </svg>
+            <h2 className="mt-3 text-balance text-lg font-semibold">
+              Chưa tải được nội dung chương
+            </h2>
+            <p className="mt-1 text-pretty text-sm opacity-65">
+              Kiểm tra kết nối hoặc thử lại nếu chương này chưa được tải xuống.
+            </p>
+            <button
+              type="button"
+              onClick={() => void refetchChapterText()}
+              disabled={isFetchingText}
+              className="mt-5 inline-flex min-h-11 items-center justify-center rounded-xl bg-accent px-5 text-sm font-semibold text-ink transition-[background-color,opacity,transform] hover:bg-accent-dim active:scale-[0.96] disabled:opacity-50 motion-reduce:transition-none"
+            >
+              {isFetchingText ? "Đang thử lại…" : "Thử lại"}
+            </button>
+          </div>
+        ) : text ? (
+          <ReaderArticle
+            text={text}
+            fontSize={fontSize}
+            fontFamily={fontFamily}
+            lineHeight={lineHeight}
+            textColor={effectiveTheme.text}
+          />
         ) : (
           <div
             className="flex flex-col items-center gap-3 py-20"
@@ -993,7 +1143,7 @@ export default function ReadPage() {
       <div className="mt-6 mb-2">
         <Link
           href={`/listen?id=${bookId}&chapter=${chapterId}`}
-          className="flex items-center gap-3 p-3 rounded-md ring-1 ring-current/15 hover:ring-accent/40 transition-colors group"
+          className="group flex min-h-14 items-center gap-3 rounded-xl p-3 ring-1 ring-current/15 transition-[box-shadow,transform] hover:ring-accent/40 active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent motion-reduce:transition-none motion-reduce:active:scale-100"
           style={{ color: effectiveTheme.text }}
         >
           <span className="w-9 h-9 rounded-md bg-accent/15 ring-1 ring-accent/30 flex items-center justify-center text-accent shrink-0">
@@ -1014,6 +1164,9 @@ export default function ReadPage() {
             Nghe →
           </span>
         </Link>
+      </div>
+
+      <ReaderPlayerClearance />
       </div>
 
       {/* Bottom nav bar — the only way to change chapters now, so it stays
@@ -1044,7 +1197,7 @@ export default function ReadPage() {
           <button
             onClick={() => prevChapter && navigateTo(prevChapter)}
             disabled={!prevChapter}
-            className="flex items-center gap-1.5 shrink-0 min-h-11 px-3.5 rounded-xl bg-current/5 hover:bg-current/10 disabled:opacity-25 disabled:pointer-events-none active:scale-[0.96] transition-[transform,background-color] duration-150"
+            className="flex min-h-11 shrink-0 touch-manipulation items-center gap-1.5 rounded-xl bg-current/5 px-3.5 transition-[transform,background-color] duration-150 hover:bg-current/10 active:scale-[0.96] disabled:pointer-events-none disabled:opacity-25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent motion-reduce:transition-none motion-reduce:active:scale-100"
             aria-label={
               prevChapter
                 ? `Chương ${prevChapter.chapter_index + 1}`
@@ -1073,7 +1226,7 @@ export default function ReadPage() {
           {/* Open searchable chapter list */}
           <button
             onClick={() => setShowToc(true)}
-            className="flex-1 min-w-0 flex flex-col items-center justify-center min-h-11 px-3 rounded-xl border border-current/15 hover:bg-current/5 active:scale-[0.96] transition-[transform,background-color] duration-150"
+            className="flex min-h-11 min-w-0 flex-1 touch-manipulation flex-col items-center justify-center rounded-xl border border-current/15 px-3 transition-[transform,background-color] duration-150 hover:bg-current/5 active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent motion-reduce:transition-none motion-reduce:active:scale-100"
             aria-label="Danh sách chương"
           >
             <span className="text-[11px] leading-none opacity-60 tabular-nums">
@@ -1088,7 +1241,7 @@ export default function ReadPage() {
           <button
             onClick={() => nextChapter && navigateTo(nextChapter)}
             disabled={!nextChapter}
-            className="flex items-center gap-1.5 shrink-0 min-h-11 px-3.5 rounded-xl bg-current/5 hover:bg-current/10 disabled:opacity-25 disabled:pointer-events-none active:scale-[0.96] transition-[transform,background-color] duration-150"
+            className="flex min-h-11 shrink-0 touch-manipulation items-center gap-1.5 rounded-xl bg-current/5 px-3.5 transition-[transform,background-color] duration-150 hover:bg-current/10 active:scale-[0.96] disabled:pointer-events-none disabled:opacity-25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent motion-reduce:transition-none motion-reduce:active:scale-100"
             aria-label={
               nextChapter
                 ? `Chương ${nextChapter.chapter_index + 1}`
@@ -1124,16 +1277,29 @@ export default function ReadPage() {
           title="Mục lục"
           description={`${allChapters.length} chương`}
         >
-            <div className="pb-2">
+            <div className="relative pb-2">
               <input
                 type="text"
                 inputMode="search"
+                enterKeyHint="search"
                 autoFocus={!isNativePlatform()}
                 value={tocSearch}
                 onChange={(e) => setTocSearch(e.target.value)}
                 placeholder="Tìm chương theo số hoặc tiêu đề..."
-                className="min-h-11 w-full rounded-lg border border-hairline bg-ink px-3 py-2 text-base text-text-dim outline-none focus:border-accent focus:ring-2 focus:ring-accent"
+                className="min-h-11 w-full rounded-lg border border-hairline bg-ink py-2 pl-3 pr-12 text-base text-text-dim outline-none focus:border-accent focus:ring-2 focus:ring-accent"
               />
+              {tocSearch && (
+                <button
+                  type="button"
+                  onClick={() => setTocSearch("")}
+                  className="absolute right-0 top-0 inline-flex size-11 items-center justify-center rounded-lg text-text-mute transition-[color,background-color,transform] hover:bg-raised hover:text-text active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent motion-reduce:transition-none"
+                  aria-label="Xóa tìm kiếm"
+                >
+                  <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <path strokeLinecap="round" d="M6 6l12 12M18 6 6 18" />
+                  </svg>
+                </button>
+              )}
             </div>
             <div ref={tocScrollRef} className="h-[min(56dvh,32rem)] overflow-y-auto px-2 pb-2">
               {filteredChapters.length === 0 ? (
@@ -1163,7 +1329,7 @@ export default function ReadPage() {
                           height: vi.size,
                           transform: `translateY(${vi.start}px)`,
                         }}
-                        className={`absolute left-0 top-0 flex min-h-11 w-full select-none items-center gap-3 rounded-lg px-3 text-left transition-colors ${
+                        className={`absolute left-0 top-0 flex min-h-11 w-full touch-manipulation select-none items-center gap-3 rounded-lg px-3 text-left transition-[color,background-color,transform] active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent motion-reduce:transition-none ${
                           isCurrent
                             ? "bg-accent/15 dark:bg-accent/40 text-accent-dim dark:text-accent"
                             : "text-text-dim dark:text-text-faint hover:bg-ink dark:hover:bg-raised"
@@ -1172,7 +1338,7 @@ export default function ReadPage() {
                         <span
                           className={`shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-full text-[11px] font-semibold ${
                             isCurrent
-                              ? "bg-accent text-white"
+                              ? "bg-accent text-ink"
                               : "bg-raised dark:bg-raised text-text-mute dark:text-text-mute"
                           }`}
                         >
