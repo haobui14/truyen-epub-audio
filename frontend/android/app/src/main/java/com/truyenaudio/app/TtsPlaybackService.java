@@ -204,6 +204,28 @@ public class TtsPlaybackService extends MediaSessionService {
         }
     }
 
+    /** Immutable payload captured on the main thread for serialized delivery. */
+    private static final class ProgressUpdate {
+        final String apiBase;
+        final String accessToken;
+        final String body;
+
+        ProgressUpdate(String apiBase, String accessToken, String body) {
+            this.apiBase = apiBase;
+            this.accessToken = accessToken;
+            this.body = body;
+        }
+    }
+
+    private static final class HttpStatusException extends IOException {
+        final int statusCode;
+
+        HttpStatusException(int statusCode) {
+            super("HTTP " + statusCode);
+            this.statusCode = statusCode;
+        }
+    }
+
     /** Functional interface for dispatching JS to the WebView. */
     public interface JsEvaluator {
         void eval(String js);
@@ -232,6 +254,9 @@ public class TtsPlaybackService extends MediaSessionService {
     private androidx.media3.session.MediaSession media3Session;
     private TtsMedia3Player media3Player;
     private NativeOfflineStore offlineStore;
+    private SecureAuthStore secureAuthStore;
+    private ExecutorService progressExecutor;
+    private LatestProgressSync<ProgressUpdate> progressSync;
 
     // Silent MediaPlayer — plays R.raw.silence at volume 0 before each TTS chunk.
     // Android's TTS engine has its own internal MediaSession that steals earbud/
@@ -340,7 +365,7 @@ public class TtsPlaybackService extends MediaSessionService {
     private List<ChapterMeta>  pendingPlaylist = Collections.emptyList();
     private int                pendingHead     = 0;
     private String             selfFetchBase   = "";
-    private String             selfFetchToken  = "";
+    private volatile String    selfFetchToken  = "";
     private boolean            awaitingFetch   = false;  // queue empty, waiting for fetch result
     private ExecutorService    ioExecutor;
     // Prefetch loop: kickPrefetch() starts a chain of fetch→enqueue→fetch steps.
@@ -537,6 +562,12 @@ public class TtsPlaybackService extends MediaSessionService {
         super.onCreate();
         mainHandler   = new Handler(Looper.getMainLooper());
         offlineStore  = new NativeOfflineStore(this);
+        secureAuthStore = new SecureAuthStore(this);
+        progressExecutor = Executors.newSingleThreadExecutor();
+        progressSync = new LatestProgressSync<>(
+                progressExecutor,
+                this::sendProgressUpdate,
+                error -> Log.w(TAG, "progress sync failed: " + error));
         coverExecutor = Executors.newSingleThreadExecutor();
         audioManager  = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
@@ -673,6 +704,11 @@ public class TtsPlaybackService extends MediaSessionService {
             coverExecutor.shutdownNow();
             coverExecutor = null;
         }
+        if (progressExecutor != null) {
+            progressExecutor.shutdownNow();
+            progressExecutor = null;
+        }
+        progressSync = null;
         mainHandler.removeCallbacksAndMessages(null);
         abandonAudioFocus();
         if (silentPlayer != null) {
@@ -2007,10 +2043,9 @@ public class TtsPlaybackService extends MediaSessionService {
             o.put("pitch", currentPitch);
             o.put("voiceName", preferredVoiceName);
             o.put("playing", isPlaying);
-            // The auth token is deliberately NOT persisted (no JWT at rest in
-            // SharedPreferences). The chapter-text endpoint is public, so
-            // restore + auto-resume work without it; server progress PUTs stay
-            // paused until JS re-supplies the token via setPendingChapters.
+            // Auth is deliberately NOT copied into this ordinary preferences
+            // snapshot. Background progress recovers it separately from the
+            // Keystore-encrypted SecureAuthStore after process death.
             o.put("apiBase", selfFetchBase);
             o.put("coverUrl", currentCoverUrl);
             o.put("ts", System.currentTimeMillis());
@@ -2146,6 +2181,11 @@ public class TtsPlaybackService extends MediaSessionService {
             String cover = o.optString("coverUrl", "");
             if (!cover.isEmpty()) updateCover(cover);
             setMetadata(currentTitle);
+            // Repair a stale server pointer as soon as the service is rebound.
+            // This works without chapter text because totalChunks is part of
+            // the durable snapshot and auth is recovered from encrypted native
+            // storage by maybeSyncProgressToServer.
+            maybeSyncProgressToServer(true);
             Log.d(TAG, "restoreSession: ch=" + chId + " chunk=" + currentChunkIdx
                     + " wasPlaying=" + restoredWasPlaying
                     + " playlist=" + pendingPlaylist.size());
@@ -2233,59 +2273,179 @@ public class TtsPlaybackService extends MediaSessionService {
      * PUT the current listening position to the server so progress stays fresh
      * even when the WebView has been suspended for hours. Throttled to one
      * write per {@link #PROGRESS_SYNC_INTERVAL_MS} unless {@code force} (chapter
-     * boundaries, pause, done). Requires the user token + book id provided by
-     * JS — silently skipped otherwise (logged-out users, or before the listen
-     * page has seeded them).
+     * boundaries, pause, done). The book/API context comes from JS, while an
+     * expired access token is refreshed from Keystore-backed native auth so
+     * screen-off sessions do not stop saving after one hour.
      */
     private void maybeSyncProgressToServer(boolean force) {
-        if (currentBookId.isEmpty() || selfFetchBase.isEmpty() || selfFetchToken.isEmpty()) return;
+        if (currentBookId.isEmpty() || selfFetchBase.isEmpty()) return;
         if (currentChapterId == null || currentChapterId.isEmpty()) return;
         List<String> chunks = currentChunks;
-        if (chunks == null || chunks.isEmpty()) return;
+        int totalChunks = chunks != null && !chunks.isEmpty()
+                ? chunks.size() : currentTotalChunks;
+        if (totalChunks <= 0) return;
+        String token = selfFetchToken;
+        if (token.isEmpty()) {
+            token = loadStoredAccessToken();
+            if (!token.isEmpty()) selfFetchToken = token;
+        }
+        if (token.isEmpty()) return;
         long now = System.currentTimeMillis();
         if (!force && now - lastProgressSyncMs < PROGRESS_SYNC_INTERVAL_MS) return;
         lastProgressSyncMs = now;
-        if (ioExecutor == null || ioExecutor.isShutdown()) {
-            ioExecutor = Executors.newCachedThreadPool();
-        }
         try {
             JSONObject o = new JSONObject();
             o.put("book_id", currentBookId);
             o.put("chapter_id", currentChapterId);
             o.put("progress_value", Math.max(currentChunkIdx, 0));
-            o.put("total_value", chunks.size());
-            final String body = o.toString();
-            final String base = selfFetchBase;
-            final String tok  = selfFetchToken;
-            ioExecutor.execute(() -> {
-                try {
-                    doHttpPut(base + "/api/progress", tok, body);
-                } catch (Exception e) {
-                    // Non-fatal: the next throttled write retries naturally.
-                    Log.w(TAG, "progress sync failed: " + e);
-                }
-            });
+            o.put("total_value", totalChunks);
+            LatestProgressSync<ProgressUpdate> sync = progressSync;
+            if (sync != null) {
+                sync.submit(new ProgressUpdate(selfFetchBase, token, o.toString()));
+            }
         } catch (Exception ignored) {
         }
     }
 
+    /**
+     * Send one coalesced progress update. A 401 first retries a newer access
+     * token already saved by the WebView, then refreshes natively using the
+     * encrypted refresh token. This keeps profile progress moving during long
+     * screen-off sessions where WebView timers cannot rotate the one-hour JWT.
+     */
+    private void sendProgressUpdate(ProgressUpdate update) throws Exception {
+        String token = update.accessToken;
+        try {
+            doHttpPut(update.apiBase + "/api/progress", token, update.body);
+            return;
+        } catch (HttpStatusException error) {
+            if (error.statusCode != 401) throw error;
+        }
+
+        String storedToken = loadStoredAccessToken();
+        if (!storedToken.isEmpty() && !storedToken.equals(token)) {
+            try {
+                doHttpPut(update.apiBase + "/api/progress", storedToken, update.body);
+                selfFetchToken = storedToken;
+                return;
+            } catch (HttpStatusException error) {
+                if (error.statusCode != 401) throw error;
+            }
+        }
+
+        String refreshedToken = refreshStoredAuth(update.apiBase);
+        if (refreshedToken.isEmpty()) throw new IOException("auth refresh failed");
+        selfFetchToken = refreshedToken;
+        doHttpPut(update.apiBase + "/api/progress", refreshedToken, update.body);
+        dispatchJs("window.dispatchEvent(new Event('native-auth-updated'))");
+    }
+
+    private String loadStoredAccessToken() {
+        try {
+            String raw = secureAuthStore != null ? secureAuthStore.load() : "";
+            return raw.isEmpty() ? "" : new JSONObject(raw).optString("token", "");
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    /** Refresh and atomically persist the complete native auth blob. */
+    private String refreshStoredAuth(String apiBase) throws Exception {
+        if (secureAuthStore == null) return "";
+        String raw = secureAuthStore.load();
+        if (raw.isEmpty()) return "";
+        JSONObject stored = new JSONObject(raw);
+        String refreshToken = stored.optString("refreshToken", "");
+        if (refreshToken.isEmpty()) return "";
+
+        JSONObject request = new JSONObject();
+        request.put("refresh_token", refreshToken);
+        JSONObject response = doHttpPostJson(
+                apiBase + "/api/auth/refresh", request.toString());
+        String accessToken = response.optString("access_token", "");
+        if (accessToken.isEmpty()) return "";
+
+        stored.put("token", accessToken);
+        stored.put("refreshToken",
+                response.optString("refresh_token", refreshToken));
+        JSONObject user;
+        Object existingUser = stored.opt("user");
+        if (existingUser instanceof JSONObject) {
+            user = (JSONObject) existingUser;
+        } else {
+            try {
+                user = new JSONObject(existingUser instanceof String
+                        ? (String) existingUser : "{}");
+            } catch (Exception ignored) {
+                user = new JSONObject();
+            }
+        }
+        if (response.has("user_id")) user.put("user_id", response.optString("user_id", ""));
+        if (response.has("email")) user.put("email", response.optString("email", ""));
+        if (response.has("role")) user.put("role", response.optString("role", ""));
+        if (response.has("display_name")) user.put("display_name", response.opt("display_name"));
+        if (response.has("avatar_base64")) user.put("avatar_base64", response.opt("avatar_base64"));
+        stored.put("user", user);
+        if (!secureAuthStore.save(stored.toString())) {
+            throw new IOException("secure auth write failed");
+        }
+        return accessToken;
+    }
+
     private void doHttpPut(String urlStr, String token, String jsonBody) throws IOException {
-        URL url = new URL(urlStr);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("PUT");
-        conn.setConnectTimeout(10_000);
-        conn.setReadTimeout(15_000);
-        conn.setRequestProperty("Authorization", "Bearer " + token);
-        conn.setRequestProperty("Content-Type", "application/json");
-        conn.setDoOutput(true);
-        byte[] payload = jsonBody.getBytes("UTF-8");
-        conn.setFixedLengthStreamingMode(payload.length);
-        OutputStream os = conn.getOutputStream();
-        os.write(payload);
-        os.close();
-        int code = conn.getResponseCode();
-        if (code < 200 || code >= 300) throw new IOException("HTTP " + code);
-        conn.getInputStream().close();
+        HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
+        try {
+            conn.setRequestMethod("PUT");
+            conn.setConnectTimeout(10_000);
+            conn.setReadTimeout(15_000);
+            conn.setRequestProperty("Authorization", "Bearer " + token);
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setDoOutput(true);
+            byte[] payload = jsonBody.getBytes("UTF-8");
+            conn.setFixedLengthStreamingMode(payload.length);
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(payload);
+            }
+            int code = conn.getResponseCode();
+            if (code < 200 || code >= 300) throw new HttpStatusException(code);
+            try (InputStream ignored = conn.getInputStream()) {
+                // Consume/close so the HTTP connection can be reused.
+            }
+        } finally {
+            conn.disconnect();
+        }
+    }
+
+    private JSONObject doHttpPostJson(String urlStr, String jsonBody) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
+        try {
+            conn.setRequestMethod("POST");
+            conn.setConnectTimeout(10_000);
+            conn.setReadTimeout(20_000);
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setRequestProperty("Accept", "application/json");
+            conn.setDoOutput(true);
+            byte[] payload = jsonBody.getBytes("UTF-8");
+            conn.setFixedLengthStreamingMode(payload.length);
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(payload);
+            }
+            int code = conn.getResponseCode();
+            InputStream stream = code >= 200 && code < 300
+                    ? conn.getInputStream() : conn.getErrorStream();
+            StringBuilder body = new StringBuilder();
+            if (stream != null) {
+                try (BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(stream, "UTF-8"))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) body.append(line);
+                }
+            }
+            if (code < 200 || code >= 300) throw new HttpStatusException(code);
+            return new JSONObject(body.toString());
+        } finally {
+            conn.disconnect();
+        }
     }
 
     // Mirror of the JS regex in frontend/lib/textChunks.ts: /[^.!?\n]+[.!?\n]*/g.

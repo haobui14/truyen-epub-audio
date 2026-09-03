@@ -562,8 +562,9 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
       }
 
       if (!isLoggedIn()) return;
-      // 3. Server: push the position. Matters most after a process kill —
-      //    Java's own background PUTs stop then (the token is never persisted).
+      // 3. Server: push the position as a foreground reconciliation fallback.
+      //    Current Android builds also recover encrypted auth and sync from the
+      //    native service after process death.
       syncBookProgressToServer(bookId).catch(() => {});
       // 4. XP for chapters completed while JS was suspended/dead. word_count
       //    is REQUIRED for correct XP and the backend dedupes the FIRST
