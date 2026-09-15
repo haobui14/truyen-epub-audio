@@ -257,15 +257,22 @@ export const api = {
       `/api/books/${bookId}/chapters?page=${page}&page_size=${pageSize}`,
     ),
   getAllBookChapters: async (bookId: string): Promise<PaginatedChapters> => {
-    // One request covers any real catalog (backend caps page_size at 10000),
-    // avoiding the N-1 parallel page fetches a 1000-cap triggered on big books.
-    const PAGE_SIZE = 10000;
+    // PostgREST caps each database response at 1,000 rows. Request real
+    // 1,000-row logical pages so this also works against older backends that
+    // accepted page_size=10,000 but silently returned only the first 1,000.
+    const PAGE_SIZE = 1000;
     const first = await request<PaginatedChapters>(
       `/api/books/${bookId}/chapters?page=1&page_size=${PAGE_SIZE}`,
     );
-    if (first.total_pages <= 1) return first;
+    // Derive this from total as a defensive check: an older backend may report
+    // an incorrect total_pages value based on a too-large requested page size.
+    const totalPages = Math.max(
+      first.total_pages,
+      Math.ceil(first.total / PAGE_SIZE),
+    );
+    if (totalPages <= 1) return { ...first, total_pages: totalPages };
     const rest = await Promise.all(
-      Array.from({ length: first.total_pages - 1 }, (_, i) =>
+      Array.from({ length: totalPages - 1 }, (_, i) =>
         request<PaginatedChapters>(
           `/api/books/${bookId}/chapters?page=${i + 2}&page_size=${PAGE_SIZE}`,
         ),
@@ -274,6 +281,8 @@ export const api = {
     return {
       ...first,
       items: [first, ...rest].flatMap((p) => p.items),
+      page_size: PAGE_SIZE,
+      total_pages: totalPages,
     };
   },
   getChapter: (chapterId: string) =>

@@ -1038,7 +1038,6 @@ export default function ReadPage() {
         </div>
       </Sheet>
 
-      <div className="mx-auto" style={{ maxWidth: `${contentWidth}ch` }}>
       {/* Chapter title — deliberately plain. The eyebrow, ❖ ornament and word
           count that used to sit here were decoration competing with the text,
           and the chapter number already shows in the top bar. Colour comes from
@@ -1046,12 +1045,13 @@ export default function ReadPage() {
           sepia / neon / warm. */}
       <h1
         id="reader-chapter-title"
-        className="mb-6 text-lg sm:text-xl font-semibold leading-snug text-balance"
+        className="mb-6 w-full text-balance text-lg font-semibold leading-snug sm:text-xl"
         style={{ color: effectiveTheme.text }}
       >
         {currentChapter.title}
       </h1>
 
+      <div className="mx-auto" style={{ maxWidth: `${contentWidth}ch` }}>
       {/* Reading content — no card; inherits the page's theme bg so the
           whole reader reads as one continuous surface. */}
       <div

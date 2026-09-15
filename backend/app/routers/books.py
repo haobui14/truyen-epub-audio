@@ -13,6 +13,7 @@ from app.dependencies import get_admin_user, get_approved_user
 from app.models.book import BookResponse
 from app.models.chapter import ChapterResponse
 from app.services import image_service, storage_service, text_cleanup
+from app.services.pagination import capped_ranges
 
 router = APIRouter(prefix="/api/books", tags=["books"])
 logger = logging.getLogger(__name__)
@@ -70,16 +71,26 @@ def get_book_chapters(
 
     # Calculate range for Supabase (0-based inclusive)
     offset = (page - 1) * page_size
-    end = offset + page_size - 1
-
     # Clients only consume id/book_id/index/title/word_count/status/updated_at
     # (updated_at is load-bearing: it versions the offline chapter-text
     # caches). The audio_* columns are always NULL since the pre-generation
     # pipeline was removed, and error_message/created_at have no consumer —
     # dropping them roughly halves the JSON for a 5,000-chapter book.
-    chapters = db.table("chapters").select(
-        "id,book_id,chapter_index,title,word_count,status,updated_at"
-    ).eq("book_id", book_id).order("chapter_index").range(offset, end).execute()
+    # Supabase/PostgREST silently caps a response at 1,000 rows even when the
+    # requested range is larger. Preserve the public page_size<=10,000 contract
+    # for older APKs, but fulfill it through capped DB ranges so chapter 1001+
+    # is never omitted from a page that claims to be complete.
+    chapter_rows = []
+    for batch_start, batch_end in capped_ranges(offset, page_size, total):
+        chapters = db.table("chapters").select(
+            "id,book_id,chapter_index,title,word_count,status,updated_at"
+        ).eq("book_id", book_id).order("chapter_index").range(
+            batch_start, batch_end
+        ).execute()
+        batch = chapters.data or []
+        chapter_rows.extend(batch)
+        if len(batch) < batch_end - batch_start + 1:
+            break
 
     total_pages = max(1, -(-total // page_size))  # ceil division
 
@@ -88,7 +99,7 @@ def get_book_chapters(
     # are already JSON-safe dicts from PostgREST, and this handler is sync,
     # so serialization happens on the worker thread too.
     payload = {
-        "items": chapters.data or [],
+        "items": chapter_rows,
         "total": total,
         "page": page,
         "page_size": page_size,
