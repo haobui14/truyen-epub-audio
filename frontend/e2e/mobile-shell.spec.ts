@@ -95,9 +95,6 @@ test("consumer shell fits and keeps navigation targets accessible", async ({
     document: document.documentElement.scrollWidth,
   }));
   expect(overflow.document).toBeLessThanOrEqual(overflow.viewport + 1);
-  const headingBox = await page.locator("#reader-chapter-title").boundingBox();
-  expect(headingBox).not.toBeNull();
-  expect(headingBox!.width).toBeGreaterThanOrEqual(overflow.viewport * 0.85);
 
   const navigationTargets = page.locator("nav a:visible, nav button:visible");
   expect(await navigationTargets.count()).toBeGreaterThan(0);
@@ -134,6 +131,9 @@ test("reader stays usable at Android viewport sizes", async ({ page }) => {
     document: document.documentElement.scrollWidth,
   }));
   expect(overflow.document).toBeLessThanOrEqual(overflow.viewport + 1);
+  const headingBox = await page.locator("#reader-chapter-title").boundingBox();
+  expect(headingBox).not.toBeNull();
+  expect(headingBox!.width).toBeGreaterThanOrEqual(overflow.viewport * 0.85);
 
   for (const name of ["Chương 1", "Danh sách chương", "Chương 3"]) {
     const box = await page.getByRole("button", { name, exact: true }).boundingBox();
