@@ -51,11 +51,37 @@ import {
  * enough time actively reading the chapter (visible page, not just loaded).
  * Threshold: max(15s, wordCount / 300 * 60 * 0.35) seconds, capped at 90s.
  */
+// On the web the reader scrolls the page. On Android it scrolls its own box
+// (see the scroller in ReadPage), because the page-level scrollbar is drawn by
+// the Android WebView itself: it ran the full screen height, behind the status
+// bar and the chapter bar, and no CSS can shorten it. `null` means the page.
+type Scroller = HTMLElement | null;
+
+function scrollMetrics(el: Scroller) {
+  return el
+    ? { top: el.scrollTop, max: el.scrollHeight - el.clientHeight }
+    : {
+        top: window.scrollY,
+        max: document.documentElement.scrollHeight - window.innerHeight,
+      };
+}
+
+function scrollToY(el: Scroller, top: number) {
+  (el ?? window).scrollTo({ top, behavior: "auto" });
+}
+
+function listenScroll(el: Scroller, handler: () => void) {
+  const target: HTMLElement | Window = el ?? window;
+  target.addEventListener("scroll", handler, { passive: true });
+  return () => target.removeEventListener("scroll", handler);
+}
+
 function useReadingXp(
   chapterId: string | null,
   bookId: string,
   wordCount: number,
   hasText: boolean,
+  scrollerRef: React.RefObject<HTMLDivElement | null>,
 ) {
   const completedRef = useRef<Set<string>>(new Set());
   const timeRef = useRef(0);
@@ -72,14 +98,14 @@ function useReadingXp(
   // Track scroll depth (need >25% scrolled)
   useEffect(() => {
     if (!hasText) return;
+    const el = scrollerRef.current;
     const onScroll = () => {
-      const scrollMax = document.documentElement.scrollHeight - window.innerHeight;
-      if (scrollMax <= 0) return;
-      if (window.scrollY / scrollMax > 0.25) scrolledPastRef.current = true;
+      const { top, max } = scrollMetrics(el);
+      if (max <= 0) return;
+      if (top / max > 0.25) scrolledPastRef.current = true;
     };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, [hasText, chapterId]);
+    return listenScroll(el, onScroll);
+  }, [hasText, chapterId, scrollerRef]);
 
   // Accumulate visible time and fire XP when threshold met
   useEffect(() => {
@@ -294,6 +320,22 @@ export default function ReadPage() {
   const chapterId = searchParams.get("chapter");
   const router = useRouter();
   const contentRef = useRef<HTMLDivElement>(null);
+  // Android only; stays null on the web, where the page itself scrolls.
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const nativeScroll = isNativePlatform();
+
+  // Android: the text box does the scrolling, so the page itself must not.
+  // Even a few pixels of page overflow would bring back the WebView's
+  // full-height scrollbar. Restored on leaving the reader.
+  useEffect(() => {
+    if (!nativeScroll) return;
+    const html = document.documentElement;
+    const previous = html.style.overflow;
+    html.style.overflow = "hidden";
+    return () => {
+      html.style.overflow = previous;
+    };
+  }, [nativeScroll]);
 
   const [preferences, setPreferences] = useState<ReaderPreferences>(
     loadReaderPreferences,
@@ -439,6 +481,7 @@ export default function ReadPage() {
     bookId,
     currentChapter?.word_count ?? 0,
     !!chapterText?.text_content,
+    scrollerRef,
   );
 
   // Save book-level progress when the reading chapter changes
@@ -535,7 +578,7 @@ export default function ReadPage() {
   }
   useEffect(() => {
     restoredRef.current = false;
-    window.scrollTo({ top: 0 });
+    scrollToY(scrollerRef.current, 0);
   }, [chapterId]);
 
   // Restore saved scroll position after text loads. This is deliberately an
@@ -552,10 +595,9 @@ export default function ReadPage() {
     setScrollPct(Math.round(savedValue));
     // Wait for the themed text and its final font metrics to render.
     requestAnimationFrame(() => {
-      const scrollMax =
-        document.documentElement.scrollHeight - window.innerHeight;
-      const target = (savedValue / 100) * Math.max(0, scrollMax);
-      window.scrollTo({ top: target, behavior: "auto" });
+      const el = scrollerRef.current;
+      const { max } = scrollMetrics(el);
+      scrollToY(el, (savedValue / 100) * Math.max(0, max));
     });
   }, [savedProgress, chapterText]);
 
@@ -565,15 +607,12 @@ export default function ReadPage() {
     if (!chapterId || !chapterText) return;
     let frame: number | null = null;
     let lastReported = -1;
+    const el = scrollerRef.current;
     const updateScrollProgress = () => {
       frame = null;
-      const scrollMax =
-        document.documentElement.scrollHeight - window.innerHeight;
-      if (scrollMax <= 0) return;
-      const pct = Math.min(
-        100,
-        Math.max(0, Math.round((window.scrollY / scrollMax) * 100)),
-      );
+      const { top, max } = scrollMetrics(el);
+      if (max <= 0) return;
+      const pct = Math.min(100, Math.max(0, Math.round((top / max) * 100)));
       setScrollPct((current) => (current === pct ? current : pct));
       if (lastReported !== pct) {
         lastReported = pct;
@@ -583,9 +622,9 @@ export default function ReadPage() {
     const handleScroll = () => {
       if (frame === null) frame = requestAnimationFrame(updateScrollProgress);
     };
-    window.addEventListener("scroll", handleScroll, { passive: true });
+    const stop = listenScroll(el, handleScroll);
     return () => {
-      window.removeEventListener("scroll", handleScroll);
+      stop();
       if (frame !== null) cancelAnimationFrame(frame);
     };
   }, [chapterId, chapterText, reportProgress]);
@@ -595,10 +634,9 @@ export default function ReadPage() {
       updater: (current: ReaderPreferences) => ReaderPreferences,
       preservePosition = false,
     ) => {
-      const oldScrollMax =
-        document.documentElement.scrollHeight - window.innerHeight;
-      const readingPosition =
-        oldScrollMax > 0 ? window.scrollY / oldScrollMax : 0;
+      const el = scrollerRef.current;
+      const { top: oldTop, max: oldScrollMax } = scrollMetrics(el);
+      const readingPosition = oldScrollMax > 0 ? oldTop / oldScrollMax : 0;
 
       setPreferences((current) => {
         const next = updater(current);
@@ -609,12 +647,8 @@ export default function ReadPage() {
       if (preservePosition && oldScrollMax > 0) {
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
-            const newScrollMax =
-              document.documentElement.scrollHeight - window.innerHeight;
-            window.scrollTo({
-              top: Math.max(0, newScrollMax) * readingPosition,
-              behavior: "auto",
-            });
+            const { max } = scrollMetrics(el);
+            scrollToY(el, Math.max(0, max) * readingPosition);
           });
         });
       }
@@ -780,16 +814,40 @@ export default function ReadPage() {
       // One continuous surface — escape AppMain's horizontal padding so the
       // theme bg goes edge-to-edge on Android. The whole reader (top bar,
       // hero, content, handoff) sits on this single background.
-      className="-mx-4 sm:-mx-6 -my-2 px-3 sm:px-6 min-h-[calc(100dvh-3.5rem)] transition-colors duration-300"
+      //
+      // Android: a full-height column — scroller, then the chapter bar — so the
+      // scrollbar spans only the text area. Deliberately NOT position:fixed: a
+      // fixed root is its own stacking context, which would trap the settings
+      // and chapter sheets (z-70) underneath the mini player (z-50).
+      className={
+        nativeScroll
+          ? "-mx-4 sm:-mx-6 -my-2 flex h-[100dvh] flex-col overflow-hidden transition-colors duration-300"
+          : "-mx-4 sm:-mx-6 -my-2 px-3 sm:px-6 min-h-[calc(100dvh-3.5rem)] transition-colors duration-300"
+      }
       style={{
         backgroundColor: effectiveTheme.bg,
         color: effectiveTheme.text,
-        paddingTop: "calc(var(--sat) + 0.5rem)",
-        // Clears the fixed nav bar so the last lines are never hidden behind it.
-        paddingBottom: "calc(5rem + var(--sab))",
+        paddingTop: nativeScroll ? "var(--sat)" : "calc(var(--sat) + 0.5rem)",
+        // Web: clears the fixed nav bar so the last lines are never hidden
+        // behind it. Android: the bar is in the column, nothing to clear.
+        paddingBottom: nativeScroll ? undefined : "calc(5rem + var(--sab))",
         overscrollBehaviorY: "contain",
       }}
     >
+      <div
+        ref={nativeScroll ? scrollerRef : undefined}
+        className={nativeScroll ? "min-h-0 flex-1 overflow-y-auto px-3 pt-2 sm:px-6" : undefined}
+        style={
+          nativeScroll
+            ? {
+                overscrollBehaviorY: "contain",
+                // The global thumb is tuned for the dark app shell and all but
+                // disappears on light reader themes; follow the text colour.
+                scrollbarColor: "color-mix(in srgb, currentColor 35%, transparent) transparent",
+              }
+            : undefined
+        }
+      >
       {/* max-w-6xl, not 3xl: at 768px the whole reader was a phone-width
           column on desktop. The text itself is capped by contentWidth below. */}
       <div className="mx-auto max-w-6xl">
@@ -1180,8 +1238,14 @@ export default function ReadPage() {
         )}
       </div>
 
-      <ReaderPlayerClearance />
+      {!nativeScroll && <ReaderPlayerClearance />}
       </div>
+      </div>
+
+      {/* Android: the mini player is pinned just above the chapter bar. This
+          spacer sits under it, so the scroller — and its scrollbar — stop at
+          the mini player instead of running beneath it. */}
+      {nativeScroll && <ReaderPlayerClearance />}
 
       {/* Bottom nav bar — the only way to change chapters now, so it stays
           reachable mid-chapter rather than only at the end of the page.
@@ -1193,7 +1257,11 @@ export default function ReadPage() {
           The hairline is neutral grey at low alpha so it reads correctly on
           every reader theme. */}
       <div
-        className="fixed bottom-0 left-0 right-0 z-30 px-3"
+        className={
+          nativeScroll
+            ? "relative z-30 shrink-0 px-3"
+            : "fixed bottom-0 left-0 right-0 z-30 px-3"
+        }
         style={{
           paddingTop: "0.75rem",
           paddingBottom: "calc(0.75rem + var(--sab))",
