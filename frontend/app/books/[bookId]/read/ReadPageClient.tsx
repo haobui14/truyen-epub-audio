@@ -37,6 +37,7 @@ import { Sheet } from "@/components/ui/Sheet";
 import { ActionButton, IconButton } from "@/components/ui/Button";
 import { usePlayerContext } from "@/context/PlayerContext";
 import {
+  CONTENT_WIDTH,
   DEFAULT_READER_PREFERENCES,
   contrastRatio,
   loadReaderPreferences,
@@ -789,7 +790,9 @@ export default function ReadPage() {
         overscrollBehaviorY: "contain",
       }}
     >
-      <div className="mx-auto max-w-3xl">
+      {/* max-w-6xl, not 3xl: at 768px the whole reader was a phone-width
+          column on desktop. The text itself is capped by contentWidth below. */}
+      <div className="mx-auto max-w-6xl">
       {/* Reading progress bar (sits below the system status bar) */}
       <div
         className="sticky top-0 z-20 h-0.5 bg-transparent"
@@ -835,26 +838,62 @@ export default function ReadPage() {
           Chương {currentChapter.chapter_index + 1} ·{" "}
           <span className="text-accent">{Math.round(scrollPct)}%</span>
         </p>
-        <IconButton
-          onClick={() => setShowSettings(!showSettings)}
-          label="Cài đặt đọc"
-          className={`-mr-2 ${showSettings ? "text-accent" : "hover:text-accent"}`}
-          style={{ color: showSettings ? undefined : effectiveTheme.text }}
-        >
-          <svg
-            className="w-5 h-5"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={2}
-            viewBox="0 0 24 24"
+        <div className="flex items-center">
+          {/* Switch to the player. Headphones, not the old microphone — this is
+              listening, not recording. Replaces the "Chuyển sang nghe?" card that
+              sat at the end of every chapter. Mirrors the book icon on the
+              player page, which switches back. */}
+          <Link
+            href={`/listen?id=${bookId}&chapter=${chapterId}`}
+            className="inline-flex size-11 items-center justify-center rounded-full transition-[color,background-color,transform] hover:bg-current/5 hover:text-accent active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent motion-reduce:transition-none motion-reduce:active:scale-100"
+            style={{ color: effectiveTheme.text }}
+            title="Chuyển sang nghe"
+            aria-label="Chuyển sang nghe"
           >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M4 6h16M4 12h16M4 18h16"
-            />
-          </svg>
-        </IconButton>
+            <svg
+              className="w-5 h-5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M3 18v-6a9 9 0 0 1 18 0v6M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"
+              />
+            </svg>
+          </Link>
+          <IconButton
+            onClick={() => setShowSettings(!showSettings)}
+            label="Cài đặt đọc"
+            className={`-mr-2 ${showSettings ? "text-accent" : "hover:text-accent"}`}
+            style={{ color: showSettings ? undefined : effectiveTheme.text }}
+          >
+            {/* Gear, not three lines: this opens display settings, and the
+                hamburger read as a navigation menu. Same gear as the home page. */}
+            <svg
+              className="w-5 h-5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+              />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+              />
+            </svg>
+          </IconButton>
+        </div>
       </div>
 
       <Sheet
@@ -939,9 +978,9 @@ export default function ReadPage() {
               <input
                 aria-label="Độ dài dòng"
                 type="range"
-                min="32"
-                max="72"
-                step="4"
+                min={CONTENT_WIDTH.min}
+                max={CONTENT_WIDTH.max}
+                step={CONTENT_WIDTH.step}
                 value={contentWidth}
                 onChange={(event) => updateReaderLayout("contentWidth", Number(event.target.value))}
                 className="mt-2 h-11 w-full accent-[var(--color-accent)]"
@@ -1043,10 +1082,12 @@ export default function ReadPage() {
           and the chapter number already shows in the top bar. Colour comes from
           the reader theme rather than the app palette so it doesn't clash on
           sepia / neon / warm. */}
+      {/* Same width as the text column so the title lines up with the first
+          paragraph instead of hanging off to the left of it. */}
       <h1
         id="reader-chapter-title"
-        className="mb-6 w-full text-balance text-lg font-semibold leading-snug sm:text-xl"
-        style={{ color: effectiveTheme.text }}
+        className="mx-auto mb-6 w-full text-balance text-lg font-semibold leading-snug sm:text-xl"
+        style={{ color: effectiveTheme.text, maxWidth: `${contentWidth}ch` }}
       >
         {currentChapter.title}
       </h1>
@@ -1137,33 +1178,6 @@ export default function ReadPage() {
             <p className="text-sm">Không có nội dung cho chương này.</p>
           </div>
         )}
-      </div>
-
-      {/* Listen handoff — inherits the theme bg, only a subtle hairline */}
-      <div className="mt-6 mb-2">
-        <Link
-          href={`/listen?id=${bookId}&chapter=${chapterId}`}
-          className="group flex min-h-14 items-center gap-3 rounded-xl p-3 ring-1 ring-current/15 transition-[box-shadow,transform] hover:ring-accent/40 active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent motion-reduce:transition-none motion-reduce:active:scale-100"
-          style={{ color: effectiveTheme.text }}
-        >
-          <span className="w-9 h-9 rounded-md bg-accent/15 ring-1 ring-accent/30 flex items-center justify-center text-accent shrink-0">
-            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2a5 5 0 0 1-10 0H5z" />
-            </svg>
-          </span>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold">Chuyển sang nghe?</p>
-            <p
-              className="font-mono text-[10px] tracking-widest uppercase mt-0.5"
-              style={{ opacity: 0.55 }}
-            >
-              Đọc tiếp bằng giọng hệ thống từ vị trí hiện tại
-            </p>
-          </div>
-          <span className="bg-accent text-ink font-semibold text-xs px-3.5 py-2 rounded-sm shadow-[0_0_18px_var(--color-accent-glow)] shrink-0 group-hover:bg-accent-dim transition-colors">
-            Nghe →
-          </span>
-        </Link>
       </div>
 
       <ReaderPlayerClearance />

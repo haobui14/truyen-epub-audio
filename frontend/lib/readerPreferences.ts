@@ -22,6 +22,13 @@ export const DEFAULT_READER_THEME: ReaderTheme = {
   label: "Tự động",
 };
 
+// Line length, in `ch` of the page font (Inter 16px, 1ch ≈ 10px). The old
+// 32–72 range with a 48 default gave a ~485px column — a phone-width strip in
+// the middle of a desktop screen. 88 ≈ 890px; 112 ≈ 1130px fills the reader's
+// max-w-6xl container. Phones are unaffected: the column is already capped by
+// the screen long before either limit.
+export const CONTENT_WIDTH = { min: 32, max: 112, step: 4 } as const;
+
 export const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
   theme: DEFAULT_READER_THEME,
   customText: DEFAULT_READER_THEME.text,
@@ -29,10 +36,29 @@ export const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
   fontFamily: "serif",
   fontSize: 18,
   lineHeight: 1.8,
-  contentWidth: 48,
+  contentWidth: 88,
 };
 
-const STORAGE_KEY = "reader-preferences-v2";
+const STORAGE_KEY = "reader-preferences-v3";
+const V2_STORAGE_KEY = "reader-preferences-v2";
+
+/**
+ * v2 saved the whole preferences object on ANY change, so almost every reader
+ * has contentWidth: 48 stored — the old default, never chosen. Keeping it would
+ * leave them on the narrow column forever. 48 (old default) and 72 (old
+ * maximum, i.e. "as wide as it goes") both move to the new default; any other
+ * value was picked deliberately and is kept.
+ */
+export function migrateV2Preferences(saved: unknown): unknown {
+  if (!isRecord(saved)) return saved;
+  const width = Number(saved.contentWidth);
+  if (width === 48 || width === 72) {
+    const rest = { ...saved };
+    delete rest.contentWidth;
+    return rest;
+  }
+  return saved;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -84,8 +110,8 @@ export function normalizeReaderPreferences(value: unknown): ReaderPreferences {
     ),
     contentWidth: clampNumber(
       value.contentWidth,
-      32,
-      72,
+      CONTENT_WIDTH.min,
+      CONTENT_WIDTH.max,
       DEFAULT_READER_PREFERENCES.contentWidth,
     ),
   };
@@ -99,6 +125,13 @@ export function loadReaderPreferences(): ReaderPreferences {
       return normalizeReaderPreferences({
         ...DEFAULT_READER_PREFERENCES,
         ...JSON.parse(current),
+      });
+    }
+    const v2 = localStorage.getItem(V2_STORAGE_KEY);
+    if (v2) {
+      return normalizeReaderPreferences({
+        ...DEFAULT_READER_PREFERENCES,
+        ...(migrateV2Preferences(JSON.parse(v2)) as object),
       });
     }
     const legacyTheme = localStorage.getItem("reader-theme");
