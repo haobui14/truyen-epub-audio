@@ -141,6 +141,41 @@ input[type="range"]::-moz-range-thumb {
   cursor: pointer;
 }
 
+/* The rule above strips the native look from EVERY range input, so a slider
+   that doesn't paint its own track has none at all — the reader's line-height
+   and line-length sliders showed only a floating thumb. `.range-track` draws a
+   rounded 6px track, filled in accent up to --range-fill (set inline as a %),
+   inside a full-height touch target. */
+.range-track {
+  cursor: pointer;
+  background: transparent;
+}
+.range-track::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    to right,
+    var(--color-accent) var(--range-fill, 0%),
+    var(--color-hairline) var(--range-fill, 0%)
+  );
+}
+/* Centre the 18px thumb on the 6px track. Needs the attribute selector too:
+   the global input[type="range"] thumb rule (margin-top: -1px) outranks a
+   bare class and left the thumb hanging 5px low. */
+input[type="range"].range-track::-webkit-slider-thumb {
+  margin-top: -6px;
+}
+.range-track::-moz-range-track {
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--color-hairline);
+}
+.range-track::-moz-range-progress {
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--color-accent);
+}
+
 /* ─── Scrollbars (dark-tuned) ────────────────────────────── */
 ::-webkit-scrollbar {
   width: 6px;

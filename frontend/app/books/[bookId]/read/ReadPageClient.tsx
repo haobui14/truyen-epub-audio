@@ -1210,7 +1210,10 @@ export default function ReadPage() {
                 step="0.1"
                 value={lineHeight}
                 onChange={(event) => updateReaderLayout("lineHeight", Number(event.target.value))}
-                className="mt-2 h-11 w-full accent-[var(--color-accent)]"
+                className="range-track mt-2 h-11 w-full"
+                style={
+                  { "--range-fill": `${((lineHeight - 1.4) / (2.2 - 1.4)) * 100}%` } as React.CSSProperties
+                }
               />
             </label>
             <label className="block text-sm font-semibold text-text-dim">
@@ -1223,7 +1226,12 @@ export default function ReadPage() {
                 step={CONTENT_WIDTH.step}
                 value={contentWidth}
                 onChange={(event) => updateReaderLayout("contentWidth", Number(event.target.value))}
-                className="mt-2 h-11 w-full accent-[var(--color-accent)]"
+                className="range-track mt-2 h-11 w-full"
+                style={
+                  {
+                    "--range-fill": `${((contentWidth - CONTENT_WIDTH.min) / (CONTENT_WIDTH.max - CONTENT_WIDTH.min)) * 100}%`,
+                  } as React.CSSProperties
+                }
               />
             </label>
           </div>
