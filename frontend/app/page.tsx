@@ -440,7 +440,7 @@ export default function HomePage() {
 
           {updatedBooks.length > 0 && (
             <BookScrollRow
-              title="Mới cập nhật"
+              title="Mới cập nhật chương mới"
               seeAllHref="/search"
               books={updatedBooks}
             />

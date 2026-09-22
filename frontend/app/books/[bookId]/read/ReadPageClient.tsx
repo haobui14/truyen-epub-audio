@@ -576,7 +576,9 @@ export default function ReadPage() {
 
     const atBottom = () => {
       const { top, max } = scrollMetrics(el);
-      return max <= 0 || top >= max - 2;
+      // A few px of slack: at fractional device pixel ratios the final
+      // scrollTop can land short of scrollHeight - clientHeight.
+      return max <= 0 || top >= max - 4;
     };
     const paint = (d: number) => {
       const wrapper = pullTargetRef.current;
@@ -605,6 +607,10 @@ export default function ReadPage() {
         touch.touches.length === 1 &&
         !(touch.target as Element | null)?.closest?.("[role='dialog']");
       reset();
+      // Already at the end when the finger lands: the whole swipe counts. A
+      // fast swipe may produce a single touchmove, so anchoring on the first
+      // move instead measured it as zero travel and it never fired.
+      if (active && atBottom()) anchorY = touch.touches[0].clientY;
     };
     const onMove = (event: Event) => {
       if (!active) return;
@@ -621,9 +627,16 @@ export default function ReadPage() {
       distance = Math.max(0, anchorY - y);
       paint(distance);
     };
-    const onEnd = () => {
+    const onEnd = (event: Event) => {
       if (!active) return;
       active = false;
+      // The finger can lift before the browser reports its last movement
+      // (touchmoves are throttled once scrolling starts); the release point
+      // is the true end of the swipe.
+      const endY = (event as TouchEvent).changedTouches?.[0]?.clientY;
+      if (anchorY !== null && endY !== undefined && atBottom()) {
+        distance = Math.max(distance, anchorY - endY);
+      }
       const go = distance >= PULL_THRESHOLD;
       reset();
       if (go) navigateTo(nextChapter);
@@ -985,7 +998,10 @@ export default function ReadPage() {
     >
       <div
         ref={nativeScroll ? scrollerRef : undefined}
-        className={nativeScroll ? "min-h-0 flex-1 overflow-y-auto px-3 pt-2 sm:px-6" : undefined}
+        // No top padding: a pinned (sticky) bar stops at the scroller's
+        // padding edge, so any padding here left a strip between the status
+        // bar and the top bar, with the text scrolling visibly through it.
+        className={nativeScroll ? "min-h-0 flex-1 overflow-y-auto px-3 sm:px-6" : undefined}
         style={
           nativeScroll
             ? {

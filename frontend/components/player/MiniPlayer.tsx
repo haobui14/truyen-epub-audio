@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import Image from "next/image";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { usePlayerContext } from "@/context/PlayerContext";
 import { useReaderChromeHidden } from "@/lib/readerChrome";
 import { isReaderRoute } from "@/lib/readerRoute";
@@ -11,6 +11,7 @@ import { IconButton } from "@/components/ui/Button";
 export function MiniPlayer() {
   const { track, session, toggle } = usePlayerContext();
   const pathname = usePathname();
+  const router = useRouter();
   // While reading, this bar is competing with the text: it drops the heavy
   // drop-shadow and the glowing progress line, gets shorter, and sits above
   // the reader's own chapter bar (the tab bar it normally clears is hidden
@@ -42,7 +43,15 @@ export function MiniPlayer() {
 
   return (
     <div
-      className={`fixed left-0 right-0 z-50 bg-raised/95 backdrop-blur-lg border-t border-hairline ${
+      // The whole bar opens the player, not just the cover and title links:
+      // taps on the gaps, padding or progress strip used to do nothing. The
+      // links stay for keyboard and screen-reader users; the transport
+      // buttons keep their own actions.
+      onClick={(event) => {
+        if ((event.target as HTMLElement).closest("a, button")) return;
+        router.push(listenUrl);
+      }}
+      className={`fixed left-0 right-0 z-50 cursor-pointer bg-raised/95 backdrop-blur-lg border-t border-hairline ${
         reading ? "shadow-none" : "shadow-[0_-12px_32px_rgba(0,0,0,0.45)]"
       }`}
       style={{
