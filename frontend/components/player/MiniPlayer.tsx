@@ -3,6 +3,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { usePlayerContext } from "@/context/PlayerContext";
+import { useReaderChromeHidden } from "@/lib/readerChrome";
 import { isReaderRoute } from "@/lib/readerRoute";
 import { Spinner } from "@/components/ui/Spinner";
 import { IconButton } from "@/components/ui/Button";
@@ -15,12 +16,16 @@ export function MiniPlayer() {
   // the reader's own chapter bar (the tab bar it normally clears is hidden
   // there, so the usual 3.5rem offset would leave it floating).
   const reading = isReaderRoute(pathname);
+  // Tapping the text in the reader hides its chrome; the mini player is part
+  // of that chrome, so it goes too rather than floating over the text.
+  const readerChromeHidden = useReaderChromeHidden();
 
   // Render even with NO track when the native service holds a session — a
   // cold start lands on the home page with audio possibly still playing (or a
   // restored session sitting paused); without this there would be zero UI for
   // it. Requires the override's bookId so the link can navigate somewhere.
   if (!session.active) return null;
+  if (reading && readerChromeHidden) return null;
 
   const bookTitle = session.bookTitle;
   const coverUrl = session.coverUrl;

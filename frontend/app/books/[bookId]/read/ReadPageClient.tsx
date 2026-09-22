@@ -45,6 +45,11 @@ import {
   type ReaderPreferences,
   type ReaderTheme,
 } from "@/lib/readerPreferences";
+import {
+  setReaderChromeHidden,
+  toggleReaderChromeHidden,
+  useReaderChromeHidden,
+} from "@/lib/readerChrome";
 
 /**
  * Track actual reading engagement and award XP when the user has spent
@@ -65,6 +70,11 @@ function scrollMetrics(el: Scroller) {
         max: document.documentElement.scrollHeight - window.innerHeight,
       };
 }
+
+// Finger travel past the end of a chapter that opens the next one, and how far
+// the text lifts with it (damped to half the travel, then capped).
+const PULL_THRESHOLD = 80;
+const PULL_MAX_SHIFT = 56;
 
 function scrollToY(el: Scroller, top: number) {
   (el ?? window).scrollTo({ top, behavior: "auto" });
@@ -337,6 +347,49 @@ export default function ReadPage() {
     };
   }, [nativeScroll]);
 
+  // Immersive reading: a tap on the text hides or shows the top bar, the
+  // chapter bar and the mini player together. Always leave the reader with
+  // them visible, so no other page inherits a hidden mini player.
+  const chromeHidden = useReaderChromeHidden();
+  const tapTimerRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (tapTimerRef.current !== null) window.clearTimeout(tapTimerRef.current);
+      setReaderChromeHidden(false);
+    },
+    [],
+  );
+  const handleReaderTap = useCallback((event: React.MouseEvent) => {
+    const target = event.target as HTMLElement;
+    // Controls, the sheets, and the bars themselves keep their own meaning.
+    if (
+      target.closest(
+        "a, button, input, textarea, select, label, [role='dialog'], [data-reader-chrome]",
+      )
+    ) {
+      return;
+    }
+    // Ending a long-press or drag selection must not toggle the bars.
+    if (window.getSelection()?.isCollapsed === false) return;
+    const pointerType = (event.nativeEvent as PointerEvent).pointerType;
+    if (pointerType === "touch" || pointerType === "pen") {
+      toggleReaderChromeHidden();
+      return;
+    }
+    // Mouse: a double-click selects a word, and its first click must not
+    // flicker the bars. Wait long enough to see whether a second one follows.
+    if (tapTimerRef.current !== null) {
+      window.clearTimeout(tapTimerRef.current);
+      tapTimerRef.current = null;
+      return;
+    }
+    tapTimerRef.current = window.setTimeout(() => {
+      tapTimerRef.current = null;
+      if (window.getSelection()?.isCollapsed === false) return;
+      toggleReaderChromeHidden();
+    }, 250);
+  }, []);
+
   const [preferences, setPreferences] = useState<ReaderPreferences>(
     loadReaderPreferences,
   );
@@ -503,6 +556,91 @@ export default function ReadPage() {
     },
     [bookId, router],
   );
+
+  // Pull up past the end of a chapter to open the next one. Painted straight
+  // onto the DOM through refs: a React state update per touchmove would
+  // re-render a several-thousand-paragraph chapter at 60 Hz. React state only
+  // flips when the pull crosses the threshold, to swap the hint text.
+  const pullTargetRef = useRef<HTMLDivElement | null>(null);
+  const pullFillRef = useRef<HTMLDivElement | null>(null);
+  const [pullArmed, setPullArmed] = useState(false);
+  const hasChapterText = !!chapterText?.text_content;
+  useEffect(() => {
+    if (!hasChapterText || !nextChapter) return;
+    const el = scrollerRef.current;
+    const target: HTMLElement | Window = el ?? window;
+    let active = false;
+    let anchorY: number | null = null;
+    let distance = 0;
+    let armed = false;
+
+    const atBottom = () => {
+      const { top, max } = scrollMetrics(el);
+      return max <= 0 || top >= max - 2;
+    };
+    const paint = (d: number) => {
+      const wrapper = pullTargetRef.current;
+      if (wrapper) {
+        wrapper.style.transform = d > 0 ? `translateY(${-Math.min(d * 0.5, PULL_MAX_SHIFT)}px)` : "";
+      }
+      if (pullFillRef.current) {
+        pullFillRef.current.style.width = `${Math.min(100, (d / PULL_THRESHOLD) * 100)}%`;
+      }
+      const nowArmed = d >= PULL_THRESHOLD;
+      if (nowArmed !== armed) {
+        armed = nowArmed;
+        setPullArmed(nowArmed);
+      }
+    };
+    const reset = () => {
+      anchorY = null;
+      distance = 0;
+      paint(0);
+    };
+
+    const onStart = (event: Event) => {
+      const touch = event as TouchEvent;
+      // Drags inside the settings or chapter-list sheets are theirs.
+      active =
+        touch.touches.length === 1 &&
+        !(touch.target as Element | null)?.closest?.("[role='dialog']");
+      reset();
+    };
+    const onMove = (event: Event) => {
+      if (!active) return;
+      const y = (event as TouchEvent).touches[0]?.clientY;
+      if (y === undefined) return;
+      if (!atBottom()) {
+        // Scrolled back up into the chapter: this is reading, not a pull.
+        reset();
+        return;
+      }
+      // Anchor where the finger was when the end was reached, so a drag that
+      // scrolls down to the end and keeps going counts only the extra travel.
+      if (anchorY === null) anchorY = y;
+      distance = Math.max(0, anchorY - y);
+      paint(distance);
+    };
+    const onEnd = () => {
+      if (!active) return;
+      active = false;
+      const go = distance >= PULL_THRESHOLD;
+      reset();
+      if (go) navigateTo(nextChapter);
+    };
+
+    target.addEventListener("touchstart", onStart, { passive: true });
+    target.addEventListener("touchmove", onMove, { passive: true });
+    target.addEventListener("touchend", onEnd);
+    target.addEventListener("touchcancel", onEnd);
+    return () => {
+      target.removeEventListener("touchstart", onStart);
+      target.removeEventListener("touchmove", onMove);
+      target.removeEventListener("touchend", onEnd);
+      target.removeEventListener("touchcancel", onEnd);
+      reset();
+    };
+  }, [hasChapterText, nextChapter, navigateTo]);
 
   // Prefetch ±2 chapters' text into the offline-first cache so prev/next
   // feel instant. Skip on the web build to avoid burning cellular data —
@@ -811,6 +949,7 @@ export default function ReadPage() {
 
   return (
     <div
+      onClick={handleReaderTap}
       // One continuous surface — escape AppMain's horizontal padding so the
       // theme bg goes edge-to-edge on Android. The whole reader (top bar,
       // hero, content, handoff) sits on this single background.
@@ -821,17 +960,27 @@ export default function ReadPage() {
       // and chapter sheets (z-70) underneath the mini player (z-50).
       className={
         nativeScroll
-          ? "-mx-4 sm:-mx-6 -my-2 flex h-[100dvh] flex-col overflow-hidden transition-colors duration-300"
+          ? "-mx-4 sm:-mx-6 -my-2 flex flex-col transition-colors duration-300"
           : "-mx-4 sm:-mx-6 -my-2 px-3 sm:px-6 min-h-[calc(100dvh-3.5rem)] transition-colors duration-300"
       }
       style={{
         backgroundColor: effectiveTheme.bg,
         color: effectiveTheme.text,
-        paddingTop: nativeScroll ? "var(--sat)" : "calc(var(--sat) + 0.5rem)",
+        // Android: body already pads for the status and navigation bars, so
+        // fill exactly the space between them. A plain 100dvh plus the reader's
+        // own --sat pushed the column's bottom — the chapter bar — under the
+        // Android navigation buttons.
+        height: nativeScroll ? "calc(100dvh - var(--sat) - var(--sab))" : undefined,
+        paddingTop: nativeScroll ? undefined : "calc(var(--sat) + 0.5rem)",
         // Web: clears the fixed nav bar so the last lines are never hidden
         // behind it. Android: the bar is in the column, nothing to clear.
         paddingBottom: nativeScroll ? undefined : "calc(5rem + var(--sab))",
         overscrollBehaviorY: "contain",
+        // Android: a copy of the column shifted down by the inset paints the
+        // strip behind the system navigation buttons in the reader theme —
+        // whether or not the chapter bar is showing — instead of the app's
+        // dark body showing through on light themes.
+        boxShadow: nativeScroll ? `0 var(--sab) 0 0 ${effectiveTheme.bg}` : undefined,
       }}
     >
       <div
@@ -851,9 +1000,10 @@ export default function ReadPage() {
       {/* max-w-6xl, not 3xl: at 768px the whole reader was a phone-width
           column on desktop. The text itself is capped by contentWidth below. */}
       <div className="mx-auto max-w-6xl">
-      {/* Reading progress bar (sits below the system status bar) */}
+      {/* Reading progress bar (sits below the system status bar). Above the
+          top bar, and still there when the bars are hidden. */}
       <div
-        className="sticky top-0 z-20 h-0.5 bg-transparent"
+        className="sticky top-0 z-30 h-0.5 bg-transparent"
         role="progressbar"
         aria-label={`Tiến độ đọc: ${Math.round(scrollPct)} phần trăm`}
         aria-valuemin={0}
@@ -866,8 +1016,23 @@ export default function ReadPage() {
         />
       </div>
 
-      {/* Top bar — back / "HỒI N · X%" / settings menu */}
-      <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2 mb-4">
+      {/* Top bar — back / "HỒI N · X%" / settings menu. Pinned while shown,
+          so a tap anywhere in the chapter can bring it back; slides away when
+          the reader taps the text for immersive reading. */}
+      <div
+        data-reader-chrome
+        inert={chromeHidden}
+        // Tailwind v4 slides with the `translate` property, not `transform`,
+        // so that is what has to be in the transition list to animate.
+        className={`sticky top-0 z-20 -mx-3 mb-4 px-3 transition-[translate,opacity] duration-200 motion-reduce:transition-none sm:-mx-6 sm:px-6 ${
+          chromeHidden ? "pointer-events-none -translate-y-full opacity-0" : ""
+        }`}
+        style={{
+          backgroundColor: effectiveTheme.bg,
+          boxShadow: "0 1px 0 0 rgba(128,128,128,0.2)",
+        }}
+      >
+      <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2">
         <Link
           href={`/book?id=${bookId}`}
           className="-ml-2 inline-flex size-11 items-center justify-center rounded-full transition-[color,background-color,transform] hover:bg-current/5 hover:text-accent active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent motion-reduce:transition-none motion-reduce:active:scale-100"
@@ -952,6 +1117,7 @@ export default function ReadPage() {
             </svg>
           </IconButton>
         </div>
+      </div>
       </div>
 
       <Sheet
@@ -1150,7 +1316,7 @@ export default function ReadPage() {
         {currentChapter.title}
       </h1>
 
-      <div className="mx-auto" style={{ maxWidth: `${contentWidth}ch` }}>
+      <div ref={pullTargetRef} className="mx-auto" style={{ maxWidth: `${contentWidth}ch` }}>
       {/* Reading content — no card; inherits the page's theme bg so the
           whole reader reads as one continuous surface. */}
       <div
@@ -1238,14 +1404,93 @@ export default function ReadPage() {
         )}
       </div>
 
-      {!nativeScroll && <ReaderPlayerClearance />}
+      {/* End-of-chapter navigation — in the text, not the chapter bar, so it
+          is still there when the bars are hidden for immersive reading. The
+          accessible names differ from the chapter bar's on purpose: the same
+          name twice on one page is ambiguous to a screen reader. */}
+      {hasChapterText && (
+        <nav aria-label="Điều hướng cuối chương" className="mt-10 pb-4">
+          <div className="flex items-center gap-3" style={{ opacity: 0.55 }}>
+            <span className="h-px flex-1 bg-current/30" />
+            <span className="font-mono text-[10px] uppercase tracking-[0.18em]">
+              Hết chương {currentChapter.chapter_index + 1}
+            </span>
+            <span className="h-px flex-1 bg-current/30" />
+          </div>
+          <div className="mt-5 grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => navigateTo(prevChapter)}
+              disabled={!prevChapter}
+              aria-label={
+                prevChapter
+                  ? `Sang chương trước, chương ${prevChapter.chapter_index + 1}`
+                  : "Đây là chương đầu tiên"
+              }
+              className="flex min-h-14 touch-manipulation flex-col items-start justify-center rounded-xl bg-current/5 px-4 text-left transition-[transform,background-color] duration-150 hover:bg-current/10 active:scale-[0.96] disabled:pointer-events-none disabled:opacity-25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent motion-reduce:transition-none motion-reduce:active:scale-100"
+            >
+              <span className="text-[11px] leading-none" style={{ opacity: 0.6 }}>
+                ‹ Chương trước
+              </span>
+              <span className="mt-1 text-sm font-semibold tabular-nums">
+                {prevChapter ? `Chương ${prevChapter.chapter_index + 1}` : "—"}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => navigateTo(nextChapter)}
+              disabled={!nextChapter}
+              aria-label={
+                nextChapter
+                  ? `Sang chương sau, chương ${nextChapter.chapter_index + 1}`
+                  : "Đây là chương mới nhất"
+              }
+              className="flex min-h-14 touch-manipulation flex-col items-end justify-center rounded-xl bg-accent/15 px-4 text-right text-accent ring-1 ring-accent/30 transition-[transform,background-color] duration-150 hover:bg-accent/25 active:scale-[0.96] disabled:pointer-events-none disabled:opacity-25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent motion-reduce:transition-none motion-reduce:active:scale-100"
+            >
+              <span className="text-[11px] leading-none opacity-80">Chương sau ›</span>
+              <span className="mt-1 text-sm font-semibold tabular-nums">
+                {nextChapter ? `Chương ${nextChapter.chapter_index + 1}` : "—"}
+              </span>
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowToc(true)}
+            className="mx-auto mt-2 flex min-h-11 touch-manipulation items-center justify-center rounded-lg px-4 text-xs font-medium transition-[transform,background-color] hover:bg-current/5 active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent motion-reduce:transition-none motion-reduce:active:scale-100"
+            style={{ opacity: 0.7 }}
+          >
+            Mục lục
+          </button>
+          {/* Pull-up hint. Touch screens only — there is nothing to pull with
+              a mouse. The bar fills as the finger travels past the end. */}
+          {nextChapter && (
+            <div
+              className="mt-4 hidden flex-col items-center gap-2 pointer-coarse:flex"
+              aria-hidden="true"
+            >
+              <div className="h-1 w-24 overflow-hidden rounded-full bg-current/10">
+                <div ref={pullFillRef} className="h-full w-0 bg-accent" />
+              </div>
+              <p className="text-xs" style={{ opacity: 0.6 }}>
+                {pullArmed ? "Thả tay để sang chương sau" : "Kéo lên để sang chương sau"}
+              </p>
+            </div>
+          )}
+        </nav>
+      )}
+
+      {!nativeScroll && !chromeHidden && <ReaderPlayerClearance />}
       </div>
+      </div>
+      {/* End of the scroller. Everything below — chapter bar, sheets — must
+          sit OUTSIDE it: on Android the chapter bar is a plain column item, and
+          inside the scroller it scrolled away with the text. */}
       </div>
 
       {/* Android: the mini player is pinned just above the chapter bar. This
           spacer sits under it, so the scroller — and its scrollbar — stop at
           the mini player instead of running beneath it. */}
-      {nativeScroll && <ReaderPlayerClearance />}
+      {nativeScroll && !chromeHidden && <ReaderPlayerClearance />}
 
       {/* Bottom nav bar — the only way to change chapters now, so it stays
           reachable mid-chapter rather than only at the end of the page.
@@ -1257,14 +1502,22 @@ export default function ReadPage() {
           The hairline is neutral grey at low alpha so it reads correctly on
           every reader theme. */}
       <div
+        data-reader-chrome
+        inert={chromeHidden}
         className={
           nativeScroll
-            ? "relative z-30 shrink-0 px-3"
-            : "fixed bottom-0 left-0 right-0 z-30 px-3"
+            ? // Android: out of the column while hidden, so the text box
+              // grows into the space instead of leaving a blank strip.
+              `relative z-30 shrink-0 px-3 ${chromeHidden ? "hidden" : ""}`
+            : `fixed bottom-0 left-0 right-0 z-30 px-3 transition-transform duration-200 motion-reduce:transition-none ${
+                chromeHidden ? "pointer-events-none translate-y-full" : ""
+              }`
         }
         style={{
           paddingTop: "0.75rem",
-          paddingBottom: "calc(0.75rem + var(--sab))",
+          // Web: the bar is fixed to the screen edge, so it pads for the inset
+          // itself. Android: it ends where body's inset padding begins.
+          paddingBottom: nativeScroll ? "0.75rem" : "calc(0.75rem + var(--sab))",
           color: effectiveTheme.text,
           backgroundColor: effectiveTheme.bg,
           boxShadow:
@@ -1453,7 +1706,6 @@ export default function ReadPage() {
             </div>
         </Sheet>
       )}
-      </div>
     </div>
   );
 }
