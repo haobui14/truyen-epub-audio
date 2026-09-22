@@ -692,16 +692,35 @@ export default function BookDetailPage() {
 
         {/* Action buttons */}
         {isParsing ? (
-          <div className="flex items-center gap-3 mx-5 sm:mx-6 mb-5 sm:mb-6 px-4 py-3.5 rounded-md bg-gold/10 border border-gold/30">
+          <div role="status" className="flex items-center gap-3 mx-5 sm:mx-6 mb-5 sm:mb-6 px-4 py-3.5 rounded-md bg-gold/10 border border-gold/30">
             <Spinner className="w-5 h-5 text-gold shrink-0" />
             <div>
               <p className="text-sm font-medium text-gold">
-                Đang xử lý file EPUB...
+                Đang nhận dạng nội dung và chia chương...
               </p>
               <p className="text-xs text-gold-dim mt-0.5">
-                Sẽ sẵn sàng trong giây lát
+                PDF scan có thể mất vài phút. Bạn có thể rời trang và quay lại sau.
               </p>
             </div>
+          </div>
+        ) : book.status === "error" ? (
+          <div className="mx-5 sm:mx-6 mb-5 sm:mb-6 space-y-3">
+            <AsyncState
+              compact
+              kind="error"
+              title="Không thể xử lý truyện"
+              message={admin
+                ? book.error_message || "Hãy kiểm tra định dạng và nội dung file rồi thử lại."
+                : "File truyện chưa xử lý thành công. Quản trị viên cần kiểm tra và nhập lại."}
+            />
+            {admin && (
+              <Link
+                href={`/admin/edit-book?id=${bookId}`}
+                className="inline-flex min-h-11 items-center justify-center rounded-xl bg-raised px-4 py-2 text-sm font-medium text-text transition-[background-color,transform] hover:bg-raised-hi active:scale-[0.96] focus-visible:outline-2 focus-visible:outline-accent motion-reduce:transition-none motion-reduce:active:scale-100"
+              >
+                Kiểm tra và nhập lại
+              </Link>
+            )}
           </div>
         ) : firstChapter ? (
           <div className="flex flex-col gap-3 mx-5 sm:mx-6 mb-5 sm:mb-6">

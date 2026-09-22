@@ -151,6 +151,14 @@ export default function UploadPage() {
         <form onSubmit={handleSubmit} className="space-y-5">
           <UploadZone onFile={setFile} disabled={isUploading} />
 
+          {file && /\.(txt|pdf)$/i.test(file.name) && (
+            <p className="text-sm leading-relaxed text-text-mute" role="status">
+              {/\.txt$/i.test(file.name)
+                ? 'TXT: nên lưu dưới dạng UTF-8 để giữ đúng dấu tiếng Việt. Đặt tiêu đề như “Chương 1: Mở đầu” trên dòng riêng. Nếu không có tiêu đề chương, truyện sẽ được chia thành các phần vừa đọc.'
+                : "PDF: hỗ trợ trang có chữ và trang scan trong cùng một file. Bản scan cần rõ nét; quá trình nhận dạng có thể mất vài phút. Hãy bỏ mật khẩu trước khi tải lên."}
+            </p>
+          )}
+
           {/* Cover image picker */}
           <div>
             <label className="block text-sm font-medium text-text-dim dark:text-text-faint mb-2">

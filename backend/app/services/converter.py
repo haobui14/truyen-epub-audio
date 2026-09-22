@@ -11,7 +11,6 @@ Strategy:
 
 import logging
 import os
-import re
 import shutil
 import tempfile
 import uuid
@@ -20,86 +19,13 @@ from typing import Optional
 import ebooklib
 from ebooklib import epub
 
+from app.services.pdf_ingestion import extract_pdf_text
+from app.services.text_ingestion import (
+    decode_text,
+    split_text_into_chapters as _split_text_into_chapters,
+)
+
 logger = logging.getLogger(__name__)
-
-WORDS_PER_CHAPTER = 5000
-MIN_CHARS_PER_PAGE = 80  # avg chars/page below this → treat PDF as image-based
-
-
-# ---------------------------------------------------------------------------
-# Text splitting helpers
-# ---------------------------------------------------------------------------
-
-_HEADING_PATTERNS = [
-    re.compile(r"^chương\s+\d+", re.IGNORECASE),
-    re.compile(r"^chapter\s+\d+", re.IGNORECASE),
-    re.compile(r"^phần\s+\d+", re.IGNORECASE),
-    re.compile(r"^part\s+\d+", re.IGNORECASE),
-    re.compile(r"^quyển\s+\d+", re.IGNORECASE),
-    re.compile(r"^volume\s+\d+", re.IGNORECASE),
-    re.compile(r"^bài\s+\d+", re.IGNORECASE),
-]
-
-
-def _is_chapter_heading(line: str) -> bool:
-    line = line.strip()
-    if not line or len(line) > 120:
-        return False
-    return any(p.match(line) for p in _HEADING_PATTERNS)
-
-
-def _split_text_into_chapters(full_text: str) -> list[dict]:
-    """
-    Split plain text into chapters.
-
-    Priority:
-    1. Heading-based split (Chương X, Chapter X, …)
-    2. Fixed word-count chunks (~WORDS_PER_CHAPTER words each)
-    """
-    lines = full_text.splitlines()
-
-    # --- Heading-based split ---
-    sections: list[dict] = []
-    current_title: Optional[str] = None
-    current_lines: list[str] = []
-
-    for line in lines:
-        if _is_chapter_heading(line):
-            if current_lines:
-                text = "\n".join(current_lines).strip()
-                if len(text) >= 50:
-                    sections.append({
-                        "title": current_title or f"Chương {len(sections) + 1}",
-                        "text": text,
-                    })
-            current_title = line.strip()[:200]
-            current_lines = []
-        else:
-            current_lines.append(line)
-
-    if current_lines:
-        text = "\n".join(current_lines).strip()
-        if len(text) >= 50:
-            sections.append({
-                "title": current_title or f"Chương {len(sections) + 1}",
-                "text": text,
-            })
-
-    if sections:
-        return sections
-
-    # --- Fallback: fixed word-count chunks ---
-    words = full_text.split()
-    chapters: list[dict] = []
-    for i in range(0, len(words), WORDS_PER_CHAPTER):
-        chunk = " ".join(words[i : i + WORDS_PER_CHAPTER]).strip()
-        if len(chunk) >= 50:
-            chapters.append({
-                "title": f"Chương {len(chapters) + 1}",
-                "text": chunk,
-            })
-    return chapters
-
 
 # ---------------------------------------------------------------------------
 # EPUB assembly
@@ -185,10 +111,7 @@ def _chapters_to_epub(
 
 def txt_to_epub(txt_bytes: bytes, title: str) -> bytes:
     """Convert a plain-text file to EPUB bytes."""
-    try:
-        text = txt_bytes.decode("utf-8")
-    except UnicodeDecodeError:
-        text = txt_bytes.decode("latin-1", errors="replace")
+    text = decode_text(txt_bytes)
 
     chapters = _split_text_into_chapters(text)
     if not chapters:
@@ -199,54 +122,10 @@ def txt_to_epub(txt_bytes: bytes, title: str) -> bytes:
 
 
 def pdf_to_epub(pdf_bytes: bytes, title: str) -> bytes:
-    """
-    Convert a PDF file to EPUB bytes.
-
-    - Text PDFs:  extracted directly with PyMuPDF
-    - Image PDFs: OCR via pytesseract + pdf2image (requires tesseract binary)
-    """
-    tmp_path: Optional[str] = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
-            f.write(pdf_bytes)
-            tmp_path = f.name
-
-        # Try text extraction first
-        import fitz  # PyMuPDF
-
-        doc = fitz.open(tmp_path)
-        pages = [page.get_text() for page in doc]
-        doc.close()
-
-        avg_chars = sum(len(p) for p in pages) / max(len(pages), 1)
-
-        if avg_chars < MIN_CHARS_PER_PAGE:
-            logger.info(
-                f"PDF→EPUB: '{title}' — image PDF detected "
-                f"(avg {avg_chars:.0f} chars/page), running OCR"
-            )
-            from pdf2image import convert_from_path
-            import pytesseract
-
-            images = convert_from_path(tmp_path, dpi=200)
-            pages = [pytesseract.image_to_string(img, lang="vie+eng") for img in images]
-        else:
-            logger.info(
-                f"PDF→EPUB: '{title}' — text PDF "
-                f"(avg {avg_chars:.0f} chars/page)"
-            )
-
-        full_text = "\n\n".join(pages)
-        chapters = _split_text_into_chapters(full_text)
-        if not chapters:
-            raise ValueError("No readable content found in PDF")
-
-        logger.info(f"PDF→EPUB: '{title}' → {len(chapters)} chapters")
-        return _chapters_to_epub(chapters, title)
-
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+    """Convert text, scanned or mixed PDFs using page-wise extraction/OCR."""
+    chapters = _split_text_into_chapters(extract_pdf_text(pdf_bytes))
+    logger.info("PDF→EPUB: '%s' → %d chapters", title, len(chapters))
+    return _chapters_to_epub(chapters, title)
 
 
 def _read_html_to_text(filepath: str) -> str:

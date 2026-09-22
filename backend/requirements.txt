@@ -17,6 +17,7 @@ mutagen==1.48.1
 aiofiles==25.1.0
 httpx==0.28.1
 PyMuPDF==1.28.0
+charset-normalizer==3.4.9
 pdf2image==1.17.0
 pytesseract==0.3.13
 # Cover optimization (resize + WebP re-encode in app/services/image_service.py).

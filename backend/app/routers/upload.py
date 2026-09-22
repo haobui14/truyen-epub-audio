@@ -212,7 +212,9 @@ async def _convert_and_parse(
             logger.info(f"Book {book_id}: converting {ext} → EPUB")
         epub_bytes = await _to_epub_bytes(content, ext, title)
 
-        await epub_parser.parse_epub_task(book_id, epub_bytes)
+        await epub_parser.parse_epub_task(
+            book_id, epub_bytes, preserve_chapters=ext in {".txt", ".pdf"}
+        )
 
     except Exception as e:
         logger.exception(f"Book {book_id}: conversion failed: {e}")

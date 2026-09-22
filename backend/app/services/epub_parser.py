@@ -324,7 +324,9 @@ async def _upload_deferred_chapter_text(book_id: str, chapters: list[dict]) -> N
         )
 
 
-def extract_epub_contents(epub_bytes: bytes, book_id: str) -> dict:
+def extract_epub_contents(
+    epub_bytes: bytes, book_id: str, *, preserve_chapters: bool = False
+) -> dict:
     """Pure-CPU extraction: EPUB bytes → metadata + ordered chapter dicts.
 
     Shared by the initial parse (parse_epub_task) and the append-chapters
@@ -334,7 +336,10 @@ def extract_epub_contents(epub_bytes: bytes, book_id: str) -> dict:
 
     Returns {title, author, cover_bytes, chapters}; chapter entries carry
     {id, book_id, chapter_index, title, text_content, word_count, status}.
-    Raises ValueError when no readable chapters are found.
+    Raises ValueError when no readable chapters are found. preserve_chapters is
+    set only for our generated TXT/PDF EPUBs: the converter already assigned
+    boundaries, including short chapters, so EPUB repair heuristics must not
+    merge/drop/re-split them.
     """
     tmp_path = None
     try:
@@ -379,6 +384,8 @@ def extract_epub_contents(epub_bytes: bytes, book_id: str) -> dict:
         skipped_short = 0
         skipped_dupe = 0
         for item in ordered_items:
+            if isinstance(item, epub.EpubNav):
+                continue
             item_id = item.get_id()
             if item_id in seen_ids:
                 skipped_dupe += 1
@@ -391,11 +398,20 @@ def extract_epub_contents(epub_bytes: bytes, book_id: str) -> dict:
             # Decode only when we got bytes.
             raw = item.get_content()
             html_content = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw
-            soup = BeautifulSoup(html_content, "lxml")
-            text = html_to_text(html_content)
+            soup = BeautifulSoup(html_content, "xml" if preserve_chapters else "lxml")
+            if preserve_chapters:
+                # Our converter emits one h1 plus p elements. Preserve numeric
+                # lines, punctuation and short paragraphs (normal EPUB cleanup
+                # treats these as footnotes). The generated TOC is skipped above.
+                text = "\n\n".join(
+                    el.get_text().strip() for el in soup.find_all(["h1", "p"])
+                    if el.get_text().strip()
+                )
+            else:
+                text = html_to_text(html_content)
 
             # Skip very short items (TOC, copyright pages, etc.)
-            if len(text) < 100:
+            if not text or (not preserve_chapters and len(text) < 100):
                 skipped_short += 1
                 continue
 
@@ -429,7 +445,9 @@ def extract_epub_contents(epub_bytes: bytes, book_id: str) -> dict:
         # than its own item. Re-split by chapter headers; only replaces the
         # list when strictly more chapters are detected, so well-structured
         # EPUBs are unaffected.
-        split_chapters, missing_titles = auto_split_chapters(chapters_data)
+        split_chapters, missing_titles = (
+            (chapters_data, []) if preserve_chapters else auto_split_chapters(chapters_data)
+        )
         if len(split_chapters) > len(chapters_data):
             logger.info(
                 f"Book {book_id}: auto-split expanded {len(chapters_data)} → "
@@ -461,7 +479,9 @@ def extract_epub_contents(epub_bytes: bytes, book_id: str) -> dict:
 
         # Covers the path where auto_split never fires (a well-structured EPUB
         # whose own spine items include a contents page or author note).
-        chapters_data, merged_short = merge_short_chapters(chapters_data)
+        chapters_data, merged_short = (
+            (chapters_data, 0) if preserve_chapters else merge_short_chapters(chapters_data)
+        )
         if merged_short:
             logger.info(
                 f"Book {book_id}: merged {merged_short} entries under "
@@ -547,13 +567,16 @@ def build_epub(
             os.unlink(tmp_path)
 
 
-async def parse_epub_task(book_id: str, epub_bytes: bytes) -> None:
+async def parse_epub_task(
+    book_id: str, epub_bytes: bytes, *, preserve_chapters: bool = False
+) -> None:
     db = get_client()
     try:
         # CPU-heavy (zip extraction + BS4 over every chapter) — run on a worker
         # thread so the event loop stays responsive while a big book parses.
         extracted = await asyncio.to_thread(
-            extract_epub_contents, epub_bytes, book_id
+            extract_epub_contents, epub_bytes, book_id,
+            preserve_chapters=preserve_chapters,
         )
         title = extracted["title"]
         author = extracted["author"]

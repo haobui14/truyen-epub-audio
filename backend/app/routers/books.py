@@ -674,12 +674,13 @@ async def append_chapters_from_file(
     try:
         epub_bytes = await _to_epub_bytes(content, ext, title_guess)
         extracted = await asyncio.to_thread(
-            epub_parser.extract_epub_contents, epub_bytes, book_id
+            epub_parser.extract_epub_contents, epub_bytes, book_id,
+            preserve_chapters=ext in {".txt", ".pdf"},
         )
     except ValueError as e:
         raise HTTPException(
             status_code=400,
-            detail=f"Không tìm thấy chương nào có thể đọc trong file ({e})",
+            detail=f"Không thể nhập file: {e}",
         )
     except Exception as e:
         raise HTTPException(
