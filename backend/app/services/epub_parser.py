@@ -417,6 +417,13 @@ def extract_epub_contents(
             chapter_title = _extract_chapter_title(
                 soup, f"Chương {idx + 1}"
             )
+            # The heading the title came from is still in `text`, and scraped
+            # documents repeat it after their breadcrumb. The reader shows the
+            # title above the text, so those copies read as duplicates.
+            text, _ = text_cleanup.strip_leading_title(text, chapter_title)
+            # …and the site's end block: separator, "(end of chapter)", the
+            # keyboard hint, the upload credit and the book title.
+            text, _ = text_cleanup.strip_trailing_boilerplate(text)
             word_count = len(text.split())
 
             chapters_data.append({

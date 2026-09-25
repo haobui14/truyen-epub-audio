@@ -100,6 +100,30 @@ def test_scrub_obfuscated_thichcode_variant():
     assert clean == "văn thật\nvăn thật hai"
 
 
+@pytest.mark.parametrize(
+    "prose",
+    [
+        "Hắn né được, đối thủ phát ra một tiếng gầm.",
+        "Mấy vị trưởng lão liên thủ phát động đại trận.",
+        "Gia tộc nên tranh thủ phát triển thêm vài năm.",
+        "Quỷ thủ phát ra hắc quang chói mắt",
+    ],
+)
+def test_69shuba_first_release_tag_leaves_ordinary_prose(prose):
+    # "thủ phát" is also where two ordinary words meet. The rule deletes whole
+    # lines, so a false positive here costs a paragraph — or, in a chapter with
+    # no paragraph breaks, the entire chapter.
+    text = f"văn thật\n{prose}\nvăn thật hai"
+    clean, counts = scrub_watermarks(text)
+    assert clean == text and counts == {}
+
+
+def test_69shuba_first_release_tag_at_line_end_is_removed():
+    clean, counts = scrub_watermarks("văn thật\n(Toàn văn thủ phát)\nvăn thật hai")
+    assert counts == {"69shuba": 1}
+    assert clean == "văn thật\nvăn thật hai"
+
+
 def test_scrub_clean_text_returns_empty_counts():
     text = "Chương 1: Sạch\nvăn bản hoàn toàn bình thường"
     clean, counts = scrub_watermarks(text)

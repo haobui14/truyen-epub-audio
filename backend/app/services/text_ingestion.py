@@ -140,6 +140,11 @@ def _chunk_text(text: str) -> list[dict]:
     return [{"title": f"Chương {i + 1}", "text": chunk} for i, chunk in enumerate(chunks)]
 
 
+def _heading_key(heading: str) -> str:
+    """Compare headings ignoring case and spacing, so repeats fold together."""
+    return re.sub(r"\s+", " ", unicodedata.normalize("NFC", heading)).strip().casefold()
+
+
 def split_text_into_chapters(text: str) -> list[dict]:
     text = normalize_text(text)
     if not text:
@@ -149,23 +154,37 @@ def split_text_into_chapters(text: str) -> list[dict]:
     lines: list[str] = []
     preamble: list[str] = []
 
-    def flush() -> None:
+    def flush(repeat: bool = False) -> None:
         body = "\n".join(lines).strip()
         if title and body:
             sections.append({"title": title, "text": "\n\n".join(preamble + [body])})
             preamble.clear()
         elif title:
             # Consecutive headings (usually a TOC) must not create empty
-            # chapters. Retain their text so a short note is never discarded.
-            preamble.append(title)
+            # chapters. Retain their text so a short note is never discarded —
+            # unless this heading is REPEATED by the next one. Scraped pages
+            # print the chapter title two or three times (breadcrumb, page
+            # heading, body heading); keeping those copies opened every chapter
+            # with its own title again, under the title the reader shows.
+            if not repeat:
+                preamble.append(title)
         elif body:
             preamble.append(body)
 
     for line in text.splitlines():
         heading = chapter_heading(line)
         if heading:
-            flush()
-            title, lines = heading, []
+            repeat = (
+                title is not None
+                and not "\n".join(lines).strip()
+                and _heading_key(heading) == _heading_key(title)
+            )
+            flush(repeat)
+            # Keep the FIRST spelling of a repeated heading: the later copies
+            # are often lower-cased or differently spaced.
+            if not repeat:
+                title = heading
+            lines = []
         else:
             lines.append(line)
     flush()

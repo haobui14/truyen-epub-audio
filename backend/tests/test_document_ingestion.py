@@ -97,6 +97,21 @@ def test_preamble_short_chapters_and_final_note_survive():
     assert "Chapter III" in chapters[1]["text"]
 
 
+def test_repeated_heading_is_not_kept_as_body_text():
+    # Scraped pages print the chapter title two or three times. Keeping the
+    # copies opened every chapter with its own title, under the title the
+    # reader already shows (one 243-chapter book, all chapters affected).
+    source = (
+        "Chương 1: Mở đầu\nChương 1: Mở đầu\nChương 1: Mở đầu\nCâu đầu tiên.\n"
+        "Chương 2: Tiếp theo\nchương 2:  tiếp theo\nCâu thứ hai."
+    )
+    chapters = split_text_into_chapters(source)
+    assert [ch["title"] for ch in chapters] == ["Chương 1: Mở đầu", "Chương 2: Tiếp theo"]
+    assert chapters[0]["text"] == "Câu đầu tiên."
+    # Case and spacing differences still count as the same heading.
+    assert chapters[1]["text"] == "Câu thứ hai."
+
+
 def test_contents_list_does_not_explode_into_empty_chapters():
     contents = "\n".join(f"Chương {i}" for i in range(1, 101))
     chapters = split_text_into_chapters(f"Mục lục\n{contents}\n\nChương 1\nNội dung thật.\nChương 2\nKết thúc.")
