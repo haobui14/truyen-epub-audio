@@ -45,7 +45,13 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("sanitize")
 
 CJK_RE = re.compile(r"[一-鿿㐀-䶿]")
-MD_EMPHASIS_RE = re.compile(r"[*_]{1,3}(?=\S)(.+?)(?<=\S)[*_]{1,3}", re.DOTALL)
+# The markers must not touch a letter or digit on their outer side. Without that
+# guard "ghép hình 3*3, … bức thứ hai là 4*4" matched as one emphasis span and
+# came out as "33 … 44" — the numbers silently fused. Real markdown emphasis
+# never sits flush against a word character on the outside.
+MD_EMPHASIS_RE = re.compile(
+    r"(?<![^\W_])[*_]{1,3}(?=\S)(.+?)(?<=\S)[*_]{1,3}(?![^\W_])", re.DOTALL
+)
 CJK_BRACKET_RE = re.compile(r"[《》〈〉「」『』【】]")
 # Runs of decorative punctuation the author used as chapter-note flourishes
 # (~~~, ^^^, ——————). Deliberately excludes "." and ",": "..." is a legitimate
@@ -99,15 +105,153 @@ def normalize_quotes(text: str, style: str) -> str:
     return text
 
 
-def clean_markup(text: str) -> str:
+# Filter-dodging dots. Wikidich-family sites break up words their keyword filter
+# flags — "c·hết", "g·iết", "t·hi t·hể", even "đ·ã" — 23,750 dots across 74% of
+# one book's chapters, sometimes trailing a word ("t·ham ô·"). TTS stumbles on
+# every one. Inside a word the dot is deleted; before a capital it becomes a
+# space instead, because translated books use it as a Western-name separator
+# ("Đỗ·Duy") and deleting it would fuse the name.
+#
+# "Capital letter" is built from str.isupper(), NOT a range like À-Ỹ: Unicode
+# interleaves Vietnamese upper and lower case in that block (Ạ ạ Ả ả …), so the
+# range also matches "ị" — which turned "d·ịch" into "d ịch".
+UPPER = "[" + re.escape("".join(
+    c for c in map(chr, range(0x41, 0x2000)) if c.isalpha() and c.isupper()
+)) + "]"
+OBFUSCATION_DOT_RE = re.compile(rf"(?<=\w)[·‧・∙](?!{UPPER})|[·‧・∙](?=\w)(?!{UPPER})")
+NAME_DOT_RE = re.compile(rf"(?<=\w)[·‧・∙](?={UPPER})")
+
+
+def clean_markup(text: str, strip_filter_dots: bool = False) -> str:
     text = INVISIBLE_RE.sub("", text)
+    # Opt-in: our own translations use "·" on purpose, as a separator inside
+    # system-panel skill names ("[Cấm chú·Đá nuốt trời đất]"). Only scraped
+    # wikidich text needs the filter-dodging dots taken out.
+    if strip_filter_dots:
+        text = NAME_DOT_RE.sub(" ", text)
+        text = OBFUSCATION_DOT_RE.sub("", text)
     text = MD_EMPHASIS_RE.sub(r"\1", text)
     text = CJK_BRACKET_RE.sub("", text)
     text = DECOR_RUN_RE.sub(r"\1", text)
     text = LONG_ELLIPSIS_RE.sub("...", text)
+    # Stripping 《 Tên Sách 》 leaves "vì  Tên Sách  cà". Collapse mid-line runs
+    # only — [ \t], never \s, which would also eat the paragraph breaks.
+    text = re.sub(r"(?<=\S)[ \t]{2,}", " ", text)
+    # Vietnamese sets no space before , ! ? ; : — converters emit French-style
+    # "thỏa mãn ?". Deliberately excludes "." and "…" (a spaced ellipsis can be
+    # stylistic) and ” (some sources misuse it as an OPENING quote, where the
+    # space is load-bearing). Only after a LETTER: after a digit the ratio
+    # "8 : 1" would become "8: 1", and after a colon a LitRPG panel's unknown
+    # value "[Phẩm cấp: ?]" would become "[Phẩm cấp:?]".
+    text = re.sub(r"(?<=[^\W\d_])[ \t]+(?=[,!?;:])", "", text)
     # Trailing spaces before a newline, and blank-line runs left by the above.
     text = re.sub(r"[ \t]+\n", "\n", text)
     return re.sub(r"\n{3,}", "\n\n", text).strip() + "\n"
+
+
+# Rebuilding paragraphs for chapters a source site serves as one unbroken block
+# (wikidich did this for 108 consecutive chapters of one book — zero <br> in the
+# page HTML, so re-scraping cannot help). Scraped xianxia writes narration one
+# sentence per paragraph, so break at every sentence end that starts a new
+# sentence. Validated by flattening 102 real chapters and rebuilding them:
+# 98.9% of the true breaks recovered, 90.2% of paragraphs rebuilt exactly, not
+# one character changed.
+#
+# The last alternative handles 8 of those chapters where the site dropped the
+# space along with the break ("nhiều.Hai người"). No digit there, so a decimal
+# like "1.5" is never split.
+_SENTENCE_BREAK_RE = re.compile(
+    rf"(?<=[.!?…][”\"])\s+(?=[“\"\w])|(?<=[.!?…])\s+(?=[“\"0-9]|{UPPER})"
+    rf"|(?<=[.!?…])(?=[“\"]|{UPPER})|(?<=[.!?…][”\"])(?=[“\"]|{UPPER})"
+)
+# A short sentence straight after a closing quote is almost always its speech
+# tag ("“…?” Đại hán kia hỏi.") and stays on the quote's line. 40 chars was the
+# best threshold in validation; longer lets real narration get absorbed.
+_SPEECH_TAG_MAX = 40
+
+
+def split_wall(paragraph: str) -> list[str]:
+    """Split one run-together paragraph back into sentence paragraphs."""
+    out: list[str] = []
+    for s in _SENTENCE_BREAK_RE.split(paragraph):
+        if not s.strip():
+            continue
+        if (
+            out
+            and out[-1].rstrip().endswith(("”", '"'))
+            and not s.startswith(("“", '"'))
+            and len(s) <= _SPEECH_TAG_MAX
+        ):
+            out[-1] = out[-1] + " " + s
+        else:
+            out.append(s)
+    return out
+
+
+def split_walls(text: str, min_len: int) -> tuple[str, int]:
+    """Rebuild paragraphs longer than min_len; leaves everything else alone."""
+    lines = text.split("\n")
+    out, n = [], 0
+    for line in lines:
+        if len(line) > min_len:
+            parts = split_wall(line.strip())
+            if len(parts) > 1:
+                out.append("\n\n".join(parts))
+                n += 1
+                continue
+        out.append(line)
+    return "\n".join(out), n
+
+
+# A hanzi is sentence-initial when only an opening quote separates it from the
+# start of the line or from sentence-ending punctuation.
+_SENTENCE_START_RE = re.compile(r"(?:^|[.!?…]\s*)[\"“‘(]?\s*$")
+
+
+def apply_hanzi_map(text: str, hanzi_map: dict[str, str]) -> tuple[str, int]:
+    """Replace hanzi a converter left untransliterated with their Hán-Việt reading.
+
+    Scraped books (wikidich and similar) are machine-converted, and the converter's
+    dictionary misses rare characters, so they reach the reader verbatim:
+    "kim 犐 ngọc thư". TTS either skips them or reads them in Chinese. They cannot
+    be re-translated like our own output — the only fix is in place.
+
+    Map values are the reading as it should appear mid-sentence: lowercase for a
+    common noun ("khoa"), capitalised for a name ("Thương"). A lowercase reading
+    is capitalised when it opens a sentence. An empty value deletes the run —
+    for visual puns like 芔茻, which have no meaning when read aloud.
+    """
+    total = 0
+    # Longest keys first so a multi-character run is not split by a shorter key.
+    for han in sorted(hanzi_map, key=len, reverse=True):
+        reading = hanzi_map[han]
+        out, pos = [], 0
+        for m in re.finditer(re.escape(han), text):
+            before = text[pos : m.start()]
+            line_start = text.rfind("\n", 0, m.start()) + 1
+            word = reading
+            if word and word[0].islower() and _SENTENCE_START_RE.search(text[line_start : m.start()]):
+                word = word[0].upper() + word[1:]
+            # Converters glue hanzi straight onto punctuation ("tung ảnh.牤 Ngưu");
+            # a Latin word needs the space the hanzi never did.
+            if word and before and not before[-1].isspace() and before[-1] not in "\"“‘(":
+                word = " " + word
+            after = text[m.end() : m.end() + 1]
+            if word and after and (after.isalnum()):
+                word = word + " "
+            # A deletion must not strand its leading space: "thảo 芔茻, đây"
+            # would become "thảo , đây". Tidy only here, at the deletion site —
+            # never file-wide, which silently rewrote 74 untouched chapters.
+            if not word and before.endswith((" ", "\t")) and (
+                not after or after in " \t,.!?;:…”"
+            ):
+                before = before.rstrip(" \t")
+            out.append(before + word)
+            pos = m.end()
+            total += 1
+        out.append(text[pos:])
+        text = "".join(out)
+    return text, total
 
 
 def build_name_map(files: list[Path], glossary: dict[str, str]) -> dict[str, str]:
@@ -139,16 +283,20 @@ def build_name_map(files: list[Path], glossary: dict[str, str]) -> dict[str, str
         logger.info(f"    (skipping {targets[key]!r} — reads as a common noun here)")
         del targets[key]
 
-    # Collect capitalised runs of the same length as each target.
+    # Scan sliding phrase windows for each glossary word count.  A single
+    # greedy run across all lengths misses a name when it starts inside a
+    # longer capitalised sequence (for example, "tổ chức Âm Hưng").  The
+    # lookahead makes every word boundary a possible start without consuming
+    # text, while horizontal whitespace prevents a match from crossing lines.
     seen: dict[str, Counter] = defaultdict(Counter)
-    max_words = max((len(v.split()) for v in targets.values()), default=0)
-    if not max_words:
-        return {}
-    run_re = re.compile(rf"(?:{WORD_CHAR}+)(?:\s+{WORD_CHAR}+){{0,{max_words - 1}}}")
-    for path in files:
-        text = path.read_text(encoding="utf-8")
-        for m in run_re.finditer(text):
-            phrase = m.group(0)
+    word_counts = sorted({len(v.split()) for v in targets.values()})
+    for word_count in word_counts:
+        phrase_re = re.compile(
+            rf"(?<!{WORD_CHAR})(?=({WORD_CHAR}+(?:[ \t]+{WORD_CHAR}+)"
+            rf"{{{word_count - 1}}})(?!{WORD_CHAR}))"
+        )
+        for m in phrase_re.finditer(corpus):
+            phrase = m.group(1)
             if not phrase[:1].isupper():
                 continue
             key = strip_diacritics(phrase)
@@ -183,7 +331,29 @@ def main() -> None:
     ap.add_argument(
         "--delete-cjk",
         action="store_true",
-        help="delete files still containing hanzi so the translate step regenerates them",
+        help="delete files still containing hanzi so the translate step regenerates them. "
+        "NEVER use this on a scraped book — there is no translate step to regenerate "
+        "from, so it just deletes chapters. Use --hanzi-map instead",
+    )
+    ap.add_argument(
+        "--strip-filter-dots",
+        action="store_true",
+        help="remove the dots wikidich-family sites insert to dodge keyword filters "
+        "(\"c·hết\" -> \"chết\"). Scraped books only — our own translations use \"·\" "
+        "deliberately as a separator in skill names",
+    )
+    ap.add_argument(
+        "--split-walls",
+        type=int,
+        metavar="CHARS",
+        help="rebuild paragraph breaks in any paragraph longer than CHARS (try 1500) — "
+        "for chapters a site served as one unbroken block. Splits at sentence ends",
+    )
+    ap.add_argument(
+        "--hanzi-map",
+        help="JSON {\"犐\": \"khoa\", \"仺\": \"Thương\", \"芔茻\": \"\"} of Hán-Việt readings "
+        "for hanzi a converter left untransliterated. Replaces them in place — the fix "
+        "for scraped books, which cannot be re-translated",
     )
     ap.add_argument(
         "--normalize-quotes",
@@ -232,12 +402,26 @@ def main() -> None:
             logger.info("    none found")
         logger.info("")
 
-    markup_changed = name_changed = name_total = 0
+    hanzi_map: dict[str, str] = {}
+    if args.hanzi_map:
+        hpath = Path(args.hanzi_map)
+        if not hpath.is_file():
+            raise SystemExit(f"No such hanzi map: {hpath}")
+        hanzi_map = json.loads(hpath.read_text(encoding="utf-8"))
+
+    markup_changed = name_changed = name_total = hanzi_changed = hanzi_total = 0
+    walls_changed = 0
     cjk_files: list[tuple[Path, int]] = []
 
     for path in files:
         original = path.read_text(encoding="utf-8")
-        text = clean_markup(original)
+        # Hanzi first: bracket-stripping and space-collapsing then tidy up after it.
+        text, h = apply_hanzi_map(original, hanzi_map) if hanzi_map else (original, 0)
+        if args.split_walls:
+            text, w = split_walls(text, args.split_walls)
+            if w:
+                walls_changed += 1
+        text = clean_markup(text, strip_filter_dots=args.strip_filter_dots)
         if args.normalize_quotes:
             text = normalize_quotes(text, args.normalize_quotes)
         m_changed = text != original
@@ -245,6 +429,9 @@ def main() -> None:
 
         if m_changed:
             markup_changed += 1
+        if h:
+            hanzi_changed += 1
+            hanzi_total += h
         if n:
             name_changed += 1
             name_total += n
@@ -256,6 +443,10 @@ def main() -> None:
             cjk_files.append((path, left))
 
     logger.info(f"markup cleaned:    {markup_changed} file(s)")
+    if hanzi_map:
+        logger.info(f"hanzi transliterated: {hanzi_total} in {hanzi_changed} file(s)")
+    if args.split_walls:
+        logger.info(f"walls split:       {walls_changed} file(s)")
     logger.info(f"names normalised:  {name_total} replacement(s) in {name_changed} file(s)")
     logger.info(f"still contain CJK: {len(cjk_files)} file(s), {sum(n for _, n in cjk_files)} char(s)")
     for path, n in cjk_files[:15]:

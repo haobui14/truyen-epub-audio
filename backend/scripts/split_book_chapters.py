@@ -35,9 +35,16 @@ ENCODINGS = ("utf-8-sig", "utf-8", "gb18030", "big5", "utf-16")
 
 CJK = r"一-鿿㐀-䶿"
 
-# 第 + number (arabic / fullwidth / Chinese numerals) + unit
+# 第 + number (arabic / fullwidth / Chinese numerals) + unit.
+#
+# 回 and 节 are real chapter units, but they also start ordinary words that a
+# LitRPG battle scene uses constantly: 第三回合 is "round three", 第二节点 is
+# "node two". Both sit at the start of their own short line, so without the
+# lookaheads they are indistinguishable from a heading — one such line split a
+# chapter of 一秒一个技能点 in half, leaving a 484-character stub.
 CHAPTER_RE = re.compile(
-    r"第\s*[0-9０-９一二三四五六七八九十百千万萬零〇两兩廿卅]{1,12}\s*[章回節节]"
+    r"第\s*[0-9０-９一二三四五六七八九十百千万萬零〇两兩廿卅]{1,12}\s*"
+    r"(?:[章節]|回(?!合)|节(?!点))"
 )
 # Standalone front/back matter headings
 SPECIAL_RE = re.compile(

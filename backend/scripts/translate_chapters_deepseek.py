@@ -143,7 +143,11 @@ Rules:
 11. Output the Vietnamese translation only. No preamble, notes, explanations, or restatement of the original."""
 
 
-MD_EMPHASIS_RE = re.compile(r"[*_]{1,3}(?=\S)(.+?)(?<=\S)[*_]{1,3}", re.DOTALL)
+# Markers must not touch a letter or digit on their outer side, or "3*3 … 4*4"
+# is read as one emphasis span and the numbers fuse into "33 … 44".
+MD_EMPHASIS_RE = re.compile(
+    r"(?<![^\W_])[*_]{1,3}(?=\S)(.+?)(?<=\S)[*_]{1,3}(?![^\W_])", re.DOTALL
+)
 CJK_BRACKET_RE = re.compile(r"[《》〈〉「」『』【】]")
 
 
@@ -302,6 +306,59 @@ GENRES = {
             "honorifics of rule 5, NOT from Hán-Việt-ising ordinary description. Avoid modern "
             "slang, but plain everyday Vietnamese words are always correct and always "
             "preferred over an obscure Sino-Vietnamese compound."
+        ),
+    },
+    "litrpg": {
+        "genre_line": (
+            "Chinese LitRPG / game-system web novels set on a MODERN parallel Earth — "
+            "present-day schools, cities and media, overlaid with a video-game system of "
+            "classes, levels, skills, stats, dungeons and loot. There is no cultivation and "
+            "no feudal court"
+        ),
+        "term_rule": (
+            "Use the established Vietnamese game-novel vocabulary, which readers of this "
+            "genre already know: kỹ năng (skill), điểm kỹ năng (skill point), cộng điểm "
+            "(spend points), sách kỹ năng (skill book), chức nghiệp (class/profession), "
+            "chức nghiệp giả (a person with a class), chuyển chức (class change), cấp độ "
+            "(level), lên cấp (level up), kinh nghiệm (XP), thuộc tính (stats), bảng thuộc "
+            "tính (status panel), thiên phú (talent), kỹ năng bị động / chủ động (passive / "
+            "active skill), tức thời (instant cast), thời gian hồi (cooldown), pháp lực "
+            "(mana), sinh mệnh (HP), phó bản (dungeon/instance), thông quan (clear it), bí "
+            "cảnh (secret realm), vị diện (plane), quái vật (monster), boss (keep the word "
+            "'boss'), trang bị (gear), cường hóa (upgrade), phụ ma (enchant), rèn đúc "
+            "(forge), rơi đồ (drop), phần thưởng (reward), công hội (guild), tổ đội (party), "
+            "bảng xếp hạng (leaderboard), thức tỉnh (awaken), cấm chú (forbidden spell), "
+            "pháp sư (mage), chiến sĩ (warrior), thích khách (assassin), mục sư (priest). "
+            "Skill and spell names are translated for MEANING, not transliterated: 火球术 → "
+            "\"thuật cầu lửa\", 天焰龙息 → \"Long Tức Thiên Diễm\" only if it is styled as a "
+            "proper name. Letter grades stay as letters (SSS, SS, S, A, B). "
+            "Do NOT import xianxia vocabulary — there is no luyện khí, trúc cơ, kim đan, "
+            "nguyên anh or tu vi here, and no Western noble ranks either."
+        ),
+        "honorific_rule": (
+            "This is a MODERN setting, so use ordinary modern Vietnamese address — NOT the "
+            "classical register. Use \"tôi\" for the first person, and \"cậu\" / \"anh\" / "
+            "\"em\" / \"ông\" / \"bà\" / \"chú\" / \"cô\" as the relationship warrants. Do NOT "
+            "use ta / ngươi / đạo hữu / tiền bối / sư huynh / bệ hạ / các hạ — these belong "
+            "to cultivation and court settings and sound absurd between classmates at a "
+            "present-day high school. Teenagers talk like teenagers; keep the banter casual."
+        ),
+        "atmosphere_rule": (
+            "Preserve the narrative voice — wry humour, internal monologue and the "
+            "power-fantasy pacing must carry through. The atmosphere is contemporary: "
+            "schools, broadcasts, rankings and city life, with the game system layered on "
+            "top. Modern everyday Vietnamese is CORRECT here, including ordinary modern "
+            "slang where the original is colloquial. Never Hán-Việt-ise ordinary "
+            "description.\n"
+            "   System messages are structural, not decoration. A line the original wraps "
+            "in 【...】 — status panels, skill descriptions, level-up and reward "
+            "notifications — must stay its own line, wrapped in SQUARE brackets [...], with "
+            "the label-and-value layout preserved one item per line:\n"
+            "     【等级：lv.1（0.00%）】 → [Cấp độ: lv.1 (0,00%)]\n"
+            "     【法力：100/100】      → [Pháp lực: 100/100]\n"
+            "   Keep every number, slash, and percentage exactly as given. Do not merge "
+            "panel lines into a paragraph and do not drop the brackets — rule 8b's ban on "
+            "decorative characters does not apply to these."
         ),
     },
 }
