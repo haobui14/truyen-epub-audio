@@ -87,16 +87,9 @@ def remove_spam_paragraphs(text: str, signatures: tuple[str, ...]) -> tuple[str,
     return new_text, removed
 
 
-def _download_http1(path: str) -> bytes:
-    """Download over the HTTP/1.1 upload client instead of storage3's shared
-    HTTP/2 connection — same fix as compress_chapter_text.py (storage3 drops
-    streams under concurrent fan-out on the shared HTTP/2 socket)."""
-    def _do() -> bytes:
-        resp = ss._get_direct_client().get(f"/object/{CHAPTER_TEXT_BUCKET}/{path}")
-        if resp.status_code >= 400:
-            raise ss.StorageUploadError(resp.status_code, resp.text, CHAPTER_TEXT_BUCKET, path)
-        return resp.content
-    return ss._retry_sync(_do, what=f"download {CHAPTER_TEXT_BUCKET}/{path}")
+def _download_object(path: str) -> bytes:
+    """Download raw chapter bytes from R2's authenticated S3 endpoint."""
+    return ss._sync_download(CHAPTER_TEXT_BUCKET, path)
 
 
 def list_objects(book_id: str | None):
@@ -139,7 +132,7 @@ def clean_one(path: str, signatures: tuple[str, ...], apply: bool):
     """Returns (status, removed_lines, new_word_count, error).
     status in {clean, empty, dry_run, cleaned, error}."""
     try:
-        data = _download_http1(path)
+        data = _download_object(path)
         if len(data) == 0:
             return ("empty", [], None, None)
         if ss._is_gzip(data):
@@ -179,8 +172,7 @@ def main() -> None:
         args.workers, list(signatures),
         f" | book={args.book_id}" if args.book_id else "",
     )
-    ss._get_storage()        # warm singletons before threads race for them
-    ss._get_direct_client()
+    ss._get_storage()        # warm singleton before threads race for it
 
     logger.info("Enumerating objects…")
     objects = list(list_objects(args.book_id))

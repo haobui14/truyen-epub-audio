@@ -12,6 +12,7 @@ mobi==0.4.1
 beautifulsoup4==4.15.0
 lxml>=6.1.1
 supabase==2.31.0
+boto3==1.43.55
 pydantic-settings==2.14.2
 mutagen==1.48.1
 aiofiles==25.1.0

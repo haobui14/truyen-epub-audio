@@ -45,25 +45,9 @@ CHUNK = 2000  # objects submitted to the pool per wave (bounds in-flight futures
 GZIP_MIME = "application/gzip"
 
 
-def _download_http1(path: str) -> bytes:
-    """Download a chapter-text object over the HTTP/1.1 upload client instead of
-    storage3's shared HTTP/2 connection.
-
-    storage3's `.download()` multiplexes all concurrent downloads onto ONE HTTP/2
-    connection; under our 8-way fan-out Supabase drops the stream, tripping
-    storage3's `UnboundLocalError: ... 'response'` bug on nearly every request
-    (it recovers via retry but halves throughput). The HTTP/1.1 client gives each
-    request its own socket — the same fix storage_service uses for uploads
-    (see storage_service.py:45-50). Production reads are unchanged.
-
-    Objects are stored with Content-Type application/gzip and NO Content-Encoding,
-    so httpx returns the raw gzip bytes (no auto-decompression)."""
-    def _do() -> bytes:
-        resp = ss._get_direct_client().get(f"/object/{CHAPTER_TEXT_BUCKET}/{path}")
-        if resp.status_code >= 400:
-            raise ss.StorageUploadError(resp.status_code, resp.text, CHAPTER_TEXT_BUCKET, path)
-        return resp.content
-    return ss._retry_sync(_do, what=f"download {CHAPTER_TEXT_BUCKET}/{path}")
+def _download_object(path: str) -> bytes:
+    """Download raw chapter bytes from R2's authenticated S3 endpoint."""
+    return ss._sync_download(CHAPTER_TEXT_BUCKET, path)
 
 
 def _fmt(n: float) -> str:
@@ -117,7 +101,7 @@ def compress_one(path: str, metadata: dict, apply: bool):
         # Cheap skip — no download — for objects already stored as gzip.
         if metadata.get("mimetype") == GZIP_MIME:
             return ("already", 0, 0, None)
-        data = _download_http1(path)  # HTTP/1.1 — avoids storage3's HTTP/2 stream bug
+        data = _download_object(path)
         # Authoritative skip (handles missing/stale list metadata).
         if ss._is_gzip(data):
             return ("already", 0, 0, None)
@@ -151,8 +135,7 @@ def main() -> None:
         args.workers,
         f" | book={args.book_id}" if args.book_id else "",
     )
-    ss._get_storage()        # warm singletons before threads race for them
-    ss._get_direct_client()
+    ss._get_storage()        # warm singleton before threads race for it
 
     logger.info("Enumerating objects…")
     objects = list(list_objects(args.book_id))

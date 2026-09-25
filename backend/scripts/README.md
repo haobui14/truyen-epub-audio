@@ -5,7 +5,7 @@ Two unrelated families of scripts live here:
 | Family | What it touches | Scripts |
 |---|---|---|
 | **Translation pipeline** | Local files only (`backend/work/…`). Never touches the database. | `clean_source_txt`, `split_book_chapters`, `glossary_from_markdown`, `build_glossary_deepseek`, `translate_chapters_*`, `audit_translation`, `sanitize_translation`, `merge_chapters`, `scrape_wikidich` |
-| **Production maintenance** | Live Supabase DB + Storage. | `export_book_txt`, `strip_string_from_book`, `remove_spam_paragraphs`, `compress_chapter_text`, `migrate_chapter_text_to_storage`, `cleanup_storage` |
+| **Production maintenance** | Live Supabase DB + Cloudflare R2 storage. | `export_book_txt`, `strip_string_from_book`, `remove_spam_paragraphs`, `compress_chapter_text`, `migrate_chapter_text_to_storage`, `migrate_supabase_storage_to_r2`, `cleanup_storage` |
 
 The translation pipeline turns a raw Chinese novel `.txt` into a Vietnamese
 `.txt`/EPUB you upload through the normal admin UI. It is completely offline —
@@ -439,14 +439,32 @@ rides through to the upload sanitizer like any other source.
 
 ## Production maintenance
 
-These talk to the live database and Storage. They read Supabase credentials from
-`backend/.env` via `app.database` / `app.services.storage_service`.
+These talk to the live Supabase database and Cloudflare R2. They read credentials
+from `backend/.env` via `app.database` / `app.services.storage_service`.
 
 Chapter text lives in the private `chapter-text` bucket at
 `{book_id}/{chapter_id}.txt`, **gzip-compressed**, with
-`Content-Type: application/gzip` and never `Content-Encoding` (storage3/httpx
-would auto-decompress the latter and break app-level gunzip). All reads and writes
+`Content-Type: application/gzip` and never `Content-Encoding` (an HTTP client can
+auto-decompress the latter and break app-level gunzip). All reads and writes
 funnel through `storage_service.download_chapter_text` / `upload_chapter_text`.
+
+### `migrate_supabase_storage_to_r2.py`
+
+Copies all four legacy Supabase Storage buckets into R2 without deleting the
+source. Public files (`covers`, `audio`) go to the public R2 bucket; private files
+(`chapter-text`, `epub-uploads`) go to the private bucket. If every copy succeeds,
+the script changes existing `cover_url` and `audio_url` rows to the R2 domain.
+
+```bash
+python -m scripts.migrate_supabase_storage_to_r2
+python -m scripts.migrate_supabase_storage_to_r2 --apply --skip-url-update
+# After deploying the R2-aware code, final incremental sync + URL cutover:
+python -m scripts.migrate_supabase_storage_to_r2 --apply
+```
+
+The first command is a dry run. Same-sized destination objects are skipped, so
+an interrupted applied run is safe to repeat. Supabase objects remain in place
+for rollback.
 
 ### `export_book_txt.py`
 
@@ -523,17 +541,15 @@ resumable.
 > ⚠️ **Deploy the gzip-aware `storage_service.py` before running `--apply`.** The
 > old backend would `.decode('utf-8')` gzip bytes and serve empty chapters.
 
-Downloads go over an HTTP/1.1 client rather than storage3's shared HTTP/2
-connection — storage3 multiplexes all concurrent downloads onto one connection,
-and under 8-way fan-out Supabase drops the stream, tripping storage3's
-`UnboundLocalError: ... 'response'` bug on nearly every request.
+Downloads use the authenticated R2 S3 endpoint and the shared thread-safe boto3
+client.
 
 ### `migrate_chapter_text_to_storage.py`
 
 Historical one-shot: moved `chapters.text_content` out of Postgres into Storage.
-Uses a thread pool, since storage3 and supabase-py are sync and `asyncio.gather`
-over them gives no real parallelism. Already run; kept for reference. Its docstring
-lists the follow-up SQL (`ALTER TABLE chapters DROP COLUMN text_content;` etc).
+Uses a thread pool because boto3 and supabase-py are synchronous. Already run;
+kept for reference. Its docstring lists the follow-up SQL
+(`ALTER TABLE chapters DROP COLUMN text_content;` etc).
 
 ### `cleanup_storage.py`
 

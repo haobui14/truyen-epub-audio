@@ -268,9 +268,8 @@ def _friendly_parse_error(exc: Exception) -> str:
     return f"{friendly} ({detail})"[:1000]
 
 
-# Parse-time chapter-text uploads run at this concurrency. Capped at 8 because
-# higher values overwhelm storage3's shared connection and Supabase starts
-# closing streams (see storage_service.STORAGE_CONCURRENCY).
+# Parse-time chapter-text uploads run at this concurrency. Keep it aligned with
+# the R2 client's bounded connection pool (see storage_service.STORAGE_CONCURRENCY).
 _UPLOAD_CONCURRENCY = 8
 
 # Strong refs to background text-upload tasks so the event loop doesn't GC them

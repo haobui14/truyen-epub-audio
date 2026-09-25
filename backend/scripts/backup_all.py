@@ -1,8 +1,7 @@
-"""Full local backup: every Postgres table + every Storage bucket.
+"""Full local backup: every Postgres table + every R2 logical bucket.
 
-The library (71 books / ~114k chapters of translated, hand-cleaned text) lives
-in one Supabase free-tier project with no point-in-time recovery, and the admin
-tools include destructive bulk operations (strip-string, auto-split, reparse).
+The library contains translated, hand-cleaned text and the admin tools include
+destructive bulk operations (strip-string, auto-split, reparse).
 This script makes those safe: run it before risky operations and on a schedule.
 
   * DB tables    -> <dest>/db/<table>.json          (rewritten every run)
@@ -107,12 +106,7 @@ def walk_bucket(bucket: str, prefix: str = "", depth: int = 0):
 
 
 def _download(bucket: str, path: str) -> bytes:
-    def _do() -> bytes:
-        resp = ss._get_direct_client().get(f"/object/{bucket}/{path}")
-        if resp.status_code >= 400:
-            raise ss.StorageUploadError(resp.status_code, resp.text, bucket, path)
-        return resp.content
-    return ss._retry_sync(_do, what=f"download {bucket}/{path}")
+    return ss._sync_download(bucket, path)
 
 
 def _fetch_one(bucket: str, path: str, local: Path) -> int:
@@ -126,8 +120,8 @@ def _fetch_one(bucket: str, path: str, local: Path) -> int:
 def mirror_bucket(bucket: str, dest: Path, workers: int = 8) -> None:
     """Incremental mirror. Chapter-text alone holds ~114k objects — serial
     downloads would take hours, so fan out on a small pool (8, matching
-    storage_service.STORAGE_CONCURRENCY; the direct client is per-thread-safe
-    httpx). Submitted in waves so the futures list stays bounded."""
+    storage_service.STORAGE_CONCURRENCY; the boto3 client is thread-safe).
+    Submitted in waves so the futures list stays bounded."""
     base = dest / "storage" / bucket
     downloaded = skipped = failed = 0
     dl_bytes = 0

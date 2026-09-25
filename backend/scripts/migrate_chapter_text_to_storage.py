@@ -1,10 +1,10 @@
-"""One-shot migration: move chapters.text_content into Supabase Storage.
+"""One-shot migration: move chapters.text_content into object storage.
 
 For every row where text_storage_path IS NULL AND text_content IS NOT NULL:
     1. Upload text_content to chapter-text/{book_id}/{chapter_id}.txt
     2. UPDATE chapters SET text_storage_path = path, text_content = NULL
 
-Uses a thread pool because storage3 and supabase-py are sync; asyncio.gather
+Uses a thread pool because boto3 and supabase-py are sync; asyncio.gather
 on top of sync HTTP doesn't give real parallelism. Idempotent — safe to re-run.
 
 After all rows are migrated, run:
@@ -29,7 +29,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.database import get_client
 from app.services.storage_service import (
     CHAPTER_TEXT_BUCKET,
+    _gzip_compress,
     _get_storage,
+    _sync_upload,
     chapter_text_path,
 )
 
@@ -37,7 +39,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("migrate_chapter_text")
 
 PAGE_SIZE = 500
-WORKERS = 8           # Windows socket pool + Supabase Storage limits favor low concurrency
+WORKERS = 8           # Keep bulk R2 connection use modest
 MAX_RETRIES = 4       # per phase (upload, db update)
 
 
@@ -73,7 +75,6 @@ def _retry(fn, what: str):
 def migrate_one(ch: dict) -> tuple[str, bool, str | None]:
     """Returns (chapter_id, uploaded, error_message)."""
     db = get_client()
-    storage = _get_storage()
     chapter_id = ch["id"]
     book_id = ch["book_id"]
     text = ch.get("text_content") or ""
@@ -89,17 +90,14 @@ def migrate_one(ch: dict) -> tuple[str, bool, str | None]:
             return (chapter_id, False, f"clear-empty failed: {e}")
 
     path = chapter_text_path(book_id, chapter_id)
-    # NOTE: this completed one-shot script uploads PLAIN text directly. Chapter
-    # text is now stored gzip-compressed via storage_service.upload_chapter_text().
-    # If this script is ever re-run, route through that wrapper instead so output
-    # is compressed. Plain objects written here remain readable — download_chapter_text
-    # detects gzip by magic bytes and falls back to plain UTF-8.
     try:
         _retry(
-            lambda: storage.from_(CHAPTER_TEXT_BUCKET).upload(
-                path=path,
-                file=text.encode("utf-8"),
-                file_options={"content-type": "text/plain; charset=utf-8", "upsert": "true"},
+            lambda: _sync_upload(
+                CHAPTER_TEXT_BUCKET,
+                path,
+                _gzip_compress(text.encode("utf-8")),
+                "application/gzip",
+                "no-cache",
             ),
             "upload",
         )

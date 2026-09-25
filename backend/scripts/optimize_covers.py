@@ -29,6 +29,7 @@ from urllib.parse import unquote, urlsplit
 # Make `app.*` imports work when run as `python -m scripts.…`
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from app.config import settings
 from app.database import get_client
 from app.services import image_service
 from app.services import storage_service as ss
@@ -48,22 +49,21 @@ def _fmt(n: float) -> str:
 
 
 def _object_path(cover_url: str) -> str | None:
-    """Extract the in-bucket object path from a stored public cover URL."""
+    """Extract an object path from either a legacy Supabase or current R2 URL."""
     path = urlsplit(cover_url).path  # drops any ?v= etc.
     marker = f"/object/public/{BUCKET}/"
-    if marker not in path:
-        return None
-    return unquote(path.split(marker, 1)[1])
+    if marker in path:
+        return unquote(path.split(marker, 1)[1])
+    if settings.r2_public_url and cover_url.startswith(settings.r2_public_url.rstrip("/") + "/"):
+        marker = f"/{BUCKET}/"
+        if marker in path:
+            return unquote(path.split(marker, 1)[1])
+    return None
 
 
 def _download(path: str) -> bytes:
-    """Fetch via the service-key HTTP/1.1 client (same client uploads use)."""
-    def _do() -> bytes:
-        resp = ss._get_direct_client().get(f"/object/{BUCKET}/{path}")
-        if resp.status_code >= 400:
-            raise ss.StorageUploadError(resp.status_code, resp.text, BUCKET, path)
-        return resp.content
-    return ss._retry_sync(_do, what=f"download {BUCKET}/{path}")
+    """Fetch a cover from R2."""
+    return ss._sync_download(BUCKET, path)
 
 
 def purge_legacy(apply: bool) -> None:
@@ -73,7 +73,10 @@ def purge_legacy(apply: bool) -> None:
     db = get_client()
     still_referenced = [
         b["id"] for b in (db.table("books").select("id,cover_url").execute().data or [])
-        if b.get("cover_url") and f"/object/public/{BUCKET}/covers/" in b["cover_url"]
+        if b.get("cover_url") and (
+            f"/object/public/{BUCKET}/covers/" in b["cover_url"]
+            or f"/{BUCKET}/covers/" in urlsplit(b["cover_url"]).path
+        )
     ]
     if still_referenced:
         logger.warning(
@@ -107,7 +110,7 @@ def purge_legacy(apply: bool) -> None:
     if not apply:
         return
     for i in range(0, len(paths), 100):
-        ss._get_storage().from_(BUCKET).remove(paths[i:i + 100])
+        ss._sync_remove(BUCKET, paths[i:i + 100])
     logger.info("Purged %d object(s).", len(paths))
 
 
@@ -176,7 +179,7 @@ def main() -> None:
 
         try:
             ss._sync_upload(BUCKET, new_path, data, content_type)
-            url = ss._get_storage().from_(BUCKET).get_public_url(new_path)
+            url = ss.public_url(BUCKET, new_path)
             db.table("books").update(
                 {"cover_url": image_service.versioned_cover_url(url)}
             ).eq("id", book["id"]).execute()

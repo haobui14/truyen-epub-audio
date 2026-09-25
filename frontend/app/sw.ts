@@ -10,6 +10,26 @@ declare global {
 
 declare const self: WorkerGlobalScope;
 
+const mediaBase = (() => {
+  try {
+    return process.env.NEXT_PUBLIC_MEDIA_URL
+      ? new URL(process.env.NEXT_PUBLIC_MEDIA_URL)
+      : null;
+  } catch {
+    return null;
+  }
+})();
+
+function isMediaBucket(url: URL, bucket: "audio" | "covers"): boolean {
+  const legacySupabase =
+    url.hostname.endsWith(".supabase.co") &&
+    url.pathname.startsWith(`/storage/v1/object/public/${bucket}/`);
+  if (legacySupabase) return true;
+  if (!mediaBase || url.origin !== mediaBase.origin) return false;
+  const basePath = mediaBase.pathname.replace(/\/$/, "");
+  return url.pathname.startsWith(`${basePath}/${bucket}/`);
+}
+
 const serwist = new Serwist({
   precacheEntries: self.__SW_MANIFEST,
   skipWaiting: true,
@@ -18,8 +38,7 @@ const serwist = new Serwist({
   runtimeCaching: [
     // Audio files — explicit cache-first (user taps download)
     {
-      matcher:
-        /^https:\/\/.*\.supabase\.co\/storage\/v1\/object\/public\/audio\/.*/i,
+      matcher: ({ url }) => isMediaBucket(url, "audio"),
       handler: new CacheFirst({
         cacheName: "audio-cache-v1",
         plugins: [
@@ -32,8 +51,7 @@ const serwist = new Serwist({
     },
     // Cover images — cache-first
     {
-      matcher:
-        /^https:\/\/.*\.supabase\.co\/storage\/v1\/object\/public\/covers\/.*/i,
+      matcher: ({ url }) => isMediaBucket(url, "covers"),
       handler: new CacheFirst({
         cacheName: "covers-cache-v1",
         plugins: [

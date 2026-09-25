@@ -3,6 +3,15 @@ import withSerwist from "@serwist/next";
 import pkg from "./package.json";
 
 const isCapacitor = process.env.BUILD_TARGET === "capacitor";
+const mediaHostname = (() => {
+  try {
+    return process.env.NEXT_PUBLIC_MEDIA_URL
+      ? new URL(process.env.NEXT_PUBLIC_MEDIA_URL).hostname
+      : null;
+  } catch {
+    throw new Error("NEXT_PUBLIC_MEDIA_URL must be a valid absolute URL");
+  }
+})();
 
 const withPWA = isCapacitor
   ? (config: NextConfig) => config
@@ -22,11 +31,16 @@ const nextConfig: NextConfig = {
   images: {
     ...(isCapacitor ? { unoptimized: true } : {}),
     remotePatterns: [
+      // Kept during migration so existing cover_url rows still render until
+      // scripts/migrate_supabase_storage_to_r2.py updates them.
       {
         protocol: "https",
         hostname: "*.supabase.co",
         pathname: "/storage/v1/object/public/**",
       },
+      ...(mediaHostname
+        ? [{ protocol: "https" as const, hostname: mediaHostname, pathname: "/**" }]
+        : []),
     ],
   },
   async headers() {

@@ -6,6 +6,19 @@ class Settings(BaseSettings):
     supabase_url: str
     supabase_service_key: str
     jwt_secret: str
+    # File/object storage lives in separate public/private Cloudflare R2
+    # buckets. Former Supabase bucket names remain top-level object prefixes.
+    r2_endpoint_url: Optional[str] = None
+    r2_access_key_id: Optional[str] = None
+    r2_secret_access_key: Optional[str] = None
+    r2_public_bucket_name: Optional[str] = None
+    r2_private_bucket_name: Optional[str] = None
+    r2_public_url: Optional[str] = None
+    # Temporary source credentials used only by storage migration tooling.
+    supabase_s3_endpoint: Optional[str] = None
+    supabase_s3_region: Optional[str] = None
+    supabase_s3_access_key_id: Optional[str] = None
+    supabase_s3_secret_access_key: Optional[str] = None
     allowed_origins: str = "http://localhost:3000"
     max_upload_size_mb: int = 50
     tts_voice_default: str = "vi-VN-HoaiMyNeural"

@@ -155,8 +155,8 @@ async def upload_book(
                 data=cover_content,
                 content_type=cover_content_type,  # type: ignore[arg-type]
             )
-            # ?v= makes any later cover REPLACEMENT at the same path a fresh
-            # CDN cache key (Supabase's CDN doesn't invalidate on upsert).
+            # ?v= makes any later cover replacement at the same path a fresh
+            # CDN cache key.
             return image_service.versioned_cover_url(url)
         except Exception as e:
             logger.warning(f"Cover upload failed for book {book_id}: {e}")

@@ -35,7 +35,8 @@
                           ↕  REST API
 ┌──────────────────────────────────────────────────────────────┐
 │  FastAPI Backend (Railway)                                   │
-│  Supabase PostgreSQL                                         │
+│  Supabase PostgreSQL + Cloudflare R2 object storage          │
+│  R2 public: covers/audio · R2 private: chapter text/uploads  │
 └──────────────────────────────────────────────────────────────┘
 ```
 

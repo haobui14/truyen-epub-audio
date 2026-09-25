@@ -3,77 +3,95 @@ import gzip
 import logging
 import random
 import time
-import httpx
-from storage3 import SyncStorageClient
+from urllib.parse import quote
+
+import boto3
+from botocore.config import Config
+from botocore.exceptions import (
+    ClientError,
+    ConnectTimeoutError,
+    ConnectionClosedError,
+    EndpointConnectionError,
+    ReadTimeoutError,
+)
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 CHAPTER_TEXT_BUCKET = "chapter-text"
+PUBLIC_BUCKETS = frozenset({"audio", "covers"})
 
-# Concurrency limit for any caller fanning storage requests through gather().
-# Higher values overwhelm storage3's shared HTTP/2 connection and Supabase
-# starts closing streams; 8 matches the value the bulk-migration script
-# proved stable for this workload.
+# Concurrency limit for callers fanning synchronous S3 requests through
+# asyncio.to_thread(). Eight keeps connection use modest during bulk imports.
 STORAGE_CONCURRENCY = 8
 
-_storage_client: SyncStorageClient | None = None
-_upload_client: httpx.Client | None = None
+_storage_client = None
 
 
-def _get_storage() -> SyncStorageClient:
-    """Return a dedicated storage client that always uses the service key."""
+def _require_r2_config() -> None:
+    missing = [
+        name
+        for name in (
+            "r2_endpoint_url",
+            "r2_access_key_id",
+            "r2_secret_access_key",
+            "r2_public_bucket_name",
+            "r2_private_bucket_name",
+            "r2_public_url",
+        )
+        if not getattr(settings, name, None)
+    ]
+    if missing:
+        raise RuntimeError(
+            "Cloudflare R2 is not configured; missing: " + ", ".join(missing)
+        )
+
+
+def _get_storage():
+    """Return the shared boto3 client for Cloudflare R2's S3 API."""
     global _storage_client
     if _storage_client is None:
-        headers = {
-            "apiKey": settings.supabase_service_key,
-            "Authorization": f"Bearer {settings.supabase_service_key}",
-        }
-        # Trailing slash required by storage3 >= 0.9 (it warns and auto-corrects
-        # otherwise, once per boot).
-        _storage_client = SyncStorageClient(
-            f"{settings.supabase_url}/storage/v1/", headers
+        _require_r2_config()
+        _storage_client = boto3.client(
+            "s3",
+            endpoint_url=settings.r2_endpoint_url.rstrip("/"),
+            aws_access_key_id=settings.r2_access_key_id,
+            aws_secret_access_key=settings.r2_secret_access_key,
+            region_name="auto",
+            config=Config(
+                signature_version="s3v4",
+                max_pool_connections=STORAGE_CONCURRENCY * 2,
+                # Application retries below provide consistent logging/backoff.
+                retries={"mode": "standard", "max_attempts": 1},
+            ),
         )
     return _storage_client
 
 
-def _get_direct_client() -> httpx.Client:
-    """Direct httpx client for uploads and chapter-text downloads. We bypass
-    storage3's upload path because its error handler calls `response.json()`
-    on non-2xx bodies and re-raises a bare `StorageException({'statusCode': N})`
-    when the body isn't JSON — Supabase's actual error message (e.g.
-    "Duplicate", "Payload too large") is discarded. Downloads go direct so we
-    can append a cache-busting query param (see _sync_download). Talking to
-    /storage/v1 directly lets us surface the response body in the exception.
+def _object_key(bucket: str, path: str = "") -> str:
+    """Map a former Supabase bucket + path into one physical R2 bucket."""
+    bucket = bucket.strip("/")
+    path = path.strip("/")
+    return f"{bucket}/{path}" if path else f"{bucket}/"
 
-    HTTP/1.1 (NOT HTTP/2): under our 8-way concurrent upload load, Supabase
-    Storage occasionally drops the connection. With HTTP/2 every concurrent
-    upload is multiplexed onto a single TCP connection, so one drop kills
-    every in-flight stream simultaneously (bursts of 8 RemoteProtocolError
-    warnings per disconnect). HTTP/1.1 gives each upload its own TCP socket,
-    so a server-side drop only impacts one request."""
-    global _upload_client
-    if _upload_client is None:
-        _upload_client = httpx.Client(
-            base_url=f"{settings.supabase_url}/storage/v1",
-            headers={
-                "apiKey": settings.supabase_service_key,
-                "Authorization": f"Bearer {settings.supabase_service_key}",
-            },
-            timeout=60.0,
-            http2=False,
-            limits=httpx.Limits(
-                max_connections=STORAGE_CONCURRENCY * 2,
-                max_keepalive_connections=STORAGE_CONCURRENCY * 2,
-            ),
-        )
-    return _upload_client
+
+def _physical_bucket(bucket: str) -> str:
+    _require_r2_config()
+    if bucket in PUBLIC_BUCKETS:
+        return settings.r2_public_bucket_name
+    return settings.r2_private_bucket_name
+
+
+def public_url(bucket: str, path: str) -> str:
+    """Return the public custom-domain URL for an R2 object."""
+    _require_r2_config()
+    if bucket not in PUBLIC_BUCKETS:
+        raise ValueError(f"Logical bucket {bucket!r} is private and has no public URL")
+    return f"{settings.r2_public_url.rstrip('/')}/{quote(_object_key(bucket, path), safe='/')}"
 
 
 class StorageUploadError(Exception):
-    """Raised when Supabase Storage returns a non-2xx on upload/download.
-    Carries the status code and the raw response body so logs name the
-    actual problem."""
+    """Raised when R2 returns an error for an object operation."""
 
     def __init__(self, status: int, body: str, bucket: str, path: str, op: str = "upload"):
         self.status = status
@@ -86,17 +104,15 @@ class StorageUploadError(Exception):
         )
 
 
-# storage3 is a sync SDK — calling it directly from `async def` blocks the
-# event loop, so asyncio.gather() over these calls gives zero concurrency.
-# Run every storage HTTP call on the default thread pool so gather() actually
-# fans out.
-#
-# Under load Supabase intermittently closes the HTTP/2 stream
-# (httpcore.RemoteProtocolError: Server disconnected). storage3 has a bug
-# where its error handler in _request references an unbound `response`
-# variable in that case, masking the real error as
-# `UnboundLocalError: cannot access local variable 'response'`. Treat that
-# UnboundLocalError as a transient network failure and retry with backoff.
+def _r2_error(exc: ClientError, bucket: str, path: str, op: str) -> StorageUploadError:
+    response = exc.response or {}
+    status = int((response.get("ResponseMetadata") or {}).get("HTTPStatusCode") or 500)
+    error = response.get("Error") or {}
+    body = ": ".join(str(v) for v in (error.get("Code"), error.get("Message")) if v)
+    return StorageUploadError(status, body or str(exc), bucket, path, op=op)
+
+
+# boto3 is synchronous, so async entry points run it in the default thread pool.
 
 _RETRY_MAX_ATTEMPTS = 4
 _TRANSIENT_HTTP_STATUSES = frozenset({408, 425, 429, 500, 502, 503, 504})
@@ -105,16 +121,14 @@ _TRANSIENT_HTTP_STATUSES = frozenset({408, 425, 429, 500, 502, 503, 504})
 def _is_transient(exc: BaseException) -> bool:
     if isinstance(exc, StorageUploadError):
         return exc.status in _TRANSIENT_HTTP_STATUSES
-    # httpx network/transport errors (connect, read, write, protocol) — but
-    # NOT HTTPStatusError, which we never raise here anyway.
-    if isinstance(exc, httpx.TransportError):
+    if isinstance(
+        exc,
+        (EndpointConnectionError, ConnectionClosedError, ReadTimeoutError, ConnectTimeoutError),
+    ):
         return True
-    if isinstance(exc, UnboundLocalError):
-        return "response" in str(exc)
     msg = str(exc).lower()
     return (
         "server disconnected" in msg
-        or "remoteprotocolerror" in msg
         or "connection" in msg and ("reset" in msg or "closed" in msg or "aborted" in msg)
         or "timeout" in msg
         or "timed out" in msg
@@ -145,10 +159,8 @@ def _retry_sync(fn, *args, what: str = "storage op", **kwargs):
 
 
 # ── Chapter-text gzip (de)compression ─────────────────────────────────────────
-# Chapter text is stored gzip-compressed (~3x smaller) but with Content-Type
-# "application/gzip" and NO Content-Encoding header — storage3/httpx would
-# auto-decompress a Content-Encoding: gzip response, defeating app-level control.
-# So Supabase serves the raw gzip bytes back and we (de)compress explicitly.
+# Chapter text is stored gzip-compressed (~3x smaller) with Content-Type
+# "application/gzip" and no Content-Encoding header, so R2 returns raw bytes.
 # Detection is by magic bytes so legacy plain-UTF-8 objects (uploaded before
 # compression was added) keep reading correctly forever.
 
@@ -180,62 +192,117 @@ def _sync_upload(
     cache_control: str | None = None,
 ) -> None:
     def _do() -> None:
-        headers = {
-            "Content-Type": content_type,
-            "x-upsert": "true",
+        kwargs = {
+            "Bucket": _physical_bucket(bucket),
+            "Key": _object_key(bucket, path),
+            "Body": data,
+            "ContentType": content_type,
         }
-        if cache_control:
-            # Stored verbatim as the object's cacheControl metadata and served
-            # back on downloads — "no-cache" makes Supabase's CDN revalidate
-            # instead of serving a stale copy after an upsert.
-            headers["Cache-Control"] = cache_control
-        resp = _get_direct_client().post(
-            f"/object/{bucket}/{path}",
-            content=data,
-            headers=headers,
-        )
-        if resp.status_code >= 400:
-            raise StorageUploadError(resp.status_code, resp.text, bucket, path)
+        effective_cache_control = cache_control
+        if effective_cache_control is None and bucket in PUBLIC_BUCKETS:
+            # Public object paths are content-addressed in practice; cover
+            # replacements append a new ?v= URL in the database.
+            effective_cache_control = "public, max-age=31536000, immutable"
+        if effective_cache_control:
+            kwargs["CacheControl"] = effective_cache_control
+        try:
+            _get_storage().put_object(**kwargs)
+        except ClientError as exc:
+            raise _r2_error(exc, bucket, path, "upload") from exc
     _retry_sync(_do, what=f"upload {bucket}/{path}")
 
 
 def _sync_download(bucket: str, path: str, version: str | None = None) -> bytes:
-    """GET an object directly. Supabase serves storage downloads through its
-    CDN, which caches per-URL and does NOT invalidate on upsert — after an
-    admin edit the old chapter text kept being served from the CDN until its
-    TTL expired. `version` (the chapter row's updated_at) is appended as a
-    query param so every rewrite reads from a fresh cache key."""
+    """Download an object from R2. `version` remains API-compatible but is not
+    needed because backend reads use the authenticated S3 endpoint, not CDN."""
     def _do() -> bytes:
-        resp = _get_direct_client().get(
-            f"/object/{bucket}/{path}",
-            params={"v": version} if version else None,
-        )
-        if resp.status_code >= 400:
-            raise StorageUploadError(
-                resp.status_code, resp.text, bucket, path, op="download"
+        try:
+            response = _get_storage().get_object(
+                Bucket=_physical_bucket(bucket),
+                Key=_object_key(bucket, path),
             )
-        return resp.content
+            return response["Body"].read()
+        except ClientError as exc:
+            raise _r2_error(exc, bucket, path, "download") from exc
     return _retry_sync(_do, what=f"download {bucket}/{path}")
 
 
 def _sync_remove(bucket: str, paths: list[str]) -> None:
-    _retry_sync(
-        lambda: _get_storage().from_(bucket).remove(paths),
-        what=f"remove {bucket} ({len(paths)} files)",
-    )
+    for start in range(0, len(paths), 1000):
+        batch = paths[start:start + 1000]
+
+        def _do(items: list[str] = batch) -> None:
+            try:
+                response = _get_storage().delete_objects(
+                    Bucket=_physical_bucket(bucket),
+                    Delete={
+                        "Objects": [{"Key": _object_key(bucket, path)} for path in items],
+                        "Quiet": True,
+                    },
+                )
+            except ClientError as exc:
+                raise _r2_error(exc, bucket, items[0] if items else "", "delete") from exc
+            errors = response.get("Errors") or []
+            if errors:
+                first = errors[0]
+                raise StorageUploadError(
+                    500,
+                    f"{first.get('Code')}: {first.get('Message')}",
+                    bucket,
+                    first.get("Key") or items[0],
+                    op="delete",
+                )
+
+        _retry_sync(_do, what=f"remove {bucket} ({len(batch)} files)")
 
 
 def _sync_list(bucket: str, prefix: str, *, limit: int = 1000, offset: int = 0) -> list[dict]:
-    # storage3's default is limit=100, which silently truncates listings for
-    # any book with >100 chapters. Pass an explicit large page size; callers
-    # that need all results must still paginate.
-    return _retry_sync(
-        lambda: _get_storage().from_(bucket).list(
-            prefix,
-            {"limit": limit, "offset": offset, "sortBy": {"column": "name", "order": "asc"}},
-        ),
-        what=f"list {bucket}/{prefix}",
-    )
+    """List one logical directory and emulate Supabase Storage's result shape."""
+    base = _object_key(bucket, prefix).rstrip("/") + "/"
+
+    def _do() -> list[dict]:
+        entries: list[dict] = []
+        token: str | None = None
+        wanted = offset + limit
+        while len(entries) < wanted:
+            kwargs = {
+                "Bucket": _physical_bucket(bucket),
+                "Prefix": base,
+                "Delimiter": "/",
+                "MaxKeys": min(1000, max(1, wanted - len(entries))),
+            }
+            if token:
+                kwargs["ContinuationToken"] = token
+            try:
+                response = _get_storage().list_objects_v2(**kwargs)
+            except ClientError as exc:
+                raise _r2_error(exc, bucket, prefix, "list") from exc
+
+            page: list[dict] = []
+            for folder in response.get("CommonPrefixes") or []:
+                name = folder["Prefix"][len(base):].rstrip("/")
+                if name:
+                    page.append({"name": name, "id": None, "metadata": None})
+            for obj in response.get("Contents") or []:
+                key = obj["Key"]
+                if key == base:  # ignore an optional directory marker
+                    continue
+                name = key[len(base):]
+                if name and "/" not in name:
+                    page.append({
+                        "name": name,
+                        "id": (obj.get("ETag") or key).strip('"'),
+                        "metadata": {"size": obj.get("Size") or 0},
+                    })
+            entries.extend(sorted(page, key=lambda item: item["name"]))
+            if not response.get("IsTruncated"):
+                break
+            token = response.get("NextContinuationToken")
+            if not token:
+                break
+        return entries[offset:wanted]
+
+    return _retry_sync(_do, what=f"list {bucket}/{prefix}")
 
 
 async def upload_bytes(
@@ -244,9 +311,11 @@ async def upload_bytes(
     data: bytes,
     content_type: str = "application/octet-stream",
 ) -> str:
-    """Upload bytes to Supabase Storage and return public URL."""
+    """Upload bytes to R2 and return the public custom-domain URL."""
     await asyncio.to_thread(_sync_upload, bucket, path, data, content_type)
-    return _get_storage().from_(bucket).get_public_url(path)
+    if bucket in PUBLIC_BUCKETS:
+        return public_url(bucket, path)
+    return f"r2://{_physical_bucket(bucket)}/{_object_key(bucket, path)}"
 
 
 async def upload_file(
@@ -255,7 +324,7 @@ async def upload_file(
     file_path: str,
     content_type: str = "audio/mpeg",
 ) -> str:
-    """Upload a local file to Supabase Storage and return public URL."""
+    """Upload a local file to R2 and return its public URL."""
     with open(file_path, "rb") as f:
         data = f.read()
     return await upload_bytes(bucket, path, data, content_type)
@@ -282,9 +351,7 @@ async def upload_chapter_text(book_id: str, chapter_id: str, text: str) -> str:
 
 
 async def download_chapter_text(path: str, version: str | None = None) -> str:
-    """`version` (chapters.updated_at) cache-busts Supabase's CDN — see
-    _sync_download. Pass it whenever the caller has the row's updated_at;
-    without it an upserted object can be served stale until the CDN TTL."""
+    """Download and decode a gzip or legacy plain-text chapter object."""
     data = await asyncio.to_thread(_sync_download, CHAPTER_TEXT_BUCKET, path, version)
     # New objects are gzip (magic 1f 8b); legacy objects are plain UTF-8 and skip
     # the gunzip branch — byte-identical to the pre-compression behaviour.
@@ -294,7 +361,7 @@ async def download_chapter_text(path: str, version: str | None = None) -> str:
 
 
 async def get_chapter_text(chapter_id: str) -> str:
-    """Fetch chapter text by ID from Supabase Storage via text_storage_path.
+    """Fetch chapter text by ID from R2 via text_storage_path.
     Returns empty string if no path set or download fails.
 
     Note: This issues a DB query to resolve text_storage_path. Callers that
@@ -353,7 +420,7 @@ async def delete_chapter_text(book_id: str, chapter_id: str) -> None:
 
 
 async def delete_path(bucket: str, path: str) -> None:
-    """Delete a file from Supabase Storage."""
+    """Delete a file from R2."""
     try:
         await asyncio.to_thread(_sync_remove, bucket, [path])
     except Exception as e:
@@ -361,9 +428,7 @@ async def delete_path(bucket: str, path: str) -> None:
 
 
 async def delete_folder(bucket: str, prefix: str) -> None:
-    """Delete every file under a prefix in Supabase Storage. Paginates until
-    the listing is empty, since Supabase caps each list() page at 1000 items
-    and a book with N chapters has N files in chapter-text/ and audio/."""
+    """Delete every file immediately under a logical R2 prefix."""
     PAGE = 1000
     try:
         while True:
