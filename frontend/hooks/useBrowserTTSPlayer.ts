@@ -10,6 +10,9 @@ import { splitIntoChunks } from "@/lib/textChunks";
  *
  * - Windows: "Microsoft An" (offline, once the Vietnamese language pack is
  *   installed) + Edge's online Natural voices (HoaiMy/NamMinh).
+ * - Desktop Chrome: Google's own vi voices once the user enables Tiếng Việt
+ *   in Reading mode's "Read aloud" (see isGoogleEngineVoice). Preferred over
+ *   everything else — it's the Android voice pack.
  * - Android browsers (PWA in Chrome, NOT the Capacitor APK): the device's
  *   Google TTS voices — the same ones the native app uses.
  *
@@ -29,6 +32,53 @@ export interface BrowserVoiceOption {
   value: string;
   /** Label for the picker, e.g. "Microsoft An" or "HoaiMy · mạng". */
   label: string;
+  /** Google's own voice (Chrome's Reading-mode engine) — see isGoogleEngineVoice. */
+  google: boolean;
+}
+
+/**
+ * Desktop Chrome's Reading mode ("Read aloud") installs Google's speech
+ * engine as a built-in extension. For Vietnamese it downloads the Android
+ * Google TTS voice pack (dl.google.com/android/tts/…/vi-vn-x-multi*.zvoice)
+ * and registers its speakers for every page: "Google Tiếng Việt 1–5
+ * (Natural)" (newer model) and "Chrome OS Tiếng Việt 1–5" (older one).
+ * Speaker 2 is `vic`, Android's default vi-VN voice — what Samsung phones
+ * read with through Google TTS. Callers pass vi voices only; Chrome's other
+ * "Google …" voices (network, English etc.) never reach here.
+ */
+function isGoogleEngineVoice(name: string): boolean {
+  return /^(Google|Chrome OS)\b/i.test(name);
+}
+
+/** Picker order and default preference, lowest first: Google Natural
+ * (speaker 2 ahead of its siblings), the older Google pack (same order),
+ * other offline voices ("Microsoft An"), then network ones (Edge). */
+export function browserVoiceRank(
+  v: Pick<SpeechSynthesisVoice, "name" | "localService">,
+): number {
+  if (isGoogleEngineVoice(v.name)) {
+    const model = /natural/i.test(v.name) ? 0 : 2;
+    const speaker = /\s2(\s|$)/.test(v.name) ? 0 : 1;
+    return model + speaker;
+  }
+  return v.localService ? 4 : 5;
+}
+
+/** Real Google Chrome on a desktop OS — the only browser whose Reading mode
+ * can install the Google vi voices. Checked via userAgentData brands because
+ * Edge/Brave/Opera/Electron all claim "Chrome" in the UA string. */
+export function isDesktopGoogleChrome(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const uaData = (
+    navigator as Navigator & {
+      userAgentData?: { brands?: { brand: string }[]; mobile?: boolean };
+    }
+  ).userAgentData;
+  return (
+    !!uaData &&
+    !uaData.mobile &&
+    !!uaData.brands?.some((b) => b.brand === "Google Chrome")
+  );
 }
 
 /** True when this runtime can speak through the Web Speech API. The native
@@ -56,10 +106,11 @@ function listViVoices(): SpeechSynthesisVoice[] {
 }
 
 /** Preferred fallback when no specific voice is picked or the picked one
- * disappeared (e.g. language pack removed): first offline vi voice, else any. */
+ * disappeared (e.g. language pack removed): best-ranked vi voice. */
 function pickDefaultViVoice(): SpeechSynthesisVoice | null {
   const vi = listViVoices();
-  return vi.find((v) => v.localService) ?? vi[0] ?? null;
+  vi.sort((a, b) => browserVoiceRank(a) - browserVoiceRank(b));
+  return vi[0] ?? null;
 }
 
 function resolveVoice(value: string | null | undefined): SpeechSynthesisVoice | null {
@@ -103,16 +154,17 @@ export function useBrowserTTSVoices(): BrowserVoiceOption[] {
       if (cancelled) return;
       const vi = listViVoices();
       if (vi.length === 0) return;
-      // Offline (local) voices first, then stable by name — mirrors the
-      // Android picker's ordering.
+      // Google's voices first, then offline before network, then stable by
+      // name — mirrors the Android picker's ordering.
       vi.sort(
         (a, b) =>
-          Number(!a.localService) - Number(!b.localService) ||
+          browserVoiceRank(a) - browserVoiceRank(b) ||
           a.name.localeCompare(b.name),
       );
       const next = vi.map((v, i) => ({
         value: `browser:voice:${v.voiceURI}`,
         label: browserVoiceLabel(v, i + 1),
+        google: isGoogleEngineVoice(v.name),
       }));
       setVoices((prev) =>
         JSON.stringify(prev) === JSON.stringify(next) ? prev : next,

@@ -7,7 +7,10 @@ import {
   useNativeTTSAvailable,
   useNativeTTSVoices,
 } from "@/hooks/useNativeTTSPlayer";
-import { useBrowserTTSVoices } from "@/hooks/useBrowserTTSPlayer";
+import {
+  isDesktopGoogleChrome,
+  useBrowserTTSVoices,
+} from "@/hooks/useBrowserTTSPlayer";
 import { getTtsBridge } from "@/lib/backgroundLock";
 import { Sheet } from "@/components/ui/Sheet";
 
@@ -684,6 +687,19 @@ export function SpeechPlayer() {
               </div>
             </>
           )}
+          {!isNative &&
+            isDesktopGoogleChrome() &&
+            !browserVoices.some((v) => v.google) && (
+              <p className="mt-3 text-xs leading-relaxed text-text-mute">
+                Muốn giọng Google giống trên điện thoại Android? Trong Chrome,
+                mở một bài viết bất kỳ ở{" "}
+                <span className="text-text-dim">Chế độ đọc (Reading mode)</span>
+                , bấm biểu tượng giọng đọc →{" "}
+                <span className="text-text-dim">Ngôn ngữ (Languages)</span> →
+                bật <span className="text-text-dim">Tiếng Việt</span>. Giọng
+                “Google Tiếng Việt” sẽ hiện ở đây sau khi tải xong.
+              </p>
+            )}
         </Sheet>
       )}
 

@@ -35,6 +35,7 @@ import { useSpeechPlayer } from "@/hooks/useSpeechPlayer";
 import { useNativeTTSPlayer } from "@/hooks/useNativeTTSPlayer";
 import {
   useBrowserTTSPlayer,
+  useBrowserTTSVoices,
   browserTTSSupported,
 } from "@/hooks/useBrowserTTSPlayer";
 import { isNativePlatform } from "@/lib/capacitor";
@@ -252,6 +253,20 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
   // Use a ref so the stable callback can always see the latest playerState
   const playerStateRef = useRef(playerState);
   playerStateRef.current = playerState;
+
+  // Desktop Chrome with Google's vi voices installed (Reading mode → Read
+  // aloud → Tiếng Việt): make them the default — same voice pack as Android's
+  // Google TTS, i.e. what Samsung phones read with. Only until the listener
+  // picks a voice themselves (setVoice persists that), never mid-playback,
+  // and not persisted, so the default falls back to HoaiMy if Chrome later
+  // removes the voices.
+  const googleBrowserVoice = useBrowserTTSVoices().find((v) => v.google)?.value;
+  useEffect(() => {
+    if (!googleBrowserVoice || isNativePlatform()) return;
+    if (localStorage.getItem(VOICE_STORAGE_KEY)) return;
+    if (playerStateRef.current.isPlaying) return;
+    setVoiceState(googleBrowserVoice);
+  }, [googleBrowserVoice]);
 
   // ── Sync playback rate & pitch with user account ──
   const settingsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
