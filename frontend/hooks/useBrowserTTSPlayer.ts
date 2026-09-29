@@ -296,6 +296,13 @@ export function useBrowserTTSPlayer(
     if (/android/i.test(ua) || !/chrome|edg/i.test(ua)) return;
     const id = setInterval(() => {
       const synth = window.speechSynthesis;
+      // Never nudge Chrome's Google engine: its onResume is dropped while
+      // onPause's AudioContext.suspend() is still pending, so a back-to-back
+      // pause+resume leaves the audio suspended for good (no end/error
+      // event — playback just goes silent). It synthesizes locally and has
+      // no 15s cutoff to work around.
+      const v = utteranceRef.current?.voice;
+      if (v && isGoogleEngineVoice(v.name)) return;
       if (!stoppedRef.current && synth.speaking && !synth.paused) {
         synth.pause();
         synth.resume();

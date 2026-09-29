@@ -600,7 +600,8 @@ export function SpeechPlayer() {
               </button>
             ))}
           </div>
-          {voice.startsWith("native:") && (
+          {/* Device voices only — backend (edge-tts) audio has no pitch control. */}
+          {(voice.startsWith("native:") || voice.startsWith("browser:")) && (
             <div className="pt-2 border-t border-hairline-soft">
               <p className="font-mono text-[10px] tracking-widest uppercase text-text-faint mb-2">
                 Tông ·{" "}

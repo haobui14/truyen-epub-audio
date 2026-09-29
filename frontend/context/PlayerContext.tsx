@@ -271,14 +271,18 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
   // ── Sync playback rate & pitch with user account ──
   const settingsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 1. Apply localStorage values on mount (instant, before backend query returns)
+  // 1. Apply localStorage values on mount (instant, before backend query
+  // returns) — and again whenever playback moves to another engine: each
+  // engine keeps its own rate/pitch, so a backend ↔ browser voice switch (or
+  // the Google-voice default above) would otherwise start over at 1×.
+  const engine = isNativeVoice ? "native" : isBrowserVoice ? "browser" : "backend";
   useEffect(() => {
     const storedRate = localStorage.getItem(RATE_STORAGE_KEY);
     const storedPitch = localStorage.getItem(PITCH_STORAGE_KEY);
     if (storedRate) playerStateRef.current.changeRate(parseFloat(storedRate));
     if (storedPitch)
       playerStateRef.current.changePitch(parseFloat(storedPitch));
-  }, []);
+  }, [engine]);
 
   // 2. Fetch settings from backend when logged in
   const { data: userSettings } = useQuery({
