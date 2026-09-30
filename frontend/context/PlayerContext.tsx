@@ -35,6 +35,7 @@ import { useSpeechPlayer } from "@/hooks/useSpeechPlayer";
 import { useNativeTTSPlayer } from "@/hooks/useNativeTTSPlayer";
 import {
   useBrowserTTSPlayer,
+  useBrowserTTSVoices,
   browserTTSSupported,
 } from "@/hooks/useBrowserTTSPlayer";
 import { isNativePlatform } from "@/lib/capacitor";
@@ -253,17 +254,35 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
   const playerStateRef = useRef(playerState);
   playerStateRef.current = playerState;
 
+  // Desktop Chrome with Google's vi voices installed (Reading mode → Read
+  // aloud → Tiếng Việt): make them the default — same voice pack as Android's
+  // Google TTS, i.e. what Samsung phones read with. Only until the listener
+  // picks a voice themselves (setVoice persists that), never mid-playback,
+  // and not persisted, so the default falls back to HoaiMy if Chrome later
+  // removes the voices.
+  const googleBrowserVoice = useBrowserTTSVoices().find((v) => v.google)?.value;
+  useEffect(() => {
+    if (!googleBrowserVoice || isNativePlatform()) return;
+    if (localStorage.getItem(VOICE_STORAGE_KEY)) return;
+    if (playerStateRef.current.isPlaying) return;
+    setVoiceState(googleBrowserVoice);
+  }, [googleBrowserVoice]);
+
   // ── Sync playback rate & pitch with user account ──
   const settingsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 1. Apply localStorage values on mount (instant, before backend query returns)
+  // 1. Apply localStorage values on mount (instant, before backend query
+  // returns) — and again whenever playback moves to another engine: each
+  // engine keeps its own rate/pitch, so a backend ↔ browser voice switch (or
+  // the Google-voice default above) would otherwise start over at 1×.
+  const engine = isNativeVoice ? "native" : isBrowserVoice ? "browser" : "backend";
   useEffect(() => {
     const storedRate = localStorage.getItem(RATE_STORAGE_KEY);
     const storedPitch = localStorage.getItem(PITCH_STORAGE_KEY);
     if (storedRate) playerStateRef.current.changeRate(parseFloat(storedRate));
     if (storedPitch)
       playerStateRef.current.changePitch(parseFloat(storedPitch));
-  }, []);
+  }, [engine]);
 
   // 2. Fetch settings from backend when logged in
   const { data: userSettings } = useQuery({
