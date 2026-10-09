@@ -538,6 +538,10 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
         return;
       }
       if (!bookId || !chapterId) return;
+      const predatesReset = () => ts <= Number(
+        localStorage.getItem(`progress-reset-ts:${bookId}`) ?? 0,
+      );
+      if (predatesReset()) return;
 
       // 1. Device-local pointers — synchronous, so a BookDetail mounted right
       //    after sees fresh values. Never regress a newer pointer.
@@ -569,7 +573,7 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
         const cached = await getCachedAllChapters(bookId).catch(() => null);
         chapters = cached?.items ?? [];
       }
-      if (cancelled) return;
+      if (cancelled || predatesReset()) return;
       const ch = chapters.find((c) => c.id === chapterId);
       if (ch) {
         saveLocalBookProgress({

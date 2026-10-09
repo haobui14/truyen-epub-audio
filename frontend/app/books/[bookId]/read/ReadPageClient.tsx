@@ -1331,14 +1331,18 @@ export default function ReadPage() {
           the reader theme rather than the app palette so it doesn't clash on
           sepia / neon / warm. */}
       {/* Same width as the text column so the title lines up with the first
-          paragraph instead of hanging off to the left of it. */}
-      <h1
-        id="reader-chapter-title"
-        className="mx-auto mb-6 w-full text-balance text-lg font-semibold leading-snug sm:text-xl"
-        style={{ color: effectiveTheme.text, maxWidth: `${contentWidth}ch` }}
-      >
-        {currentChapter.title}
-      </h1>
+          paragraph. The width has to sit on this wrapper, not on the h1: `ch`
+          is relative to the element's OWN font, and the larger heading font
+          made the title's box 132px wider, hanging it off to the left. */}
+      <div className="mx-auto w-full" style={{ maxWidth: `${contentWidth}ch` }}>
+        <h1
+          id="reader-chapter-title"
+          className="mb-6 text-balance text-lg font-semibold leading-snug sm:text-xl"
+          style={{ color: effectiveTheme.text }}
+        >
+          {currentChapter.title}
+        </h1>
+      </div>
 
       <div ref={pullTargetRef} className="mx-auto" style={{ maxWidth: `${contentWidth}ch` }}>
       {/* Reading content — no card; inherits the page's theme bg so the

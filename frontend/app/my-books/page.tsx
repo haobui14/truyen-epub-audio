@@ -2,10 +2,18 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { isLoggedIn } from "@/lib/auth";
-import { getCachedMyBooks, setCachedMyBooks } from "@/lib/progressQueue";
+import {
+  getCachedMyBooks,
+  resetLocalBookProgress,
+  setCachedMyBooks,
+  withProgressQueuePaused,
+} from "@/lib/progressQueue";
+import { getTtsBridge } from "@/lib/backgroundLock";
+import { usePlayerContext } from "@/context/PlayerContext";
+import { ActionButton } from "@/components/ui/Button";
 import { AsyncState } from "@/components/ui/AsyncState";
 import { ConnectivityStatus } from "@/components/ui/ConnectivityStatus";
 import type { MyBookProgressEntry } from "@/types";
@@ -34,7 +42,17 @@ function ProgressBar({ value, total }: { value: number; total?: number }) {
   );
 }
 
-function BookRow({ entry }: { entry: MyBookProgressEntry }) {
+function BookRow({
+  entry,
+  onReset,
+  resetting,
+  resetDisabled,
+}: {
+  entry: MyBookProgressEntry;
+  onReset: () => void;
+  resetting: boolean;
+  resetDisabled: boolean;
+}) {
   const { book, chapter, progress_value, total_value, updated_at } = entry;
   const href = `/listen?id=${book.id}&chapter=${chapter.id}`;
   const readHref = `/read?id=${book.id}&chapter=${chapter.id}`;
@@ -44,7 +62,7 @@ function BookRow({ entry }: { entry: MyBookProgressEntry }) {
       : null;
 
   return (
-    <div className="group relative flex gap-3 rounded-xl border border-hairline-soft bg-surface p-3 transition-[border-color,box-shadow] hover:border-accent/40 hover:shadow-md">
+    <div className="group relative flex flex-wrap gap-x-3 rounded-xl border border-hairline-soft bg-surface p-3 transition-[border-color,box-shadow] hover:border-accent/40 hover:shadow-md">
       <Link href={href} className="flex gap-3 flex-1 min-w-0">
       {/* Cover */}
       <div className="image-outline relative h-[4.67rem] w-14 shrink-0 overflow-hidden rounded-lg bg-linear-to-br from-raised to-raised-hi">
@@ -146,12 +164,96 @@ function BookRow({ entry }: { entry: MyBookProgressEntry }) {
           </svg>
         </Link>
       </div>
+      <div className="mt-2 flex basis-full justify-end border-t border-hairline-soft pt-2">
+        <ActionButton
+          variant="ghost"
+          className="rounded-lg px-3 text-xs"
+          aria-label={`Xóa tiến độ truyện ${book.title}`}
+          title="Đặt lại về chương 1"
+          onClick={onReset}
+          loading={resetting}
+          disabled={resetDisabled}
+          icon={
+            <svg
+              aria-hidden="true"
+              className="size-4"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.8}
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 10a9 9 0 1 1 2.6 8.4M3 4v6h6" />
+            </svg>
+          }
+        >
+          {resetting ? "Đang xóa tiến độ…" : "Xóa tiến độ truyện"}
+        </ActionButton>
+      </div>
     </div>
   );
 }
 
 export default function MyBooksPage() {
   const [loggedIn, setLoggedIn] = useState(() => isLoggedIn());
+  const queryClient = useQueryClient();
+  const { session, clearTrack } = usePlayerContext();
+  const resetMutation = useMutation({
+    mutationFn: async (entry: MyBookProgressEntry) => {
+      const chapters = await api.getBookChapters(entry.book.id, 1, 1);
+      const firstChapter = chapters.items[0];
+      if (!firstChapter) throw new Error("Truyện chưa có chương để đặt lại.");
+
+      // A background player for this book must not restore the old position.
+      const bridge = getTtsBridge();
+      if (session.bookId === entry.book.id || bridge?.getCurrentBookId?.() === entry.book.id) {
+        bridge?.stopPlayback();
+        bridge?.clearNextChapter();
+        bridge?.setPendingChapters?.("[]", "", "");
+        clearTrack();
+      }
+
+      return withProgressQueuePaused(async () => {
+        const saved = await api.saveProgress({
+          book_id: entry.book.id,
+          chapter_id: firstChapter.id,
+          progress_value: 0,
+        });
+        const resetEntry: MyBookProgressEntry = {
+          ...entry,
+          chapter: {
+            id: firstChapter.id,
+            chapter_index: firstChapter.chapter_index,
+            title: firstChapter.title,
+          },
+          progress_value: 0,
+          total_value: undefined,
+          updated_at: saved.updated_at,
+        };
+        await resetLocalBookProgress(resetEntry);
+        return resetEntry;
+      });
+    },
+    onSuccess: (entry) => {
+      const replaceEntry = (entries: MyBookProgressEntry[]) =>
+        entries.map((current) =>
+          current.book.id === entry.book.id ? entry : current,
+        );
+      queryClient.setQueryData<MyBookProgressEntry[]>(["my-books"], (current) =>
+        current ? replaceEntry(current) : current,
+      );
+      queryClient.setQueryData<{ entries: MyBookProgressEntry[]; cached: boolean }>(
+        ["my-books", "offline-aware-page"],
+        (current) => current
+          ? { ...current, entries: replaceEntry(current.entries) }
+          : current,
+      );
+      queryClient.removeQueries({ queryKey: ["progress", entry.book.id] });
+      void queryClient.invalidateQueries({
+        queryKey: ["bookProgress", entry.book.id],
+      });
+      void queryClient.invalidateQueries({ queryKey: ["my-books"] });
+    },
+  });
 
   useEffect(() => {
     const h = () => setLoggedIn(isLoggedIn());
@@ -261,9 +363,29 @@ export default function MyBooksPage() {
         />
       )}
 
+      {resetMutation.isError && (
+        <p role="alert" className="mb-3 text-sm text-vermillion">
+          Không thể đặt lại tiến độ. Vui lòng thử lại khi có kết nối mạng.
+        </p>
+      )}
+      {resetMutation.isSuccess && (
+        <p role="status" className="mb-3 text-sm text-text-mute">
+          Đã đặt lại “{resetMutation.data.book.title}” về chương 1.
+        </p>
+      )}
+
       <div className="space-y-2.5">
         {entries.map((entry) => (
-          <BookRow key={entry.book.id} entry={entry} />
+          <BookRow
+            key={entry.book.id}
+            entry={entry}
+            onReset={() => resetMutation.mutate(entry)}
+            resetting={
+              resetMutation.isPending &&
+              resetMutation.variables.book.id === entry.book.id
+            }
+            resetDisabled={resetMutation.isPending}
+          />
         ))}
       </div>
     </div>

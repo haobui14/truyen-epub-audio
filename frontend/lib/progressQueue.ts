@@ -182,6 +182,79 @@ export async function getLocalBookProgress(
   }
 }
 
+/** Explicit resets bypass the usual forward-only book progress guard. */
+export async function resetLocalBookProgress(
+  entry: MyBookProgressEntry,
+): Promise<void> {
+  // The native last-listened snapshot can outlive a stopped player session.
+  // Keep a timestamp so foreground reconciliation cannot replay it after reset.
+  try {
+    const resetAt = Date.now();
+    localStorage.setItem(`progress-reset-ts:${entry.book.id}`, String(resetAt));
+    localStorage.setItem(`listen-chapter:${entry.book.id}`, entry.chapter.id);
+    localStorage.setItem(`listen-chapter-ts:${entry.book.id}`, String(resetAt));
+  } catch {}
+
+  try {
+    const db = await openOfflineDB();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(
+        [LOCAL_STORE, STORE_NAME, MY_BOOKS_CACHE_STORE],
+        "readwrite",
+      );
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+
+      // Drop every old chapter position and pending sync for this book only.
+      for (const storeName of [LOCAL_STORE, STORE_NAME]) {
+        const store = tx.objectStore(storeName);
+        const req = store.openCursor();
+        req.onsuccess = () => {
+          const cursor = req.result;
+          if (cursor) {
+            if (cursor.value.book_id === entry.book.id) cursor.delete();
+            cursor.continue();
+            return;
+          }
+          if (storeName === LOCAL_STORE) {
+            const progress = {
+              book_id: entry.book.id,
+              chapter_id: entry.chapter.id,
+              progress_value: 0,
+              updated_at: new Date(entry.updated_at).getTime(),
+            };
+            store.put({
+              ...progress,
+              id: `${entry.book.id}:${entry.chapter.id}`,
+            });
+            store.put({
+              ...progress,
+              id: `book:${entry.book.id}`,
+              chapter_index: entry.chapter.chapter_index,
+            });
+          }
+        };
+      }
+
+      const cache = tx.objectStore(MY_BOOKS_CACHE_STORE);
+      const req = cache.get(MY_BOOKS_CACHE_KEY);
+      req.onsuccess = () => {
+        if (Array.isArray(req.result)) {
+          cache.put(
+            req.result.map((cached: MyBookProgressEntry) =>
+              cached.book.id === entry.book.id ? entry : cached,
+            ),
+            MY_BOOKS_CACHE_KEY,
+          );
+        }
+      };
+    });
+  } catch {
+    // Device storage is optional; the server reset has already succeeded.
+  }
+}
+
 /**
  * Sync local book progress to the server for a given book.
  * Pushes local progress only if its chapter_index > the server's.
@@ -280,7 +353,40 @@ export async function getCachedMyBooks(): Promise<MyBookProgressEntry[] | null> 
   }
 }
 
-export async function flushProgressQueue(): Promise<number> {
+let activeProgressFlush: Promise<number> | null = null;
+let progressFlushPauses = 0;
+let deferredProgressFlush = false;
+
+/** Finish older uploads before a reset, and defer new uploads until it completes. */
+export async function withProgressQueuePaused<T>(
+  reset: () => Promise<T>,
+): Promise<T> {
+  progressFlushPauses++;
+  try {
+    await activeProgressFlush;
+    return await reset();
+  } finally {
+    progressFlushPauses--;
+    if (progressFlushPauses === 0 && deferredProgressFlush) {
+      deferredProgressFlush = false;
+      void flushProgressQueue();
+    }
+  }
+}
+
+export function flushProgressQueue(): Promise<number> {
+  if (activeProgressFlush) return activeProgressFlush;
+  if (progressFlushPauses > 0) {
+    deferredProgressFlush = true;
+    return Promise.resolve(0);
+  }
+  activeProgressFlush = flushStoredProgress().finally(() => {
+    activeProgressFlush = null;
+  });
+  return activeProgressFlush;
+}
+
+async function flushStoredProgress(): Promise<number> {
   try {
     const db = await openOfflineDB();
     const entries = await new Promise<QueuedProgress[]>((resolve) => {

@@ -10,6 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:mobile": "playwright test",
+    "brand:assets": "node scripts/generate-brand-assets.mjs",
     "build:cap": "cross-env BUILD_TARGET=capacitor next build --webpack",
     "cap:sync": "npx cap sync",
     "cap:android": "pnpm build:cap && npx cap sync && npx cap open android"
