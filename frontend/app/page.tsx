@@ -5,6 +5,7 @@ import { useMemo, useState, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { getCachedBooks, cacheBooks } from "@/lib/bookCache";
+import { getRecentlyUpdatedBooks } from "@/lib/bookUpdates";
 import { isAdmin, isLoggedIn } from "@/lib/auth";
 import { SpotlightCard } from "@/components/books/SpotlightCard";
 import { BookScrollRow } from "@/components/books/BookScrollRow";
@@ -207,27 +208,10 @@ export default function HomePage() {
       .slice(0, 12);
   }, [books]);
 
-  // Books whose chapters GREW after upload (append-chapters / manual add) —
-  // ongoing stories that got fresh chapters. The >24h guard keeps this row
-  // from mirroring "Mới thêm": every book's last_chapter_added_at starts ≈
-  // created_at when it is first parsed.
-  const updatedBooks = useMemo(() => {
-    if (!books) return [];
-    return books
-      .filter(
-        (b) =>
-          b.last_chapter_added_at &&
-          new Date(b.last_chapter_added_at).getTime() -
-            new Date(b.created_at).getTime() >
-            24 * 60 * 60 * 1000,
-      )
-      .sort(
-        (a, b) =>
-          new Date(b.last_chapter_added_at!).getTime() -
-          new Date(a.last_chapter_added_at!).getTime(),
-      )
-      .slice(0, 12);
-  }, [books]);
+  const updatedBooks = useMemo(
+    () => getRecentlyUpdatedBooks(books ?? []).slice(0, 12),
+    [books],
+  );
 
   const genreSections = useMemo(() => {
     if (!books || !genres) return [];

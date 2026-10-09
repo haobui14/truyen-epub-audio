@@ -806,9 +806,11 @@ async def append_chapters_from_file(
     new_total = len(existing) + len(rows)
     book_updates: dict = {
         "total_chapters": new_total,
-        # Drives the home page's "Mới cập nhật" ordering.
-        "last_chapter_added_at": datetime.now(timezone.utc).isoformat(),
     }
+    # Populating an empty book is its initial import, not a story update.
+    # Record only successful additions to a book that already had chapters.
+    if existing:
+        book_updates["last_chapter_added_at"] = datetime.now(timezone.utc).isoformat()
     # A previously-errored book that just gained readable chapters is usable
     # again — clear the error state.
     if book.data.get("status") == "error":
@@ -1157,10 +1159,10 @@ async def create_chapter(
     # Recalculate total_chapters
     count_result = db.table("chapters").select("id", count="exact").eq("book_id", book_id).execute()
     total = count_result.count or 0
-    db.table("books").update({
-        "total_chapters": total,
-        "last_chapter_added_at": datetime.now(timezone.utc).isoformat(),
-    }).eq("id", book_id).execute()
+    book_updates = {"total_chapters": total}
+    if total > 1:
+        book_updates["last_chapter_added_at"] = datetime.now(timezone.utc).isoformat()
+    db.table("books").update(book_updates).eq("id", book_id).execute()
 
     ch = result.data[0]
     return ChapterResponse(**ch, audio=None)

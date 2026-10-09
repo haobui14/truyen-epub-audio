@@ -25,5 +25,5 @@ class BookResponse(BaseModel):
     featured_label: Optional[str] = None
     story_status: str = "unknown"  # 'ongoing' | 'completed' | 'unknown'
     # When chapters were last ADDED (append/manual add) — drives the home
-    # page's "Mới cập nhật" row. Null for books never updated since seeding.
+    # page's "Mới cập nhật" row. Null for initial imports and reparses.
     last_chapter_added_at: Optional[datetime] = None

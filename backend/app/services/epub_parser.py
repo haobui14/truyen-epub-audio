@@ -675,6 +675,8 @@ async def parse_epub_task(
             "total_chapters": len(chapters_data),
             "status": "parsed",
             "error_message": None,  # clear any prior failure (e.g. after reparse)
+            # Initial imports/rebuilding chapter rows are not new story updates.
+            "last_chapter_added_at": None,
         }
         if cover_url:
             update_data["cover_url"] = cover_url

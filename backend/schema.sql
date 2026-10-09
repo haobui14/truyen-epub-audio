@@ -27,12 +27,9 @@ ALTER TABLE books ADD COLUMN IF NOT EXISTS error_message TEXT;
 
 -- Migration (idempotent): when chapters were last ADDED to the book — bumped
 -- by append-chapters and manual chapter creation, drives the home page's
--- "Mới cập nhật" row. Seeded from max(chapters.created_at) so existing books
--- have real data immediately.
+-- "Mới cập nhật" row. Initial imports and reparses leave this NULL: chapter
+-- row creation dates do not prove that a story received new chapters.
 ALTER TABLE books ADD COLUMN IF NOT EXISTS last_chapter_added_at TIMESTAMPTZ;
-UPDATE books b SET last_chapter_added_at = c.max_created
-FROM (SELECT book_id, max(created_at) AS max_created FROM chapters GROUP BY book_id) c
-WHERE c.book_id = b.id AND b.last_chapter_added_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_books_created_at  ON books(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_books_status      ON books(status);
@@ -57,6 +54,14 @@ CREATE TABLE IF NOT EXISTS chapters (
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE(book_id, chapter_index)
 );
+
+-- Remove the old import-derived backfill, including timestamps left behind
+-- when chapters were rebuilt. Real append/manual-add events are recorded
+-- AFTER the new rows have been inserted, so their timestamps are later than
+-- the newest chapter's created_at. Safe to re-run; never invent update dates.
+UPDATE books b SET last_chapter_added_at = NULL
+FROM (SELECT book_id, max(created_at) AS max_created FROM chapters GROUP BY book_id) c
+WHERE c.book_id = b.id AND b.last_chapter_added_at <= c.max_created;
 
 -- For existing DBs created before chapter text moved to Storage:
 ALTER TABLE chapters ADD COLUMN IF NOT EXISTS text_storage_path TEXT;
