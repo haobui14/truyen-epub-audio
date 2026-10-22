@@ -54,8 +54,8 @@ RETRYABLE_SOURCE_STATUSES = {408, 425, 429, 500, 502, 503, 504}
 
 def _source_storage() -> SyncStorageClient:
     headers = {
-        "apiKey": settings.supabase_service_key,
-        "Authorization": f"Bearer {settings.supabase_service_key}",
+        "apiKey": settings.supabase_secret_key,
+        "Authorization": f"Bearer {settings.supabase_secret_key}",
     }
     return SyncStorageClient(
         f"{settings.supabase_url.rstrip('/')}/storage/v1/", headers
@@ -66,8 +66,8 @@ def _source_http(max_connections: int) -> httpx.Client:
     return httpx.Client(
         base_url=f"{settings.supabase_url.rstrip('/')}/storage/v1",
         headers={
-            "apiKey": settings.supabase_service_key,
-            "Authorization": f"Bearer {settings.supabase_service_key}",
+            "apiKey": settings.supabase_secret_key,
+            "Authorization": f"Bearer {settings.supabase_secret_key}",
         },
         timeout=60.0,
         http2=False,

@@ -361,7 +361,7 @@ $$;
 -- ============================================================
 -- Row Level Security
 -- ============================================================
--- The backend connects with the service_role key (see
+-- The backend connects with the secret API key, which maps to service_role (see
 -- backend/app/database.py), which bypasses RLS by design.
 -- The frontend never connects to Supabase directly — all data
 -- access goes through the FastAPI backend. Auth is custom JWT,

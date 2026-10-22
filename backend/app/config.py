@@ -4,7 +4,9 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     supabase_url: str
-    supabase_service_key: str
+    # Supabase secret API key (sb_secret_...); replaces the legacy
+    # service_role JWT.
+    supabase_secret_key: str
     jwt_secret: str
     # File/object storage lives in separate public/private Cloudflare R2
     # buckets. Former Supabase bucket names remain top-level object prefixes.

@@ -25,7 +25,7 @@ jobs:
     env:
       # Parser tests never connect to the DB or Storage.
       SUPABASE_URL: https://example.supabase.co
-      SUPABASE_SERVICE_KEY: test-only-not-a-real-key
+      SUPABASE_SECRET_KEY: test-only-not-a-real-key
       JWT_SECRET: test-only-not-a-real-secret
       REQUIRE_INGESTION_OCR: "1"
     steps:
