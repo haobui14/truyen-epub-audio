@@ -51,11 +51,6 @@ import {
   useReaderChromeHidden,
 } from "@/lib/readerChrome";
 
-/**
- * Track actual reading engagement and award XP when the user has spent
- * enough time actively reading the chapter (visible page, not just loaded).
- * Threshold: max(15s, wordCount / 300 * 60 * 0.35) seconds, capped at 90s.
- */
 // On the web the reader scrolls the page. On Android it scrolls its own box
 // (see the scroller in ReadPage), because the page-level scrollbar is drawn by
 // the Android WebView itself: it ran the full screen height, behind the status
@@ -84,84 +79,6 @@ function listenScroll(el: Scroller, handler: () => void) {
   const target: HTMLElement | Window = el ?? window;
   target.addEventListener("scroll", handler, { passive: true });
   return () => target.removeEventListener("scroll", handler);
-}
-
-function useReadingXp(
-  chapterId: string | null,
-  bookId: string,
-  wordCount: number,
-  hasText: boolean,
-  scrollerRef: React.RefObject<HTMLDivElement | null>,
-) {
-  const completedRef = useRef<Set<string>>(new Set());
-  const timeRef = useRef(0);
-  const lastVisibleRef = useRef<number | null>(null);
-  const scrolledPastRef = useRef(false);
-
-  // Reset on chapter change
-  useEffect(() => {
-    timeRef.current = 0;
-    lastVisibleRef.current = null;
-    scrolledPastRef.current = false;
-  }, [chapterId]);
-
-  // Track scroll depth (need >25% scrolled)
-  useEffect(() => {
-    if (!hasText) return;
-    const el = scrollerRef.current;
-    const onScroll = () => {
-      const { top, max } = scrollMetrics(el);
-      if (max <= 0) return;
-      if (top / max > 0.25) scrolledPastRef.current = true;
-    };
-    return listenScroll(el, onScroll);
-  }, [hasText, chapterId, scrollerRef]);
-
-  // Accumulate visible time and fire XP when threshold met
-  useEffect(() => {
-    if (!chapterId || !hasText || !isLoggedIn()) return;
-
-    const threshold = Math.min(
-      90,
-      Math.max(15, Math.round((wordCount / 300) * 60 * 0.35)),
-    );
-
-    const tick = () => {
-      if (document.hidden) {
-        lastVisibleRef.current = null;
-        return;
-      }
-      const now = Date.now();
-      if (lastVisibleRef.current !== null) {
-        timeRef.current += (now - lastVisibleRef.current) / 1000;
-      }
-      lastVisibleRef.current = now;
-
-      if (
-        timeRef.current >= threshold &&
-        scrolledPastRef.current &&
-        !completedRef.current.has(chapterId)
-      ) {
-        completedRef.current.add(chapterId);
-        api
-          .completeChapter({ chapter_id: chapterId, book_id: bookId, mode: "read", word_count: wordCount })
-          .catch(() => {});
-      }
-    };
-
-    const onVisibility = () => {
-      if (document.hidden) lastVisibleRef.current = null;
-      else lastVisibleRef.current = Date.now();
-    };
-
-    lastVisibleRef.current = document.hidden ? null : Date.now();
-    const interval = setInterval(tick, 2000);
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      clearInterval(interval);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [chapterId, bookId, wordCount, hasText]);
 }
 
 const FONT_SIZES = [14, 16, 18, 20, 22, 24] as const;
@@ -527,15 +444,6 @@ export default function ReadPage() {
     chapterId: chapterId ?? "",
     chapterIndex: currentIndex >= 0 ? currentIndex : undefined,
   });
-
-  // Award reading XP based on actual time spent on page
-  useReadingXp(
-    chapterId,
-    bookId,
-    currentChapter?.word_count ?? 0,
-    !!chapterText?.text_content,
-    scrollerRef,
-  );
 
   // Save book-level progress when the reading chapter changes
   useEffect(() => {

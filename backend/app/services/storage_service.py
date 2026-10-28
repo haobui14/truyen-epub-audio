@@ -63,6 +63,13 @@ def _get_storage():
                 max_pool_connections=STORAGE_CONCURRENCY * 2,
                 # Application retries below provide consistent logging/backoff.
                 retries={"mode": "standard", "max_attempts": 1},
+                # botocore defaults both to 60s: one stuck GET held a chapter
+                # open for ~61s (timeout + one retry) before the reader saw text.
+                # These bound each socket operation, not a whole transfer, so
+                # large EPUB uploads still stream fine.
+                connect_timeout=5,
+                read_timeout=10,
+                tcp_keepalive=True,
             ),
         )
     return _storage_client
@@ -352,7 +359,11 @@ async def upload_chapter_text(book_id: str, chapter_id: str, text: str) -> str:
 
 async def download_chapter_text(path: str, version: str | None = None) -> str:
     """Download and decode a gzip or legacy plain-text chapter object."""
+    started = time.perf_counter()
     data = await asyncio.to_thread(_sync_download, CHAPTER_TEXT_BUCKET, path, version)
+    elapsed = time.perf_counter() - started
+    if elapsed > 2.0:
+        logger.warning(f"Slow chapter-text download {path}: {elapsed:.1f}s")
     # New objects are gzip (magic 1f 8b); legacy objects are plain UTF-8 and skip
     # the gunzip branch — byte-identical to the pre-compression behaviour.
     if _is_gzip(data):

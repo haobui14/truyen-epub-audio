@@ -1,125 +1,60 @@
-import math
-from datetime import datetime, timezone
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
 
 from app.database import get_client
 from app.dependencies import get_current_user
 
 router = APIRouter(prefix="/api/stats", tags=["stats"])
 
+# EXP is derived from reading progress instead of being tracked per chapter:
+# every chapter before the one a user is on in a book counts as done, and a
+# book sitting on its last chapter counts in full (the same "Hoàn thành" rule
+# the profile page uses). One read when the profile opens replaces a write per
+# finished chapter — the old per-user completed-id arrays were rewritten whole
+# on every completion and were the database's largest WAL producer.
+# 30 keeps existing users at roughly the level the old word-count formula gave.
+EXP_PER_CHAPTER = 30
 
-class CompleteChapterRequest(BaseModel):
-    chapter_id: str
-    book_id: str
-    mode: str  # 'read' or 'listen'
-    word_count: int = 0
 
-
-# Sync handlers (`def`): FastAPI runs them on the worker thread pool so the
-# blocking Supabase client stays off the single worker's event loop.
 @router.post("/complete-chapter")
-def complete_chapter(
-    body: CompleteChapterRequest,
-    user: dict = Depends(get_current_user),
-) -> Dict[str, Any]:
-    """
-    Award XP for completing a chapter (read or listen).
-    No-ops silently if the chapter+mode was already completed.
-    XP formula: max(10, ceil(word_count / 50)) for reading; 1.5x for listening.
-
-    Completion deduplication is stored as text[] arrays in user_stats
-    (completed_listen_ids / completed_read_ids) — one row per user, no
-    separate completions table needed.
-    """
-    try:
-        db = get_client()
-        user_id = user["id"]
-
-        if body.mode not in ("read", "listen"):
-            return {"exp_earned": 0, "already_completed": False, "total_exp": 0}
-
-        completed_key = "completed_listen_ids" if body.mode == "listen" else "completed_read_ids"
-        now_iso = datetime.now(timezone.utc).isoformat()
-
-        # Single read — fetches aggregates AND completed-id arrays together
-        stats_row = (
-            db.table("user_stats")
-            .select("*")
-            .eq("user_id", user_id)
-            .maybe_single()
-            .execute()
-        )
-
-        if stats_row and stats_row.data:
-            s = stats_row.data
-            completed_ids: list = s.get(completed_key) or []
-            if body.chapter_id in completed_ids:
-                return {"exp_earned": 0, "already_completed": True, "total_exp": s["total_exp"]}
-
-            base_exp = max(10, math.ceil(body.word_count / 50)) if body.word_count > 0 else 10
-            exp_earned = int(base_exp * 1.5) if body.mode == "listen" else base_exp
-
-            update_data: Dict[str, Any] = {
-                "total_exp": s["total_exp"] + exp_earned,
-                "total_words_read": s["total_words_read"] + body.word_count,
-                "updated_at": now_iso,
-                completed_key: completed_ids + [body.chapter_id],
-            }
-            if body.mode == "read":
-                update_data["total_chapters_read"] = s["total_chapters_read"] + 1
-            else:
-                update_data["total_chapters_listened"] = s["total_chapters_listened"] + 1
-            db.table("user_stats").update(update_data).eq("user_id", user_id).execute()
-            new_total = s["total_exp"] + exp_earned
-        else:
-            base_exp = max(10, math.ceil(body.word_count / 50)) if body.word_count > 0 else 10
-            exp_earned = int(base_exp * 1.5) if body.mode == "listen" else base_exp
-
-            db.table("user_stats").insert({
-                "user_id": user_id,
-                "total_exp": exp_earned,
-                "total_chapters_read": 1 if body.mode == "read" else 0,
-                "total_chapters_listened": 1 if body.mode == "listen" else 0,
-                "total_words_read": body.word_count,
-                "updated_at": now_iso,
-                completed_key: [body.chapter_id],
-                "completed_read_ids" if body.mode == "listen" else "completed_listen_ids": [],
-            }).execute()
-            new_total = exp_earned
-
-        return {
-            "exp_earned": exp_earned,
-            "already_completed": False,
-            "total_exp": new_total,
-        }
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Stats update failed: {exc}") from exc
+async def complete_chapter() -> Dict[str, Any]:
+    """Retired: XP is derived from progress (see get_my_stats). Kept as a
+    no-op — no auth, no DB — so installed APKs that still report completions
+    get a 200 instead of a 404, and never trigger a token refresh for it."""
+    return {"exp_earned": 0, "already_completed": True, "total_exp": None}
 
 
+# Sync handler (`def`): FastAPI runs it on the worker thread pool so the
+# blocking Supabase client stays off the single worker's event loop.
 @router.get("/me")
 def get_my_stats(user: dict = Depends(get_current_user)) -> Dict[str, Any]:
-    """Return aggregate XP and reading stats for the current user."""
+    """Return the caller's EXP and chapter totals, computed from user_progress."""
     try:
         db = get_client()
         result = (
-            db.table("user_stats")
-            .select("user_id, total_exp, total_chapters_read, total_chapters_listened, total_words_read, updated_at")
+            db.table("user_progress")
+            .select("books(total_chapters), chapters(chapter_index)")
             .eq("user_id", user["id"])
-            .maybe_single()
             .execute()
         )
-        if not result or not result.data:
-            return {
-                "user_id": user["id"],
-                "total_exp": 0,
-                "total_chapters_read": 0,
-                "total_chapters_listened": 0,
-                "total_words_read": 0,
-                "updated_at": None,
-            }
-        return result.data
+        chapters_completed = 0
+        for row in result.data or []:
+            index = (row.get("chapters") or {}).get("chapter_index")
+            total = (row.get("books") or {}).get("total_chapters") or 0
+            if index is None:
+                continue
+            chapters_completed += total if total and index + 1 >= total else index
+        return {
+            "user_id": user["id"],
+            "total_exp": chapters_completed * EXP_PER_CHAPTER,
+            "chapters_completed": chapters_completed,
+            # Legacy fields for installed APKs, whose profile still renders
+            # read/listened/words cards. Read vs listen is no longer tracked.
+            "total_chapters_read": chapters_completed,
+            "total_chapters_listened": 0,
+            "total_words_read": 0,
+            "updated_at": None,
+        }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Stats fetch failed: {exc}") from exc

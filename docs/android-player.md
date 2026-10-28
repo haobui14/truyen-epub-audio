@@ -27,7 +27,6 @@ See `memory/project_tts_state_machine.md` for the bug-fix history that shaped th
 | `currentRate`/`currentPitch`/`currentTitle` | float/float/String | no | `playChunks`, `startChapter`, `setRate`, `setPitch`, `updateTitle` | TTS params |
 | `chapterQueue` | Queue<ChapterItem> | no | `mergeQueue`, `queueAllChapters`, `playChunks` (clear), `stopPlayback` (clear), `onChunkFinished` (poll), `skipToNextChapter` (poll), `doPrefetchStep` (add) | Upcoming chapters for seamless auto-advance |
 | `pendingMergeBuffer` | List<ChapterItem>?  | no | `mergeQueue` (buffer), `playChunks` (drain) | Chapters that arrived via mergeQueue BEFORE playChunks ran |
-| `completedChapterIds` | List<String> | no, locked | `onChunkFinished`, `deliverAutoAdvance` (add), `getAndClearCompletedChapterIds` (clear) | Chapters finished via auto-advance; consumed by JS for XP/progress sync |
 | `pendingPlaylist` | List<ChapterMeta> | no | `setPendingPlaylist` | Ordered upcoming chapters; self-fetch source |
 | `pendingHead` | int | no | `setPendingPlaylist` (=0), `doPrefetchStep` (skip-loop, advance on fetch), `stopPlayback` (=0), `onChunkFinished` FAILSAFE, `rescanPendingHead` | Index into pendingPlaylist of next chapter to fetch |
 | `selfFetchBase`/`selfFetchToken` | String | no | `setPendingPlaylist` | HTTP base URL + bearer token |
@@ -42,8 +41,8 @@ See `memory/project_tts_state_machine.md` for the bug-fix history that shaped th
 | `currentBookTitle` | String | no | `setSessionInfo`, `restoreSession` | MediaSession ARTIST/ALBUM + notification subtitle |
 | `restoredWasPlaying`/`restoredAtMs`/`autoResumeConsumed` | bool/long/bool | no | `restoreSession`, `onStartCommand` | START_STICKY auto-resume gating (<2 min kill→restart gap) |
 | `restoringSession` | boolean | no | `resumeFromRestoredSession` | Restore text-fetch in flight; async callback validates chapter/playing before starting |
-| `lastProgressSyncMs` | long | no | `maybeSyncProgressToServer` | 30 s throttle for background server progress PUTs |
-| `sleepAtChapterEnd` | boolean | no | `setSleepAtChapterEnd` (=on), `onChunkFinished` (fires→false), `setSleepTimer`/`cancelSleepTimer`/`stopPlayback` (=false) | "Hết chương" sleep mode: pause at the next chapter boundary (credits the finished chapter in `completedChapterIds`, unlike the timed sleep; parks `awaitingFetch=true` after `pauseInternal` so resume advances to the NEXT chapter) |
+| `lastProgressSyncMs` | long | no | `maybeSyncProgressToServer` | 60 s throttle for background server progress PUTs |
+| `sleepAtChapterEnd` | boolean | no | `setSleepAtChapterEnd` (=on), `onChunkFinished` (fires→false), `setSleepTimer`/`cancelSleepTimer`/`stopPlayback` (=false) | "Hết chương" sleep mode: pause at the next chapter boundary (parks `awaitingFetch=true` after `pauseInternal` so resume advances to the NEXT chapter) |
 | `preferredVoiceName` | String | no | `setPreferredVoice`, `restoreSession` | User-selected device voice name; empty = engine default. Applied in `initTts` (also after watchdog reinits); persisted in the snapshot |
 | `availableVoicesJson` | String | **yes** | `refreshAvailableVoices` (initTts) | JSON catalogue of installed vi voices, read by `TtsBridge.getNativeVoices()` from the WebView thread |
 | `currentChunksJson` | String | **yes** | `updateCurrentChunksSnapshot` (every `currentChunks` assignment: playChunks, startChapter, stopPlayback) | JSON snapshot of `currentChunks` for `TtsBridge.getCurrentChunksJson()` — lets JS recover the playing chapter's text on app-reopen when it was self-fetched by Java only and the network is down |
@@ -157,7 +156,6 @@ Notes:
 | `setNativeVoice` | `useNativeTTSPlayer` voice effect + `startNativePlayback` | `setPreferredVoice` — select device voice by name, "" = default (buffered until bound) |
 | `isIgnoringBatteryOptimizations`/`requestIgnoreBatteryOptimizations` | `SpeechPlayer` battery hint | Doze-exemption check + system dialog (background-playback reliability) |
 | `downloadFile` | `BookDetailClient` EPUB export button | Not player-related: hands a http(s) URL to `DownloadManager` → public Downloads (app-scoped fallback pre-Q). The WebView drops attachment responses itself; `MainActivity` also installs a `setDownloadListener` safety net for plain links |
-| `getCompletedChapterIds` | JS progress sync | Drain `completedChapterIds` (+ persists the drained snapshot) |
 | `setSessionInfo` | `PlayerContext` effect | bookId keys persistence + server progress PUTs; bookTitle → MediaSession artist + notification subtitle (buffered until bound) |
 | `getCurrentTitle`/`getCurrentBookId`/`getTotalChunks` | `PlayerContext` override effect, `BookDetailClient` | (read-only volatile reads) |
 | `isOnline` | network-aware code | (read-only) |
@@ -170,7 +168,7 @@ Notes:
 | `native-tts-state` | play/pause/stop transitions | `useNativeTTSPlayer.onState` | Sync isPlaying, chunkIndex |
 | `native-tts-chapter-advance` | `deliverAutoAdvance` via `dispatchChapterAdvance` | `useNativeTTSPlayer.onChapterAdvance` | chapterAdvancedRef=true; `onEndedRef.current?.(newChId)` → `ListenPageClient.onEnded` → `router.push(…&autoplay=1)` |
 | `native-tts-done` | `fireDone` (playlist exhausted, incl. hardware-next on last chapter) | `useNativeTTSPlayer.onDone` | Cancels pending advance-coalesce timer; if no onEnded, release background lock |
-| `native-tts-done` + `detail.sleep` | `sleepRunnable` (timed sleep expired, mid-chapter, credits NO XP) or `onChunkFinished` chapter-end sleep (boundary, DOES credit `completedChapterIds`; `awaitingFetch=true` parks the boundary so resume advances) | `useNativeTTSPlayer.onDone` sleep branch; also clears `useSleepTimer.endOfChapter` | Update playing state ONLY — no onEnded, no chunk reset (resume continues in place) |
+| `native-tts-done` + `detail.sleep` | `sleepRunnable` (timed sleep expired, mid-chapter) or `onChunkFinished` chapter-end sleep (boundary; `awaitingFetch=true` parks the boundary so resume advances) | `useNativeTTSPlayer.onDone` sleep branch; also clears `useSleepTimer.endOfChapter` | Update playing state ONLY — no onEnded, no chunk reset (resume continues in place) |
 | `native-tts-error` | `initTts` failure, language-data missing | `useNativeTTSPlayer.onNativeError` | setTtsError |
 
 ### DOM events JS listens to
@@ -243,8 +241,7 @@ Added 2026-06-10 ("seamless background + constant sync").
 (`tts_session/session`): bookId, bookTitle, chapterId, title, chunkIdx,
 rate/pitch, playing flag, apiBase, coverUrl, ts, the next ≤50 upcoming
 playlist entries (current chapter INCLUSIVE — doPrefetchStep and
-pollNextChapter both align by locating it), and the undrained
-`completedChapterIds`. The auth TOKEN is deliberately NOT persisted (no JWT at
+pollNextChapter both align by locating it). The auth TOKEN is deliberately NOT persisted (no JWT at
 rest) — the text endpoint is public so restore/auto-resume work without it, and
 server progress PUTs stay paused until JS re-seeds the token (Effect A).
 Written on every chunk start, chapter transition, pause, done, playlist update,
@@ -281,18 +278,15 @@ without playing must still win).
 bind/restore lag) and on every visibilitychange: reads the live bridge session
 (or `last_position` fallback) → refreshes `listen-chapter[-ts]:` localStorage,
 `saveLocalProgress`/`saveLocalBookProgress`, pushes `syncBookProgressToServer`
-(Java's own PUTs die with the token on process kill), and drains
-`getCompletedChapterIds()` for XP. ALL XP drains (here and ListenPageClient)
-are gated on the chapter list being loaded: XP = max(10, words/50)·1.5 and the
-backend dedupes the FIRST submission, so draining with word_count 0 would
-permanently under-award. The trackless `nativeChapterOverride` (with
+(Java's own PUTs die with the token on process kill). XP needs no drain: it is
+derived server-side from progress. The trackless `nativeChapterOverride` (with
 bookId/bookTitle/coverUrl) also lets MiniPlayer render and control a session
 the WebView never set a track for; `toggle()`'s resume branch therefore must
 not require JS chunks (`getCurrentChunk() >= 0 → resumePlayback()` first).
 
 **Server sync.** `maybeSyncProgressToServer()` PUTs `/api/progress`
 (book_id, chapter_id, progress_value=chunkIdx, total_value=chunk count) with the
-stored bearer token — throttled to 30 s, forced at chapter boundaries / pause /
+stored bearer token — throttled to 60 s, forced at chapter boundaries / pause /
 done. This keeps the server row fresh during hours of screen-off playback, so
 cross-device resume and post-kill cold starts (`listenProgress` query) are
 accurate. Skipped when bookId/apiBase/token are missing (logged out). JS remains

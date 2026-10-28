@@ -33,6 +33,11 @@ logger = logging.getLogger(__name__)
 _ALGORITHM = "HS256"
 _ACCESS_TOKEN_EXPIRE_MINUTES = 60
 _REFRESH_TOKEN_EXPIRE_DAYS = 90
+# /refresh hands back the presented token until it is this old, then rolls a
+# new one. Tokens are never revoked on rotation (see refresh()), so reuse is
+# no weaker than issuing a fresh row on every hourly refresh — which is what
+# grew refresh_tokens to thousands of rows for a handful of users.
+_REFRESH_TOKEN_ROTATE_AFTER_DAYS = 7
 
 # Direct bcrypt instead of passlib: passlib 1.7.4 is unmaintained and pinned
 # the whole app to bcrypt 4.0.1. Existing hashes are standard $2b$ strings, so
@@ -279,9 +284,10 @@ def login(body: AuthRequest, request: Request):
 def refresh(body: RefreshRequest):
     db = get_client()
     try:
+        # One round-trip: the user's profile rides along via the FK embed.
         row = (
             db.table("refresh_tokens")
-            .select("user_id, expires_at")
+            .select("user_id, expires_at, users(email, display_name, avatar_base64)")
             .eq("token", body.refresh_token)
             .maybe_single()
             .execute()
@@ -303,11 +309,10 @@ def refresh(body: RefreshRequest):
                 status_code=403,
                 detail=PENDING_MESSAGE if approval == "pending" else REJECTED_MESSAGE,
             )
-        user_row = db.table("users").select("email, display_name, avatar_base64").eq("id", user_id).maybe_single().execute()
-        if not user_row or not user_row.data:
+        u = row.data.get("users")
+        if not u:
             raise HTTPException(status_code=401, detail="User not found")
 
-        u = user_row.data
         email = u["email"]
         # Issue a fresh refresh token but DO NOT hard-revoke the presented one.
         # Destructive rotation (delete-before-confirm) is the main cause of the
@@ -318,10 +323,18 @@ def refresh(body: RefreshRequest):
         # replayed — and a hard-revoke would 401, which the client treats as
         # "session dead" → clearAuth → logout. Leaving the old token valid until
         # its natural 90-day expiry makes any such replay simply succeed. We
-        # still roll forward (a new token every refresh) and prune this user's
-        # already-expired tokens so the table stays bounded.
-        _cleanup_expired_tokens(user_id)
-        new_refresh_token = _create_refresh_token(user_id)
+        # still roll forward once the token is a week old (so an active
+        # session never nears expiry) and then prune this user's
+        # already-expired tokens so the table stays bounded. Clients store
+        # whatever refresh_token comes back, so returning the same one is safe.
+        rotate_before = timedelta(
+            days=_REFRESH_TOKEN_EXPIRE_DAYS - _REFRESH_TOKEN_ROTATE_AFTER_DAYS
+        )
+        if expires_at - datetime.now(timezone.utc) > rotate_before:
+            new_refresh_token = body.refresh_token
+        else:
+            _cleanup_expired_tokens(user_id)
+            new_refresh_token = _create_refresh_token(user_id)
         access_token = _create_access_token(user_id, email)
         return AuthResponse(
             access_token=access_token,

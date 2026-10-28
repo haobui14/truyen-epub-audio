@@ -8,6 +8,7 @@ from typing import Optional
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
 
+from app import response_cache
 from app.database import get_client
 from app.config import settings
 from app.dependencies import get_admin_user
@@ -197,6 +198,8 @@ async def upload_book(
     task = asyncio.create_task(_convert_and_parse(book_id, content, ext, base_title))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
+    # The parse writes the book's chapters after this request has returned.
+    response_cache.bump_when_done(task)
 
     logger.info(f"Book {book_id} ({ext}) uploaded, conversion+parsing started")
     return {"book_id": book_id, "status": "parsing"}

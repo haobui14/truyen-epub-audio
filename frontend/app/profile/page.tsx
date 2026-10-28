@@ -410,8 +410,8 @@ export default function ProfilePage() {
       {/* Stats grid */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
         <StatCard
-          label="Chương đã đọc"
-          value={(stats?.total_chapters_read ?? 0).toLocaleString()}
+          label="Chương đã qua"
+          value={(stats?.chapters_completed ?? 0).toLocaleString()}
           icon={
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
@@ -419,11 +419,11 @@ export default function ProfilePage() {
           }
         />
         <StatCard
-          label="Chương đã nghe"
-          value={(stats?.total_chapters_listened ?? 0).toLocaleString()}
+          label="Truyện trong tủ"
+          value={myBookEntries.length}
           icon={
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6 6.878V6a2.25 2.25 0 012.25-2.25h7.5A2.25 2.25 0 0118 6v.878m-12 0c.235-.083.487-.128.75-.128h10.5c.263 0 .515.045.75.128m-12 0A2.25 2.25 0 004.5 9v.878m13.5-3A2.25 2.25 0 0119.5 9v.878m0 0a2.246 2.246 0 00-.75-.128H5.25c-.263 0-.515.045-.75.128m15 0A2.25 2.25 0 0121 12v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6c0-.98.626-1.813 1.5-2.122" />
             </svg>
           }
         />
@@ -457,10 +457,10 @@ export default function ProfilePage() {
           Cách nhận EXP
         </h3>
         <ul className="space-y-1 text-xs text-accent dark:text-accent">
-          <li>• <strong>Đọc chương</strong>: bằng số từ ÷ 50 EXP (tối thiểu 10)</li>
-          <li>• <strong>Nghe chương</strong>: ×1.5 EXP so với đọc</li>
-          <li>• Phải đọc/nghe đủ, không được bỏ qua để nhận EXP</li>
-          <li>• Mỗi chương chỉ tính EXP một lần cho mỗi chế độ</li>
+          <li>• <strong>Mỗi chương đã qua</strong>: 30 EXP, dù đọc hay nghe</li>
+          <li>• Tính theo vị trí hiện tại của bạn trong từng truyện</li>
+          <li>• Đọc/nghe đến chương cuối: cả truyện được tính</li>
+          <li>• Đặt lại tiến độ một truyện sẽ trừ EXP của truyện đó</li>
         </ul>
       </div>
 

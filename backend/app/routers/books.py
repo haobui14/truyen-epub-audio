@@ -3,10 +3,11 @@ import logging
 import re
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Query, Depends, Response, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Query, Depends, Request, Response, UploadFile, File, Form
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
+from app import response_cache
 from app.config import settings
 from app.database import get_client
 from app.dependencies import get_admin_user, get_approved_user
@@ -36,34 +37,77 @@ _BOOK_SELECT = (
 )
 
 
+# Catalog reads are served from response_cache (cleared on every catalog
+# write; see that module) with ETags, so the app-foreground refetch of the
+# same book costs no database round-trip and, from a browser/WebView, no body.
+CATALOG_TTL_SECONDS = 120
+# A book is still being written by a background parse in these states (the
+# detail page polls it every 2s), so its data is never cached.
+_TRANSIENT_BOOK_STATUSES = frozenset({"pending", "parsing", "converting"})
+_BOOK_LIST_ADAPTER = TypeAdapter(List[BookResponse])
+_BOOK_ADAPTER = TypeAdapter(BookResponse)
+
+
 # Read endpoints are sync (`def`) so FastAPI runs them on the worker thread
 # pool: the blocking Supabase client would otherwise stall the single uvicorn
 # worker's event loop for a full DB round-trip per call.
 @router.get("", response_model=List[BookResponse])
-def list_books():
-    db = get_client()
-    result = db.table("books").select(_BOOK_SELECT).order("created_at", desc=True).execute()
-    return _attach_genres(result.data)
+def list_books(request: Request):
+    key = ("books",)
+    cached = response_cache.catalog.get(key)
+    if cached is None:
+        gen = response_cache.generation()
+        db = get_client()
+        result = db.table("books").select(_BOOK_SELECT).order("created_at", desc=True).execute()
+        rows = _attach_genres(result.data)
+        # Serialized through the response model once, exactly as FastAPI
+        # would, so cached hits skip both the query and validation.
+        body = _BOOK_LIST_ADAPTER.dump_json(_BOOK_LIST_ADAPTER.validate_python(rows))
+        cached = (body, response_cache.etag_for(body))
+        if not any(r.get("status") in _TRANSIENT_BOOK_STATUSES for r in rows):
+            response_cache.catalog.put(key, cached, CATALOG_TTL_SECONDS, gen)
+    return response_cache.conditional_json(request, *cached)
 
 
 @router.get("/{book_id}", response_model=BookResponse)
-def get_book(book_id: str):
-    db = get_client()
-    result = db.table("books").select(_BOOK_SELECT).eq("id", book_id).maybe_single().execute()
-    if not result or not result.data:
-        raise HTTPException(status_code=404, detail="Book not found")
-    return _attach_genres([result.data])[0]
+def get_book(book_id: str, request: Request):
+    key = ("book", book_id)
+    cached = response_cache.catalog.get(key)
+    if cached is None:
+        gen = response_cache.generation()
+        db = get_client()
+        result = db.table("books").select(_BOOK_SELECT).eq("id", book_id).maybe_single().execute()
+        if not result or not result.data:
+            raise HTTPException(status_code=404, detail="Book not found")
+        row = _attach_genres([result.data])[0]
+        body = _BOOK_ADAPTER.dump_json(_BOOK_ADAPTER.validate_python(row))
+        cached = (body, response_cache.etag_for(body))
+        if row.get("status") not in _TRANSIENT_BOOK_STATUSES:
+            response_cache.catalog.put(key, cached, CATALOG_TTL_SECONDS, gen)
+    return response_cache.conditional_json(request, *cached)
 
 
 @router.get("/{book_id}/chapters", response_model=None)
 def get_book_chapters(
     book_id: str,
+    request: Request,
     page: int = Query(1, ge=1, description="Page number (1-based)"),
     page_size: int = Query(100, ge=1, le=10000, description="Chapters per page"),
 ):
+    key = ("chapters", book_id, page, page_size)
+    cached = response_cache.catalog.get(key)
+    if cached is None:
+        gen = response_cache.generation()
+        cached, cacheable = _load_book_chapters(book_id, page, page_size)
+        if cacheable:
+            response_cache.catalog.put(key, cached, CATALOG_TTL_SECONDS, gen)
+    return response_cache.conditional_json(request, *cached)
+
+
+def _load_book_chapters(book_id: str, page: int, page_size: int) -> tuple[tuple[bytes, str], bool]:
     db = get_client()
     # Verify book exists
-    book = db.table("books").select("id,total_chapters").eq("id", book_id).maybe_single().execute()
+    book = db.table("books").select("id,total_chapters,status").eq("id", book_id).maybe_single().execute()
     if not book or not book.data:
         raise HTTPException(status_code=404, detail="Book not found")
 
@@ -105,10 +149,9 @@ def get_book_chapters(
         "page_size": page_size,
         "total_pages": total_pages,
     }
-    return Response(
-        content=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-        media_type="application/json",
-    )
+    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    cacheable = book.data.get("status") not in _TRANSIENT_BOOK_STATUSES
+    return (body, response_cache.etag_for(body)), cacheable
 
 
 @router.get("/{book_id}/epub")
@@ -575,7 +618,12 @@ async def reparse_book(
                 "error_message": f"Phân tích lại thất bại: {type(e).__name__}: {e}"[:1000],
             }).eq("id", book_id).execute()
 
-    asyncio.create_task(_run())
+    # Mark the book transient before returning: the task deletes its chapters
+    # a moment later, and a book still showing 'ready' in that gap would be
+    # cached with its old chapter list. The parse rewrites the rows after
+    # this request has returned, hence the bump when it finishes.
+    db.table("books").update({"status": "parsing"}).eq("id", book_id).execute()
+    response_cache.bump_when_done(asyncio.create_task(_run()))
     return {"book_id": book_id, "status": "parsing", "source": original_name}
 
 

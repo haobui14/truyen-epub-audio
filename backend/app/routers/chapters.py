@@ -1,10 +1,12 @@
 import asyncio
+import json
 import logging
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
 from typing import Optional
 from pydantic import BaseModel
+from app import response_cache
 from app.database import get_client
 from app.dependencies import get_admin_user, get_approved_user
 from app.models.chapter import ChapterResponse, AudioSummary
@@ -39,8 +41,32 @@ def get_chapter(chapter_id: str):
 @router.get("/chapters/{chapter_id}/text")
 async def get_chapter_text(
     chapter_id: str,
+    request: Request,
     _user: dict = Depends(get_approved_user),
 ):
+    # Same chapter is often fetched several times in a row (reader + player,
+    # prefetch then open, app-foreground refetch); repeats skip both the row
+    # lookup and the R2 download. Auth above still runs on every request.
+    key = ("text", chapter_id)
+    cached = response_cache.texts.get(key)
+    if cached is None:
+        gen = response_cache.generation()
+        body, has_text = await _load_chapter_text(chapter_id)
+        cached = (body, response_cache.etag_for(body))
+        # Never cache an empty result: a fresh upload's text objects land in
+        # the background after the book is already 'ready', and a failed
+        # download must be retried, not pinned.
+        if has_text:
+            response_cache.texts.put(key, cached, TEXT_CACHE_TTL_SECONDS, gen)
+    return response_cache.conditional_json(request, *cached, cache_control="private, no-cache")
+
+
+# Admin edits through the API clear this immediately; the TTL only bounds
+# staleness after offline scripts rewrite text directly in storage.
+TEXT_CACHE_TTL_SECONDS = 300
+
+
+async def _load_chapter_text(chapter_id: str) -> tuple[bytes, bool]:
     db = get_client()
     # Hottest endpoint in the app (every chapter open, web and Android).
     # Selecting text_storage_path here lets us download from Storage directly
@@ -71,11 +97,13 @@ async def get_chapter_text(
             )
     # updated_at lets clients that cache this text offline (Android app)
     # detect an admin edit and refetch instead of serving stale text forever.
-    return {
+    payload = {
         "id": row["id"],
         "text_content": text,
         "updated_at": row["updated_at"],
     }
+    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return body, bool(text)
 
 
 @router.get("/audio/{chapter_id}")

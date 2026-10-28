@@ -134,13 +134,6 @@ interface TtsBridgeNative {
   /** Cancel the sleep timer. */
   cancelSleepTimer(): void;
   /**
-   * Returns a JSON-encoded string array of chapter IDs that completed via
-   * native auto-advance since the last call, then clears the list.
-   * Use on screen-on to award XP for chapters that finished while the
-   * WebView JS was throttled (screen off).
-   */
-  getCompletedChapterIds(): string;
-  /**
    * Hand Java an ordered playlist of upcoming chapters so it can self-fetch
    * each chapter's text while the WebView is suspended (screen off).
    * Enables unlimited uninterrupted background playback with minimal memory use.

@@ -354,10 +354,6 @@ public class TtsPlaybackService extends MediaSessionService {
     // them immediately after playChunks clears the queue.
     private List<ChapterItem> pendingMergeBuffer = null;
 
-    // Chapter IDs that were completed by native auto-advance (screen-off XP recovery).
-    // Guarded by its own lock so the @JavascriptInterface thread can read/clear safely.
-    private final List<String> completedChapterIds = new ArrayList<>();
-
     // Self-fetch: Java fetches upcoming chapter text while screen is off so the
     // native queue never empties regardless of book length.
     // pendingPlaylist is set by setPendingPlaylist(); pendingHead tracks next to fetch.
@@ -396,7 +392,9 @@ public class TtsPlaybackService extends MediaSessionService {
     static final String PREFS_KEY_LAST_POSITION = "last_position";
     private static final long   AUTO_RESUME_WINDOW_MS = 2 * 60_000;
     private static final int    PERSIST_PLAYLIST_CAP  = 50;
-    private static final long   PROGRESS_SYNC_INTERVAL_MS = 30_000;
+    // The server row only matters across devices; position is persisted
+    // locally on every chunk, and chapter boundaries/pause/done force a write.
+    private static final long   PROGRESS_SYNC_INTERVAL_MS = 60_000;
     private long    lastProgressSyncMs  = 0;
     private boolean restoredWasPlaying  = false;
     private long    restoredAtMs        = 0;     // wall-clock ts of the restored snapshot
@@ -915,19 +913,12 @@ public class TtsPlaybackService extends MediaSessionService {
                     + " selfFetchBase=" + (selfFetchBase.isEmpty() ? "EMPTY" : "set")
                     + " prefetchVer=" + prefetchVersion);
             if (sleepAtChapterEnd) {
-                // Chapter-boundary sleep: stop here instead of advancing. The
-                // chapter DID complete, so credit it for the XP drain (unlike
-                // the mid-chapter timed sleep, which deliberately credits
-                // nothing). awaitingFetch=true parks the boundary so a later
-                // resume delivers the NEXT chapter instead of replaying this
+                // Chapter-boundary sleep: stop here instead of advancing.
+                // awaitingFetch=true parks the boundary so a later resume
+                // delivers the NEXT chapter instead of replaying this
                 // chapter's final sentence — I1 holds because pauseInternal
                 // already set isPlaying=false.
                 sleepAtChapterEnd = false;
-                if (currentChapterId != null && !currentChapterId.isEmpty()) {
-                    synchronized (completedChapterIds) {
-                        completedChapterIds.add(currentChapterId);
-                    }
-                }
                 pauseInternal();
                 awaitingFetch = true;
                 dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-done'," +
@@ -1249,10 +1240,6 @@ public class TtsPlaybackService extends MediaSessionService {
         if (next != null) {
             deliverAutoAdvance(next, currentChapterId);
         } else if (prefetchActive || pendingHead < pendingPlaylist.size()) {
-            String completedId = currentChapterId;
-            synchronized (completedChapterIds) {
-                completedChapterIds.add(completedId);
-            }
             awaitingFetch = true;
             kickPrefetch();
         } else {
@@ -1260,8 +1247,8 @@ public class TtsPlaybackService extends MediaSessionService {
             // while the playlist still holds the real successor un-queued. Let
             // doPrefetchStep re-derive from the current chapter; its
             // exhausted/stale branches call fireDone() — which releases the
-            // wake lock, records the chapter for the XP drain, and downgrades
-            // the MediaSession — when nothing is truly left.
+            // wake lock and downgrades the MediaSession — when nothing is
+            // truly left.
             awaitingFetch = true;
             prefetchActive = false;
             kickPrefetch();
@@ -1567,23 +1554,6 @@ public class TtsPlaybackService extends MediaSessionService {
         chapterQueue.clear();
     }
 
-    /**
-     * Returns chapter IDs that completed via native auto-advance since the last call,
-     * then clears the internal list. Thread-safe for @JavascriptInterface callers.
-     */
-    public List<String> getAndClearCompletedChapterIds() {
-        List<String> copy;
-        synchronized (completedChapterIds) {
-            copy = new ArrayList<>(completedChapterIds);
-            completedChapterIds.clear();
-        }
-        // Persist the now-empty list so a later restore can't re-credit
-        // already-drained chapters. (Called from the JS thread — persist on
-        // the main thread where the rest of the snapshot state lives.)
-        mainHandler.post(this::persistSession);
-        return copy;
-    }
-
     public void setSleepTimer(long expireAtMs) {
         mainHandler.removeCallbacks(sleepRunnable);
         sleepAtChapterEnd = false; // timed mode replaces chapter-end mode
@@ -1737,7 +1707,7 @@ public class TtsPlaybackService extends MediaSessionService {
                 prefetchActive = false;
                 if (awaitingFetch) {
                     // Nothing valid to advance into. End cleanly (releases the
-                    // wake lock, credits XP) rather than leaving a silent
+                    // wake lock) rather than leaving a silent
                     // playing-but-stuck state; JS onDone navigates to the real
                     // next chapter once the screen comes back on.
                     awaitingFetch = false;
@@ -1971,17 +1941,6 @@ public class TtsPlaybackService extends MediaSessionService {
                 + " selfFetchBase=" + (selfFetchBase.isEmpty() ? "EMPTY" : "set")
                 + " prefetchActive=" + prefetchActive
                 + " prefetchVer=" + prefetchVersion);
-        // Record the just-finished chapter so the screen-on XP drain
-        // (getCompletedChapterIds) credits the FINAL chapter too. The last
-        // chapter ends here via done rather than a chapter-advance, so without
-        // this it would never land in completedChapterIds and its listen XP
-        // would be skipped. The JS drain + backend both dedupe, so a repeat add
-        // is harmless.
-        if (currentChapterId != null && !currentChapterId.isEmpty()) {
-            synchronized (completedChapterIds) {
-                completedChapterIds.add(currentChapterId);
-            }
-        }
         isPlaying = false;
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         updatePlaybackState(false);
@@ -2079,11 +2038,6 @@ public class TtsPlaybackService extends MediaSessionService {
                 }
             }
             o.put("playlist", pl);
-            JSONArray completed = new JSONArray();
-            synchronized (completedChapterIds) {
-                for (String id : completedChapterIds) completed.put(id);
-            }
-            o.put("completed", completed);
             SharedPreferences.Editor ed =
                     getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
                             .putString(PREFS_KEY_SESSION, o.toString());
@@ -2166,17 +2120,8 @@ public class TtsPlaybackService extends MediaSessionService {
                     pendingHead     = 0;
                 }
             }
-            JSONArray completed = o.optJSONArray("completed");
-            if (completed != null) {
-                synchronized (completedChapterIds) {
-                    for (int i = 0; i < completed.length(); i++) {
-                        String id = completed.optString(i, "");
-                        if (!id.isEmpty() && !completedChapterIds.contains(id)) {
-                            completedChapterIds.add(id);
-                        }
-                    }
-                }
-            }
+            // Sessions saved by older builds also carry a "completed" array
+            // (the retired XP drain); it is ignored.
             isPlaying = false;
             String cover = o.optString("coverUrl", "");
             if (!cover.isEmpty()) updateCover(cover);
@@ -2485,8 +2430,7 @@ public class TtsPlaybackService extends MediaSessionService {
 
     /**
      * Consume one queued/fetched chapter as an auto-advance transition.
-     * Records {@code completedId} in {@code completedChapterIds}, wraps
-     * {@code startChapter} in {@code autoAdvancing=true} (suppresses
+     * Wraps {@code startChapter} in {@code autoAdvancing=true} (suppresses
      * playFakeSilence + MediaSession re-assertion at chapter boundaries),
      * and posts a deferred {@code native-tts-chapter-advance} event to JS.
      *
@@ -2507,9 +2451,6 @@ public class TtsPlaybackService extends MediaSessionService {
                 !autoAdvancing);
         String safeCompletedId = completedId != null ? completedId : "";
         String safeNewId = next.chapterId != null ? next.chapterId : "";
-        synchronized (completedChapterIds) {
-            completedChapterIds.add(safeCompletedId);
-        }
         autoAdvancing = true;
         startChapter(next, 0);
         autoAdvancing = false;

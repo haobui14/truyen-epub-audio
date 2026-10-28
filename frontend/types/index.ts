@@ -77,13 +77,12 @@ export interface MyBookProgressEntry {
   updated_at: string;
 }
 
+/** Derived from user_progress by GET /api/stats/me — nothing is stored. */
 export interface UserStats {
   user_id: string;
   total_exp: number;
-  total_chapters_read: number;
-  total_chapters_listened: number;
-  total_words_read: number;
-  updated_at: string | null;
+  /** Chapters before the current one in each book; a finished book counts in full. */
+  chapters_completed: number;
 }
 
 

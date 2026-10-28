@@ -52,12 +52,24 @@ class _Responder:
     def __init__(self, app: ASGIApp, minimum_size: int, compresslevel: int) -> None:
         self.app = app
         self.minimum_size = minimum_size
+        self.compresslevel = compresslevel
         self.send: Send = _unset_send
         self.initial_message: Message = {}
         self.started = False
         self.passthrough = False
         self.buffer = io.BytesIO()
-        self.gzip_file = gzip.GzipFile(mode="wb", fileobj=self.buffer, compresslevel=compresslevel)
+        # Created only when a body is actually compressed: a zlib compressor
+        # is ~256 KB of state, and small/304/passthrough responses never used
+        # it (an unclosed one also logged "I/O operation on closed file" at GC).
+        self._gzip_file: gzip.GzipFile | None = None
+
+    @property
+    def gzip_file(self) -> gzip.GzipFile:
+        if self._gzip_file is None:
+            self._gzip_file = gzip.GzipFile(
+                mode="wb", fileobj=self.buffer, compresslevel=self.compresslevel
+            )
+        return self._gzip_file
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         self.send = send

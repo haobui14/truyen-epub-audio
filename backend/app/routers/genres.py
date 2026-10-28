@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List
 
+from app import response_cache
 from app.database import get_client
 from app.dependencies import get_admin_user, get_current_user
 from app.models.genre import GenreResponse, GenreCreate, GenreUpdate
@@ -25,6 +26,10 @@ def _validate_color(color: str) -> str:
 @router.get("", response_model=List[GenreResponse])
 def list_genres(_user: dict = Depends(get_current_user)):
     """List all genres. Accessible to any authenticated user (read-only)."""
+    cached = response_cache.catalog.get(("genres",))
+    if cached is not None:
+        return cached
+    gen = response_cache.generation()
     db = get_client()
     result = (
         db.table("genres")
@@ -32,7 +37,12 @@ def list_genres(_user: dict = Depends(get_current_user)):
         .order("name")
         .execute()
     )
+    # Genre writes are under /api/genres, so the cache middleware clears this.
+    response_cache.catalog.put(("genres",), result.data, GENRES_TTL_SECONDS, gen)
     return result.data
+
+
+GENRES_TTL_SECONDS = 600
 
 
 @router.post("", response_model=GenreResponse, status_code=201)

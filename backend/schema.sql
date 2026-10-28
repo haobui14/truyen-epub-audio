@@ -179,8 +179,12 @@ CREATE INDEX IF NOT EXISTS idx_book_genres_genre_id ON book_genres(genre_id);
 -- XP / Leveling
 -- ============================================================
 
--- One row per user. Deduplication is done via completed_listen_ids / completed_read_ids
--- text arrays — no separate completions table needed.
+-- LEGACY (2026-10): no longer read or written. EXP is now derived from
+-- user_progress in GET /api/stats/me, so POST /api/stats/complete-chapter is a
+-- no-op. Kept so existing databases keep their history; safe to DROP after a
+-- backup_all.py run.
+-- Was: one row per user, deduplicated via completed_listen_ids /
+-- completed_read_ids arrays rewritten whole on every completion.
 CREATE TABLE IF NOT EXISTS user_stats (
     user_id                 UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     total_exp               BIGINT NOT NULL DEFAULT 0,

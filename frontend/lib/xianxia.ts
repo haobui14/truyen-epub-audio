@@ -1,7 +1,7 @@
 /**
  * Xianxia cultivation level system.
- * EXP awarded per chapter: max(10, ceil(wordCount / 50)) for reading; ×1.5 for listening.
- * Example: 2 000-word chapter → 40 EXP reading / 60 EXP listening.
+ * EXP is derived from reading progress by GET /api/stats/me: 30 EXP for every
+ * chapter passed in each book (a finished book counts in full).
  */
 
 export interface XianxiaLevel {

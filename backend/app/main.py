@@ -1,6 +1,12 @@
+import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
+
+from app import memory
+
+# Before anything spawns threads (see app/memory.py).
+memory.limit_arenas()
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +15,8 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.database import get_client
 from app.gzip_middleware import SmartGZipMiddleware
+from app import response_cache
+from app.response_cache import CacheInvalidationMiddleware
 from app.routers import auth, books, chapters, client_log, progress, upload, tts, genres, stats
 from app.routers import settings as settings_router
 
@@ -69,15 +77,32 @@ def _trim_client_log() -> None:
         logger.warning("client_log trim skipped: %s", e)
 
 
+MEMORY_TRIM_INTERVAL_SECONDS = 300
+
+
+async def _trim_memory_periodically() -> None:
+    while True:
+        await asyncio.sleep(MEMORY_TRIM_INTERVAL_SECONDS)
+        try:
+            response_cache.purge_expired()
+            await asyncio.to_thread(memory.trim)
+        except Exception as e:
+            logger.warning("Memory trim failed: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: recover orphaned parses. There is no TTS worker -- audio is
     # synthesized on demand for playback and never stored.
     _recover_stuck_parsing_books()
     _trim_client_log()
+    trimmer = asyncio.create_task(_trim_memory_periodically())
     logger.info("Application started")
     yield
     # Shutdown
+    trimmer.cancel()
+    with suppress(asyncio.CancelledError):
+        await trimmer
     logger.info("Application shutting down")
 
 
@@ -88,13 +113,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Innermost: drops cached catalog reads around every catalog write (see
+# app/response_cache.py).
+app.add_middleware(CacheInvalidationMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
-    max_age=3600,
+    # Chrome/WebView cap preflight caching at 2h; anything above is clamped.
+    max_age=7200,
 )
 
 # Compress JSON/text responses (~3x) over the wire. Biggest win: the Android

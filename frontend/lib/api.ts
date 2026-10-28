@@ -622,21 +622,7 @@ export const api = {
       body: JSON.stringify({ parts }),
     }),
 
-  // Stats / XP
-  completeChapter: (data: {
-    chapter_id: string;
-    book_id: string;
-    mode: "read" | "listen";
-    word_count: number;
-  }) =>
-    request<{ exp_earned: number; already_completed: boolean; total_exp: number | null }>(
-      "/api/stats/complete-chapter",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      },
-    ),
+  // Stats / XP (derived server-side from reading progress)
   getMyStats: () => request<UserStats>("/api/stats/me"),
 
   // Genres

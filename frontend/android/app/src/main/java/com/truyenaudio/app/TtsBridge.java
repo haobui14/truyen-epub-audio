@@ -715,26 +715,6 @@ public class TtsBridge {
     }
 
     /**
-     * Returns a JSON array of chapter IDs that were completed by native
-     * auto-advance (e.g. while the screen was off) since the last call,
-     * then clears the internal list.  Called by JS on screen-on to award
-     * XP for chapters that finished while the WebView was throttled.
-     */
-    @JavascriptInterface
-    public String getCompletedChapterIds() {
-        TtsPlaybackService svc = service;
-        if (svc == null) return "[]";
-        java.util.List<String> ids = svc.getAndClearCompletedChapterIds();
-        try {
-            JSONArray arr = new JSONArray();
-            for (String id : ids) arr.put(id);
-            return arr.toString();
-        } catch (Exception e) {
-            return "[]";
-        }
-    }
-
-    /**
      * Returns true when Android reports the device has an active network with
      * internet capability. More reliable than {@code navigator.onLine} in a
      * WebView — that flag can stay {@code true} while the network adapter is

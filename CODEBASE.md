@@ -1,6 +1,6 @@
 # TruyệnAudio — Codebase Reference
 
-> **Purpose**: Quick-reference guide for every significant component, hook, lib, and service. Explains data flow, offline/online mode handling, and the XP/leveling system in depth.
+> **Purpose**: Quick-reference guide for every significant component, hook, lib, and service. Explains data flow, offline/online mode handling, and the XP/leveling system.
 
 ---
 
@@ -14,7 +14,7 @@
 6. [Android/Java Layer (Capacitor)](#6-androidjava-layer-capacitor)
 7. [Backend Routers](#7-backend-routers)
 8. [Offline / Online Mode — Deep Dive](#8-offline--online-mode--deep-dive)
-9. [XP & Leveling System — Deep Dive](#9-xp--leveling-system--deep-dive)
+9. [XP & Leveling System](#9-xp--leveling-system)
 10. [Data Flow Diagrams](#10-data-flow-diagrams)
 
 ---
@@ -118,9 +118,6 @@ The most complex page (~700 lines). Key responsibilities:
 | Load chapter text | React Query; on native checks IndexedDB first |
 | Load chapter list | React Query; offline falls back to `getCachedAllChapters` |
 | Save progress | `useProgressSync` debounced every 5 s; also `saveLocalBookProgress` on chapter change |
-| Award XP (chunk-based) | When `chunkIndex / totalChunks >= 0.8` |
-| Award XP (native auto-advance) | `native-tts-chapter-advance` event carries `completedChapterId` |
-| Award XP (screen-off safety net) | `visibilitychange` → `bridge.getCompletedChapterIds()` |
 | Queue native chapters | Async effect builds up to 10 queued chapters |
 | Navigate on native advance | `router.replace` (not push — avoids history pollution) |
 | Sync JS on screen-on | `handleVisibilityChange` reads `bridge.getCurrentChapterId()` |
@@ -151,7 +148,6 @@ The most complex page (~700 lines). Key responsibilities:
 - Hero matches the design's centered chapter header: `CHƯƠNG THỨ N` mono eyebrow → display-font title → hairline+`❖` ornament. First paragraph renders with a 3.2× drop cap in jade.
 - Listen-handoff card ("Chuyển sang nghe?") docks above the bottom nav and routes to `/listen` at the same chapter.
 - Uses `useProgressSync` to save scroll progress.
-- Embeds `useReadingXp` hook to award XP for genuine reading (see §9).
 
 ### `app/profile/page.tsx` — User Profile
 
@@ -160,8 +156,8 @@ The most complex page (~700 lines). Key responsibilities:
 - Calls `api.getMyStats()` → renders:
   - **SVG level ring** — circular progress arc colored by realm tier.
   - **XP bar** — progress within current level.
-  - **4-stat grid**: chapters read, chapters listened, total EXP, books in progress.
-  - **"Cách nhận EXP" info box** — explains earning rules to user.
+  - **4-stat grid**: chapters passed, books in library, books in progress, books completed.
+  - **"Cách nhận EXP" info box** — explains how EXP is derived from progress.
   - **Realm progression table** — all 24 levels with lock/active/completed state.
 - **Edit profile** (pencil button overlay on avatar corner):
   - Opens an in-page modal with avatar picker + display name text input.
@@ -302,7 +298,6 @@ All backend API calls. Key points:
 - Auto-attaches `Authorization: Bearer <token>` header.
 - On 401, calls `tryRefreshToken()` once and retries. On confirmed invalid token → `clearAuth()`. On network error → leaves auth alone.
 - `tryRefreshToken` is de-duplicated (single concurrent attempt via `refreshPromise`). On success, merges `display_name` and `avatar_base64` from the refresh response back into the stored user.
-- `api.completeChapter({ chapter_id, book_id, mode, word_count })` — awards XP.
 - `api.getMyStats()` — returns `UserStats`.
 - `api.getMyBooks()` — returns books sorted by `updated_at desc`.
 - `api.updateProfile({ display_name?, avatar_base64? })` — `PATCH /api/auth/update-profile`.
@@ -341,7 +336,6 @@ Wraps Capacitor's `KeepAwake` plugin and the `TtsBridge` JavascriptInterface.
 | `getCurrentChapterId()` | Volatile read — safe from JS thread |
 | `getCurrentChunk()` | Current chunk index |
 | `isPlaying()` | Boolean state |
-| `getCompletedChapterIds()` | Drain screen-off completed chapter list (XP recovery) |
 | `setSleepTimer(expireAtMs) / cancelSleepTimer()` | Native sleep timer |
 
 ### `lib/offlineDB.ts`
@@ -428,7 +422,6 @@ Next chunk exists in this chapter?
   → speakChunk(idx + 1)
 Chapter finished, queue has next chapter?
   → capture completedId + newChapterId BEFORE startChapter() mutates currentChapterId
-  → add completedId to completedChapterIds list (synchronized)
   → dispatch "native-tts-chapter-advance" CustomEvent with both IDs
   → startChapter(nextChapter, 0)
 Queue exhausted?
@@ -439,7 +432,6 @@ Queue exhausted?
 
 **`playGeneration` race protection**: every `UtteranceProgressListener` lambda captures `generation = playGeneration` at creation time. The `mainHandler.post` callback bails if `gen != playGeneration` — prevents stale utterance callbacks from an old chapter arriving after stop+start.
 
-**`getAndClearCompletedChapterIds()`** — thread-safe (`synchronized`) read-and-clear of the `completedChapterIds` list. Called by JS on screen-on to recover XP for chapters completed during screen-off.
 
 **Silent MediaPlayer trick**: Before each TTS chunk, a `MediaPlayer` plays `R.raw.silence` at volume 0. This makes Android treat our `MediaSessionCompat` as the active media session, preventing the TTS engine's internal session from stealing earbud/BT button routing.
 
@@ -462,12 +454,12 @@ getAndClearCompletedChapterIds()
 
 ## 7. Backend Routers
 
-### `routers/stats.py` — XP / Leveling
+### `routers/stats.py` — XP / Leveling (derived, nothing stored)
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/stats/complete-chapter` | POST | Award XP for a chapter+mode. Idempotent (unique constraint on user+chapter+mode). XP formula: `max(10, ceil(word_count / 50))` for read; `× 1.5` for listen. Updates `user_stats` aggregate row (upsert). |
-| `/api/stats/me` | GET | Return the caller's `user_stats` row. |
+| `/api/stats/complete-chapter` | POST | Retired no-op (no auth, no DB) kept so installed APKs that still report completions get a 200. |
+| `/api/stats/me` | GET | Derive the caller's EXP from `user_progress` (see §9). Also returns legacy `total_chapters_read/listened/words_read` fields for old APKs. |
 
 ### `routers/books.py`
 
@@ -576,12 +568,10 @@ When the Android screen turns off:
 - The WebView is suspended by the OS — JS events stop firing.
 - `TtsPlaybackService` continues running as a foreground service; TTS plays uninterrupted.
 - Native auto-advances chapters by polling its own `chapterQueue`.
-- Each completed chapter is added to `completedChapterIds` (Java synchronized list).
 - When the screen turns on (WebView resumes):
   1. Queued `evaluateJavascript` calls flush — batched `native-tts-chapter-advance` events fire all at once.
   2. `lastAdvancedChapterRef` deduplication prevents multiple `router.replace` calls for the same chapter.
   3. `handleVisibilityChange` in `ListenPageClient` reads `bridge.getCurrentChapterId()` and navigates to the correct chapter regardless of how many chapters played.
-  4. `visibilitychange` XP safety net: calls `bridge.getCompletedChapterIds()`, drains and awards XP for all chapters completed during screen-off.
 
 ### Token Refresh on Resume
 
@@ -592,79 +582,28 @@ When the Android screen turns off:
 
 ---
 
-## 9. XP & Leveling System — Deep Dive
+## 9. XP & Leveling System
 
-### EXP Formula
+### How EXP is computed (since 2026-10)
 
-Backend (`routers/stats.py`):
+Nothing is tracked per chapter. `GET /api/stats/me` (`routers/stats.py`) reads the
+caller's `user_progress` rows (book `total_chapters` + current `chapter_index`) and
+derives:
+
 ```python
-base_exp  = max(10, ceil(word_count / 50))   # minimum 10 EXP per chapter
-exp_read  = base_exp                           # reading
-exp_listen = int(base_exp * 1.5)              # listening (50% bonus)
+chapters_completed = sum(
+    total_chapters if chapter_index + 1 >= total_chapters  # on the last chapter: whole book
+    else chapter_index                                      # chapters before the current one
+)
+total_exp = chapters_completed * EXP_PER_CHAPTER          # 30
 ```
 
-Example: a 2 000-word chapter → 40 EXP reading / 60 EXP listening.
-
-### Idempotency
-
-`user_chapter_completions` has a **UNIQUE constraint** on `(user_id, chapter_id, mode)`. The backend checks for an existing row before inserting and returns `{already_completed: true, exp_earned: 0}` if found. The frontend also maintains a **session-scoped `Set`** (`listenXpCompletedRef`, `completedRef`in `useReadingXp`) to avoid even sending duplicate requests within a single session.
-
-### Reading XP (`useReadingXp` in `ReadPageClient`)
-
-Tracks **genuine reading** — not just loading the chapter:
-
-**Conditions to award:**
-1. User has been on the page for `threshold` seconds of **visible, active time** (tab not hidden).
-2. User has scrolled past **25%** of the page.
-
-```
-threshold = clamp(15, 90, round(wordCount / 300 * 60 * 0.35))
-```
-This is approximately 35% of the expected reading time at 300 words/minute. Capped at 90 s so very long chapters aren't punishing.
-
-**Time tracking:**
-- `setInterval(tick, 2000)` accumulates delta since `lastVisibleRef` on each tick.
-- `document.hidden` check pauses the timer when the tab is hidden.
-- `visibilitychange` listener resets `lastVisibleRef` to `null` on hide and resumes on show.
-
-### Listening XP — 3 Award Paths (priority order)
-
-#### Path 1: Chunk-based (80% threshold)
-```
-useEffect([chunkIndex, totalChunks]) in ListenPageClient
-  if chunkIndex / totalChunks >= 0.8:
-    if !listenXpCompletedRef.has(chapterId):
-      api.completeChapter({..., mode: "listen"})
-      listenXpCompletedRef.add(chapterId)
-```
-This fires when the user is actively listening with the screen on and the WebView is receiving `native-tts-chunk` events.
-
-#### Path 2: Native auto-advance event
-```
-window.addEventListener("native-tts-chapter-advance", onAdvance)
-  const completedId = event.detail.completedChapterId
-  if !listenXpCompletedRef.has(completedId):
-    api.completeChapter({chapter_id: completedId, ..., mode: "listen"})
-    listenXpCompletedRef.add(completedId)
-```
-Covers the transition chapter when native advances. Fires for every batched event on screen-on, but the `Set` guard ensures only one API call per chapter.
-
-#### Path 3: Screen-on safety net (screen-off XP recovery)
-```
-document.addEventListener("visibilitychange", onVisible)
-  if document.hidden: return
-  ids = JSON.parse(bridge.getCompletedChapterIds())  ← drains Java list
-  for id in ids:
-    if !listenXpCompletedRef.has(id):
-      api.completeChapter(...)
-      listenXpCompletedRef.add(id)
-```
-`bridge.getCompletedChapterIds()` calls `TtsPlaybackService.getAndClearCompletedChapterIds()` which returns and atomically clears the Java-side list. Called once per screen-on; the Java list is drained on read to prevent double-awarding.
-
-**Why three paths?** The WebView can be in three states:
-- **Screen on, active**: Path 1 fires naturally as chunks progress.
-- **Screen on, chapter just finished**: Path 2 fires from the queued event.
-- **Screen was off, deep suspend**: evaluateJavascript calls may have been dropped entirely; Path 3 calls directly into Java to recover.
+Consequences: read vs listen is no longer distinguished, jumping ahead in a book
+counts the skipped chapters, and resetting a book's progress removes its EXP.
+The old per-chapter flow (`completeChapter` calls from the reader/listen pages,
+the Java `completedChapterIds` drain, and `user_stats`' whole-array rewrites —
+the database's largest WAL producer) was removed. `user_stats` is legacy and
+unused.
 
 ### Level Table (`lib/xianxia.ts`)
 
@@ -688,26 +627,6 @@ Helper functions:
 - `getLevelProgress(totalExp)` — 0.0–1.0 progress within current level.
 - `getExpToNextLevel(totalExp)` — EXP remaining to next level (0 at max).
 - `formatExp(exp)` — pretty-prints (`1.5K`, `2.3M`).
-
-### Database Schema (XP Tables)
-
-```sql
--- One row per user+chapter+mode (unique constraint prevents double XP)
-user_chapter_completions (
-  user_id, chapter_id, book_id, mode, word_count, exp_earned, completed_at
-  UNIQUE(user_id, chapter_id, mode)
-)
-
--- Aggregate stats (updated on every completion via upsert)
-user_stats (
-  user_id PRIMARY KEY,
-  total_exp,
-  total_chapters_read,
-  total_chapters_listened,
-  total_words_read,
-  updated_at
-)
-```
 
 ---
 
@@ -734,7 +653,6 @@ URL: /listen?id=<bookId>&chapter=<chapterId>&autoplay=1
 TtsPlaybackService.onChunkFinished (main thread):
   → poll chapterQueue
   → capture completedId, newChapterId
-  → completedChapterIds.add(completedId)
   → dispatchJs("native-tts-chapter-advance", {completedChapterId, newChapterId})
   → startChapter(nextChapter, 0)
 
@@ -758,7 +676,6 @@ New route mounts ListenPageClient with new chapterId:
 ```
 Screen off:
   Java service continues: chapter 3 → 4 → 5 → 6
-  completedChapterIds = [ch3, ch4, ch5]
   WebView: suspended, JS events queued
 
 Screen on:
@@ -770,29 +687,6 @@ Screen on:
   handleVisibilityChange fires:
     → bridge.getCurrentChapterId() → ch6 (confirms)
     → if mismatch: router.replace (safety net, no-op since already at ch6)
-
-  XP safety net (visibilitychange):
-    → bridge.getCompletedChapterIds() → ["ch3", "ch4", "ch5"]
-    → api.completeChapter × 3 (listenXpCompletedRef guards against duplicates)
-```
-
-### Reading XP Award Flow
-
-```
-User opens ReadPage for chapter X
-  → useReadingXp mounted: timeRef=0, scrolledPastRef=false
-
-User scrolls past 25%:
-  → scrolledPastRef = true
-
-setInterval(tick, 2000):
-  → tab visible: timeRef += 2
-  → tab hidden: timer pauses
-
-timeRef >= threshold AND scrolledPastRef:
-  → completedRef.add(chapterId)
-  → api.completeChapter({mode: "read", word_count, ...})
-  → backend: idempotency check → insert completion → upsert user_stats
 ```
 
 ---

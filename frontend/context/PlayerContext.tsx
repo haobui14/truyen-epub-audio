@@ -495,11 +495,9 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
   // ── App-open reconciler: pull everything Java accumulated while the WebView
   // was suspended or dead, no matter WHICH page the app opens on. The listen
   // page has its own (richer) sync, but a cold start always lands on the home
-  // page — without this, local progress pointers, the server row, and the XP
-  // for chapters completed in the background would sit in Java untouched
-  // until the user happens to visit /listen.
+  // page — without this, local progress pointers and the server row would sit
+  // in Java untouched until the user happens to visit /listen.
   const queryClient = useQueryClient();
-  const xpDrainedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!isNativePlatform()) return;
     let cancelled = false;
@@ -511,12 +509,10 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
       let chapterId = "";
       let chunkIdx = 0;
       let ts = Date.now();
-      let liveSession = false;
       try {
         bookId = bridge.getCurrentBookId?.() ?? "";
         chapterId = bridge.getCurrentChapterId?.() ?? "";
         chunkIdx = Math.max(bridge.getCurrentChunk?.() ?? 0, 0);
-        liveSession = !!chapterId;
         if (!chapterId) {
           // No live/restored session (e.g. user swiped the app away while
           // listening) — fall back to the durable last-position pointer.
@@ -589,30 +585,6 @@ function PlayerProviderInner({ children }: { children: ReactNode }) {
       //    Current Android builds also recover encrypted auth and sync from the
       //    native service after process death.
       syncBookProgressToServer(bookId).catch(() => {});
-      // 4. XP for chapters completed while JS was suspended/dead. word_count
-      //    is REQUIRED for correct XP and the backend dedupes the FIRST
-      //    submission — so only drain (which clears Java's list) once the
-      //    chapter list is actually available.
-      if (liveSession && chapters.length > 0) {
-        try {
-          const ids = JSON.parse(bridge.getCompletedChapterIds()) as string[];
-          ids.forEach((completedId) => {
-            if (xpDrainedRef.current.has(completedId)) return;
-            xpDrainedRef.current.add(completedId);
-            const cc = chapters.find((c) => c.id === completedId);
-            api
-              .completeChapter({
-                chapter_id: completedId,
-                book_id: bookId,
-                mode: "listen",
-                word_count: cc?.word_count ?? 0,
-              })
-              .catch(() => {});
-          });
-        } catch {
-          /* ignore */
-        }
-      }
     };
 
     const onVisible = () => {
