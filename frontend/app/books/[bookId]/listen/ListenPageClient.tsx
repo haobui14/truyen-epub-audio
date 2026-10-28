@@ -417,14 +417,22 @@ export default function ListenPage() {
   );
 
   const queryClient = useQueryClient();
-  const { setTrack, chunkIndex, totalChunks, voice, rate, pitch } =
+  const { setTrack, chunkIndex, totalChunks, voice, rate, pitch, isPlaying } =
     usePlayerContext();
 
-  const { reportProgress } = useProgressSync({
+  const { reportProgress, flush: flushProgress } = useProgressSync({
     bookId,
     chapterId: chapterId ?? "",
     chapterIndex: currentIndex >= 0 ? currentIndex : undefined,
   });
+
+  // The server copy of progress is saved on events, not on a timer; pausing
+  // is one of them, so another device resumes exactly where this one stopped.
+  const wasPlayingRef = useRef(isPlaying);
+  useEffect(() => {
+    if (wasPlayingRef.current && !isPlaying) flushProgress();
+    wasPlayingRef.current = isPlaying;
+  }, [isPlaying, flushProgress]);
 
   // Save listen progress whenever the chunk index advances.
   // Use a ref for reportProgress so it doesn't trigger the effect when

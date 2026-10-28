@@ -41,7 +41,6 @@ See `memory/project_tts_state_machine.md` for the bug-fix history that shaped th
 | `currentBookTitle` | String | no | `setSessionInfo`, `restoreSession` | MediaSession ARTIST/ALBUM + notification subtitle |
 | `restoredWasPlaying`/`restoredAtMs`/`autoResumeConsumed` | bool/long/bool | no | `restoreSession`, `onStartCommand` | START_STICKY auto-resume gating (<2 min kill→restart gap) |
 | `restoringSession` | boolean | no | `resumeFromRestoredSession` | Restore text-fetch in flight; async callback validates chapter/playing before starting |
-| `lastProgressSyncMs` | long | no | `maybeSyncProgressToServer` | 60 s throttle for background server progress PUTs |
 | `sleepAtChapterEnd` | boolean | no | `setSleepAtChapterEnd` (=on), `onChunkFinished` (fires→false), `setSleepTimer`/`cancelSleepTimer`/`stopPlayback` (=false) | "Hết chương" sleep mode: pause at the next chapter boundary (parks `awaitingFetch=true` after `pauseInternal` so resume advances to the NEXT chapter) |
 | `preferredVoiceName` | String | no | `setPreferredVoice`, `restoreSession` | User-selected device voice name; empty = engine default. Applied in `initTts` (also after watchdog reinits); persisted in the snapshot |
 | `availableVoicesJson` | String | **yes** | `refreshAvailableVoices` (initTts) | JSON catalogue of installed vi voices, read by `TtsBridge.getNativeVoices()` from the WebView thread |
@@ -286,8 +285,8 @@ not require JS chunks (`getCurrentChunk() >= 0 → resumePlayback()` first).
 
 **Server sync.** `maybeSyncProgressToServer()` PUTs `/api/progress`
 (book_id, chapter_id, progress_value=chunkIdx, total_value=chunk count) with the
-stored bearer token — throttled to 60 s, forced at chapter boundaries / pause /
-done. This keeps the server row fresh during hours of screen-off playback, so
+stored bearer token — on events only: chapter start/advance, seek, pause, done
+and session restore, never per chunk. This keeps the server row fresh during hours of screen-off playback, so
 cross-device resume and post-kill cold starts (`listenProgress` query) are
 accurate. Skipped when bookId/apiBase/token are missing (logged out). JS remains
 a second writer (debounced `saveProgress`) — both upsert the same per-book row.

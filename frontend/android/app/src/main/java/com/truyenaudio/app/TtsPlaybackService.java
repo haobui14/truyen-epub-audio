@@ -392,10 +392,6 @@ public class TtsPlaybackService extends MediaSessionService {
     static final String PREFS_KEY_LAST_POSITION = "last_position";
     private static final long   AUTO_RESUME_WINDOW_MS = 2 * 60_000;
     private static final int    PERSIST_PLAYLIST_CAP  = 50;
-    // The server row only matters across devices; position is persisted
-    // locally on every chunk, and chapter boundaries/pause/done force a write.
-    private static final long   PROGRESS_SYNC_INTERVAL_MS = 60_000;
-    private long    lastProgressSyncMs  = 0;
     private boolean restoredWasPlaying  = false;
     private long    restoredAtMs        = 0;     // wall-clock ts of the restored snapshot
     private boolean autoResumeConsumed  = false; // sticky-restart auto-resume fires once
@@ -884,11 +880,11 @@ public class TtsPlaybackService extends MediaSessionService {
         // Keep the lockscreen seek bar in sync — the position advances chunk by
         // chunk; the OS extrapolates within a chunk using the playback speed.
         updatePlaybackState(true);
-        // Keep the durable snapshot + server progress fresh while the screen is
-        // off and JS can't do it. Both are cheap: one async prefs commit, and a
-        // throttled (30 s) PUT on the io executor.
+        // Keep the durable snapshot fresh while the screen is off and JS can't
+        // do it (one async prefs commit). The server row is NOT written per
+        // chunk: it only matters across devices, so it is saved on events —
+        // chapter start/advance, seek, pause, done, restore.
         persistSession();
-        maybeSyncProgressToServer(false);
     }
 
     private void onChunkFinished(int idx) {
@@ -1112,7 +1108,7 @@ public class TtsPlaybackService extends MediaSessionService {
         setMetadata(currentTitle);
         if (mediaSession != null) mediaSession.setActive(true);
         persistSession();
-        maybeSyncProgressToServer(true);
+        maybeSyncProgressToServer();
 
         if (!ttsReady) {
             ChapterItem item = new ChapterItem(chunks, chapterId, title, rate, pitch);
@@ -1311,7 +1307,7 @@ public class TtsPlaybackService extends MediaSessionService {
                     "{detail:{playing:false,index:" + clamped + "}}))");
         }
         persistSession();
-        maybeSyncProgressToServer(true);
+        maybeSyncProgressToServer();
     }
 
     public void setRate(float rate) {
@@ -1642,7 +1638,7 @@ public class TtsPlaybackService extends MediaSessionService {
         dispatchJs("window.dispatchEvent(new CustomEvent('native-tts-state'," +
                 "{detail:{playing:false,index:" + currentChunkIdx + "}}))");
         persistSession();
-        maybeSyncProgressToServer(true);
+        maybeSyncProgressToServer();
     }
 
     // ── Self-fetch helpers (always on main thread except ioExecutor lambda) ──
@@ -1950,7 +1946,7 @@ public class TtsPlaybackService extends MediaSessionService {
         updateNotification();
         abandonAudioFocus();
         persistSession();
-        maybeSyncProgressToServer(true);
+        maybeSyncProgressToServer();
     }
 
     /**
@@ -2130,7 +2126,7 @@ public class TtsPlaybackService extends MediaSessionService {
             // This works without chapter text because totalChunks is part of
             // the durable snapshot and auth is recovered from encrypted native
             // storage by maybeSyncProgressToServer.
-            maybeSyncProgressToServer(true);
+            maybeSyncProgressToServer();
             Log.d(TAG, "restoreSession: ch=" + chId + " chunk=" + currentChunkIdx
                     + " wasPlaying=" + restoredWasPlaying
                     + " playlist=" + pendingPlaylist.size());
@@ -2216,13 +2212,13 @@ public class TtsPlaybackService extends MediaSessionService {
 
     /**
      * PUT the current listening position to the server so progress stays fresh
-     * even when the WebView has been suspended for hours. Throttled to one
-     * write per {@link #PROGRESS_SYNC_INTERVAL_MS} unless {@code force} (chapter
-     * boundaries, pause, done). The book/API context comes from JS, while an
-     * expired access token is refreshed from Keystore-backed native auth so
-     * screen-off sessions do not stop saving after one hour.
+     * even when the WebView has been suspended for hours. Called on events only
+     * (chapter start/advance, seek, pause, done, restore) — never per chunk.
+     * The book/API context comes from JS, while an expired access token is
+     * refreshed from Keystore-backed native auth so screen-off sessions do not
+     * stop saving after one hour.
      */
-    private void maybeSyncProgressToServer(boolean force) {
+    private void maybeSyncProgressToServer() {
         if (currentBookId.isEmpty() || selfFetchBase.isEmpty()) return;
         if (currentChapterId == null || currentChapterId.isEmpty()) return;
         List<String> chunks = currentChunks;
@@ -2235,9 +2231,6 @@ public class TtsPlaybackService extends MediaSessionService {
             if (!token.isEmpty()) selfFetchToken = token;
         }
         if (token.isEmpty()) return;
-        long now = System.currentTimeMillis();
-        if (!force && now - lastProgressSyncMs < PROGRESS_SYNC_INTERVAL_MS) return;
-        lastProgressSyncMs = now;
         try {
             JSONObject o = new JSONObject();
             o.put("book_id", currentBookId);
@@ -2514,7 +2507,7 @@ public class TtsPlaybackService extends MediaSessionService {
         speakChunk(startIdx);
         kickPrefetch();
         persistSession();
-        maybeSyncProgressToServer(true);
+        maybeSyncProgressToServer();
     }
 
     private void startForegroundNow() {

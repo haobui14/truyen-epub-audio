@@ -14,8 +14,6 @@ interface ProgressSyncOptions {
   chapterId: string;
   chapterIndex?: number;
   debounceMs?: number;
-  /** Minimum gap between SERVER writes; device-local saves are not throttled. */
-  serverIntervalMs?: number;
 }
 
 interface PendingServerWrite {
@@ -27,39 +25,34 @@ interface PendingServerWrite {
 }
 
 /**
- * The 5s debounce restarts on every report, so steady playback used to hit
- * the server once per chunk (~every 10–15s). Device-local saves still happen
- * on every debounced flush; the server row only matters across devices, so it
- * is written at most once per `serverIntervalMs`, with the latest position
- * always delivered: trailing write, plus an immediate one on chapter change,
- * unmount, page hide and unload.
+ * Device-local progress is saved on every debounced report, so this device
+ * always resumes exactly. The server row only matters across devices, so it
+ * is written on events instead of on a timer:
+ *   - when a chapter is opened (its first report),
+ *   - when the caller says playback paused (`flush()`),
+ *   - when the chapter changes, the hook unmounts, or the page is hidden or
+ *     unloaded — so switching devices still resumes at the exact position.
  */
 export function useProgressSync({
   bookId,
   chapterId,
   chapterIndex,
   debounceMs = 5000,
-  serverIntervalMs = 30_000,
 }: ProgressSyncOptions) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastSavedRef = useRef<number>(-1);
+  const lastSavedRef = useRef<{ chapterId: string; value: number } | null>(null);
   const pendingRef = useRef<{ value: number; total?: number } | null>(null);
   const chapterIndexRef = useRef(chapterIndex ?? -1);
   chapterIndexRef.current = chapterIndex ?? -1;
 
   const pendingServerRef = useRef<PendingServerWrite | null>(null);
-  const serverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastServerWriteRef = useRef(0);
+  // `${bookId}:${chapterId}` whose opening has already been sent.
+  const viewedRef = useRef<string | null>(null);
 
   const sendToServer = useCallback(() => {
-    if (serverTimerRef.current) {
-      clearTimeout(serverTimerRef.current);
-      serverTimerRef.current = null;
-    }
     const write = pendingServerRef.current;
     if (!write) return;
     pendingServerRef.current = null;
-    lastServerWriteRef.current = Date.now();
 
     const { chapter_index: idx, ...body } = write;
     // Before sending to server, check if this chapter is still the latest
@@ -70,7 +63,7 @@ export function useProgressSync({
         if (!isLatest) return; // Stale chapter — skip server sync
 
         return api.saveProgress(body).catch(() => {
-          lastSavedRef.current = -1;
+          lastSavedRef.current = null;
           enqueueProgress(body);
         });
       })
@@ -84,9 +77,10 @@ export function useProgressSync({
         timerRef.current = null;
       }
       const pending = pendingRef.current;
-      if (pending && pending.value !== lastSavedRef.current) {
+      const last = lastSavedRef.current;
+      if (pending && (last?.chapterId !== chapterId || last.value !== pending.value)) {
         const { value, total } = pending;
-        lastSavedRef.current = value;
+        lastSavedRef.current = { chapterId, value };
         pendingRef.current = null;
 
         // Always save to local stores immediately — guests keep their position
@@ -123,14 +117,13 @@ export function useProgressSync({
       }
 
       if (!pendingServerRef.current) return;
-      const wait = lastServerWriteRef.current + serverIntervalMs - Date.now();
-      if (forceServer || wait <= 0) {
+      const viewKey = `${bookId}:${chapterId}`;
+      if (forceServer || viewedRef.current !== viewKey) {
+        viewedRef.current = viewKey;
         sendToServer();
-      } else if (!serverTimerRef.current) {
-        serverTimerRef.current = setTimeout(sendToServer, wait);
       }
     },
-    [bookId, chapterId, serverIntervalMs, sendToServer],
+    [bookId, chapterId, sendToServer],
   );
 
   const reportProgress = useCallback(
@@ -162,6 +155,7 @@ export function useProgressSync({
     };
   }, [flush]);
 
+  /** Save the current position everywhere now (e.g. on pause). */
   const flushNow = useCallback(() => flush(true), [flush]);
 
   return { reportProgress, flush: flushNow };
